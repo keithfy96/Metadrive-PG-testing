@@ -139,6 +139,8 @@ section rather than in a phase because the temptation recurs — someone will re
 | Treat `random_traffic=True` as a cosmetic knob | `traffic_manager.py:339-341`: with it on, the traffic manager is **never re-seeded**, so traffic differs on every reset at the same seed. *Enforced in:* Phase 3's hard-assert. It is also **Phase 2b's negative test** — the one setting guaranteed to break invariance, which is what gives that check teeth. |
 | Let the last block set the destination | True *only* when the ego spawns on a positive road — `node_network_navigation.py:80` falls back to `map.blocks[0]` on a negative one, and the socket within the block is a seeded random draw among three for X/O/T. **We never let it choose:** `node_network_navigation.py:60` reads `vehicle.config["destination"]` (`base_env.py:141`), and when it is set `auto_assign_task` is skipped entirely. Every category pins its destination. *Enforced in:* Phase 1 — this is what deletes the turn classifier. |
 | Use `accident_prob` for the Cones and Barriers axes | Set it 0–1 and `TrafficObjectManager` scatters debris — but `object_manager.py:51-53` skips any block that is not `Straight`/`Curve`/`InRampOnStraight`/`OutRampOnStraight`, so `X`, `T` and `O` receive **nothing, with no error** — 5 of our 7 categories. And one scalar drives all three scene types mutually exclusively (`:54-91`), so "cones yes, barriers no" is inexpressible. **`accident_prob` stays `0.0` permanently**; write `obstacles.py`. See **Scenario options**. |
+| Look for MetaDrive's left-hand-traffic option | **There is none**, and the negative is exhaustive rather than a keyword grep: all 249 keys of `BASE_DEFAULT_CONFIG`, `METADRIVE_DEFAULT_CONFIG` and `SCENARIO_ENV_CONFIG` dumped and filtered — nothing; OpenDRIVE carries drive side as `rule="RHT"/"LHT"` and MetaDrive never parses it (`utils/opendrive/parser.py:509-535` has no such field, upstream `main` still reads `# Rules` / `# TODO implementation`); SUMO's `lefthand="true"` is dropped too; ScenarioNet's `coordinate` means coordinate *frame*, not traffic side. Every "handed" word in the package is coordinate chirality. **And there is nothing to upgrade to** — upstream `main`'s `version.py` still reads `0.4.3`. A geometry reflection is the only route: `handedness.py`. *Enforced in:* Phase 1 build, Phase 0 `doctor`, Phase 3 `verify`. |
+| Reach for `need_inverse_traffic=True` to put traffic on the other side | It does not do that. It only lets the traffic manager *also* spawn NPCs on the opposing carriageway (`traffic_manager.py:246-247`, `:381-382`), and only for block IDs `S C r R` — so `X`, `T` and `O` are unaffected, silently, exactly like `accident_prob` above. Which side anyone **keeps** is geometry, not this flag. It is still worth turning on for the Traffic axis, because without it a two-way map has no oncoming traffic at all — but that is a **Scenario options** item, not a handedness switch. |
 | Defend seed identity by hashing a hand-picked list of config keys (+ pin `curriculum_level=1`) | Rejected outright rather than corrected. An audit of the config that went *in* cannot catch a simulator that builds a different map from it. Replaced wholesale by fingerprinting **the map that actually came out** — see **Integrity by fingerprint**. `config_hash` survives only as a diagnostic that *explains* a `map_id` failure; it is never itself the gate. |
 
 One more that is not a trap but is easy to over-build: **`crash_human` termination is already wired
@@ -441,6 +443,7 @@ full of it collides." That matters for Phase 4b.
 - **Categories**: the seven as drafted.
 - **Seeds**: fixed at 0, 1, 2, 3, 4 for every category. 35 maps.
 - **Options**: six axes, stored normalized, applied at run time.
+- **Handedness**: **left-side traffic** (right-hand-drive market — Singapore, UK, Malaysia, Japan). This is not a MetaDrive setting; see **Traps**. Enforced by `handedness.install()`, called from `base_config()` so no caller can forget it, and **measured** rather than asserted by Phase 0 `doctor` and Phase 3 `verify`.
 - **Policy**: the AV3 camera adapter is the contract from Phase 0, not adapted in later. *(Amended
   2026-08-30 — was "build against the state-vector callable now". Reversed because a state-vector
   policy cannot perceive five of the six option axes, so it could never have been the thing scored.)*
@@ -551,6 +554,9 @@ and eyeball 35 of them to check the heuristic. All of that is gone. `vehicle.con
 into a stored fact and makes the same five seeds reusable across every category.
 
 **Build**
+- `handedness.py` — **mirror the PG geometry layer about the x-axis, before any map is built.** MetaDrive drives on the right and offers no way not to (see **Traps**), so this is where the market is decided. Three sign changes and no others: negate `StraightLane.direction_lateral` (positive lateral becomes the vehicle's left, which walks the whole map — opposing carriageway, lane lines, sidewalks — to the other side, because all of it is placed off lane frames); invert `clockwise` on every `CircularLane` (this is what makes roundabouts circulate clockwise); and invert the **three** `is_clockwise()` sites in `create_pg_block_utils` that use it for *lateral* arithmetic rather than for arc direction (`:130`, `:271`, `:339`), which flip a second time so the two cancel. Installed from `base_config()`; idempotent. Rewrites those three lines from the module's own source and raises `HandednessError` if they are not found verbatim — the commit pin exists so MetaDrive's internals cannot move under us, and a patch that silently stopped applying would leave a working bank that is simply the wrong market.
+  - **Test it by exactness, not by plausibility.** A reflection is an isometry, so the mirrored map must be the *same road*: same node names, same lane count, same lane lengths, same radii. Build each block sequence twice — once here, once in a **subprocess that never imports `scenariobank`** so MetaDrive is unmodified there — and assert they agree lane by lane once one is reflected. That is the only honest way to check a monkey-patch of a global layer: it cannot be uninstalled, so the reference has to come from somewhere the patch never reached. It is also the check that earns its keep — an earlier version inverted the arcs but not the sibling-lane lateral arithmetic, and every node name, every lane count and every picture still looked right. The only symptom was that curved lanes came out the wrong length.
+  - Consequence for this phase's table: mirroring swaps which physical exit an angle rule selects. `intersection_left` is now the **near** turn and `intersection_right` is the one that crosses oncoming; `roundabout` takes `RIGHT` to keep the long way round.
 - `CATEGORIES` — one dict, one entry per category:
 
   | category | block_seq | destination | seeds |
@@ -753,13 +759,18 @@ config drift, and platform float nondeterminism.
 1. `schema_version` is supported.
 2. Compare `metadrive.commit` and `asset_version` against the running container. Commit mismatch
    is fatal — the `EDITION` string alone would not have caught it; see **Traps**.
-3. **Rebuild each sampled scenario and recompute `map_id`; compare.** This is the gate. On mismatch,
+3. **Measure the drive side of each rebuilt scenario and refuse on `right`.** Not read off
+   `handedness._installed` — measured from the map, the way `doctor.measure_drive_side` does it.
+   A bank whose manifest claims left-side traffic while its maps are right-side is worse than a
+   commit mismatch: every other field is correct, every thumbnail looks like a road, and the only
+   symptom is that a right-hand-drive model fails everything for reasons no result explains.
+4. **Rebuild each sampled scenario and recompute `map_id`; compare.** This is the gate. On mismatch,
    name the scenario and print which fingerprint field differs.
-4. Re-derive `config_hash` from `base_config` and compare. **Diagnostic:** on mismatch print a
+5. Re-derive `config_hash` from `base_config` and compare. **Diagnostic:** on mismatch print a
    key-by-key diff. It explains a `map_id` failure; it is not itself the failure.
-5. Hard-assert the determinism-hostile settings: `random_traffic is False`, `curriculum_level == 1`,
+6. Hard-assert the determinism-hostile settings: `random_traffic is False`, `curriculum_level == 1`,
    `store_map is True`.
-6. Sample `--sample N` (default 10). For each: reset twice and assert **byte-identical** initial
+7. Sample `--sample N` (default 10). For each: reset twice and assert **byte-identical** initial
    state — ego position/heading, `navigation.checkpoints`, and the sorted array of traffic vehicle
    spawn positions.
 
@@ -1053,6 +1064,12 @@ inside the container must fail.
   - **The camera-only statement, at the top of the options section.** A state-vector policy cannot
     perceive traffic, cones, barriers, pedestrians, cyclists or lights. Nobody should read a
     state-vector model's collision result as a model defect.
+  - **The bank is left-side traffic** (right-hand-drive market), stated as plainly as the
+    camera-only note above and for the same reason. The ego keeps left, roundabouts
+    circulate clockwise, on-ramps join from the left, and the turn that crosses oncoming
+    traffic is the **right** turn — so `intersection_right`, not `intersection_left`, is
+    the unprotected one. A model trained for right-side traffic will fail this bank for
+    reasons that are not model defects, and nobody should read those results as one.
   - **Seeds vary geometry and route; options vary difficulty.** State it explicitly — it is the
     distinction most likely to be misread, and it decides whether a result means "the model can do
     left turns" or "the model can do *this* left turn".

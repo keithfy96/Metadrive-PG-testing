@@ -1,13 +1,12 @@
 """The base config is a claim about what a policy can perceive. Test it as one."""
 
-import importlib.util
-
 import pytest
 
 from scenariobank.config import OBSERVATION_SHAPE, SENSOR_CONFIG, base_config
+from scenariobank.doctor import has_simulator
 
 needs_sim = pytest.mark.skipif(
-    importlib.util.find_spec("metadrive") is None,
+    not has_simulator(),
     reason="needs_sim: MetaDrive is not installed (uv sync --group sim)",
 )
 

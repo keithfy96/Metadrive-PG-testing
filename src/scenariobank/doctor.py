@@ -19,6 +19,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict
 
 from scenariobank.config import OBSERVATION_SHAPE, base_config
+from scenariobank.handedness import DRIVE_SIDE_LEFT, DRIVE_SIDE_RIGHT
 
 #: Reported alongside the simulator because each of them has, at some point, changed a rendered
 #: frame or a geometric result without changing anything MetaDrive reports about itself.
@@ -48,6 +49,31 @@ class DoctorReport(BaseModel):
     observation_space: str | None
     observation_shape: tuple[int, ...] | None
     action_space: str | None
+    #: Which side of the road traffic keeps to, **measured** from the map this environment
+    #: actually builds -- not read off `handedness._installed`. A flag that says "mirrored"
+    #: while the maps come out right-side-traffic is the one failure that would silently
+    #: invalidate every scenario in the bank, so the check does not trust the flag.
+    drive_side: str | None
+
+
+def has_simulator() -> bool:
+    """True when MetaDrive is importable, not merely present as a directory.
+
+    `importlib.util.find_spec("metadrive") is None` is not enough, and the difference is not
+    academic. MetaDrive downloads its asset tree into `site-packages/metadrive/assets/` at
+    first use; uv does not own those files, so uninstalling the `sim` group removes every
+    module but leaves that directory standing. Python reads the leftover as a **namespace
+    package**, `find_spec` returns a spec, and a `needs_sim` guard written that way stops
+    skipping -- so the simulator tests fail instead of skipping, which is precisely the failure
+    the repo's testing rule is aimed at: a guard that stops guarding silently.
+
+    The test is `origin`, not `loader`. A namespace package has no origin, ever. Its `loader`
+    starts out `None` but becomes a real `_NamespaceLoader` the moment anything imports it --
+    including a *failed* `import metadrive.envs.x`, which still binds the parent -- so a
+    loader-based check answers differently depending on what ran before it.
+    """
+    spec = importlib.util.find_spec("metadrive")
+    return spec is not None and spec.origin is not None
 
 
 def _dist_version(name: str) -> str | None:
@@ -101,9 +127,42 @@ def probe_simulator() -> dict[str, Any]:
             "observation_space": str(observation_space),
             "observation_shape": shape,
             "action_space": str(action_space),
+            "drive_side": measure_drive_side(env),
         }
     finally:
         env.close()
+
+
+def measure_drive_side(env: Any) -> str | None:
+    """Which side of the road the ego drives on, read off the map it was spawned into.
+
+    Finds the opposing carriageway of the ego's own road and asks which side of the ego it is
+    on. Oncoming traffic on the left means traffic keeps right; oncoming on the right means
+    traffic keeps left. Returns `None` when the spawn road is one-way, which is not a failure --
+    it just means this map cannot answer the question.
+    """
+    import numpy as np
+
+    agent = env.agent
+    road = agent.navigation.current_road
+    network = env.engine.current_map.road_network
+    opposing = (network.graph.get("-" + road.end_node) or {}).get("-" + road.start_node)
+    if not opposing:
+        return None
+
+    position = np.asarray(agent.position, dtype=float)
+    heading = float(agent.heading_theta)
+    to_the_left = np.array([-np.sin(heading), np.cos(heading)])
+    lateral = float(
+        np.mean(
+            [
+                (np.asarray(lane.position(lane.length / 2, 0), dtype=float) - position)
+                @ to_the_left
+                for lane in opposing
+            ]
+        )
+    )
+    return DRIVE_SIDE_RIGHT if lateral > 0 else DRIVE_SIDE_LEFT
 
 
 def collect(*, probe: bool = True) -> DoctorReport:
@@ -122,6 +181,7 @@ def collect(*, probe: bool = True) -> DoctorReport:
         "observation_space": None,
         "observation_shape": None,
         "action_space": None,
+        "drive_side": None,
     }
     if probe:
         probed = probe_simulator()
@@ -179,6 +239,14 @@ def check(report: DoctorReport, *, require_commit: str | None = None) -> list[st
             "lasers, which reads as Box(259,)."
         )
 
+    if report.drive_side is not None and report.drive_side != DRIVE_SIDE_LEFT:
+        problems.append(
+            f"traffic keeps {report.drive_side}, expected {DRIVE_SIDE_LEFT}. The mirror in "
+            "`handedness.install()` did not take, so this environment builds MetaDrive's own "
+            "right-side-traffic maps. Every scenario generated here would be the wrong "
+            "market, and nothing else about it would look wrong."
+        )
+
     return problems
 
 
@@ -195,6 +263,7 @@ def format_report(report: DoctorReport) -> str:
         *report.packages.items(),
         ("obs_space", report.observation_space),
         ("action_space", report.action_space),
+        ("drive_side", report.drive_side),
     ]
     width = max(len(key) for key, _ in rows)
     return "\n".join(f"{key + ':':<{width + 1}} {'-' if value is None else value}"

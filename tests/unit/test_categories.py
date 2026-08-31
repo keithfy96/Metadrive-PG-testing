@@ -1,0 +1,115 @@
+"""A category is a claim about a road and a turn. Both halves are testable."""
+
+import pytest
+
+from scenariobank.categories import (
+    CATEGORIES,
+    SEEDS,
+    VALID_BLOCK_IDS,
+    CategoryError,
+    ExitRule,
+    get_category,
+    step_budget,
+    validate_block_seq,
+)
+from scenariobank.doctor import has_simulator
+
+needs_sim = pytest.mark.skipif(
+    not has_simulator(),
+    reason="needs_sim: MetaDrive is not installed (uv sync --group sim)",
+)
+
+
+@pytest.mark.parametrize("block_seq", ["X", "T", "O", "CC", "rS", "SSS", "C$B"])
+def test_a_sequence_of_registered_block_ids_validates(block_seq):
+    validate_block_seq(block_seq)
+
+
+@pytest.mark.parametrize("block_seq", ["Z", "XZ", "x", "cc", "X ", "1"])
+def test_a_sequence_containing_an_unregistered_id_is_rejected(block_seq):
+    with pytest.raises(CategoryError, match="unknown block id"):
+        validate_block_seq(block_seq)
+
+
+def test_the_first_block_is_not_writable_in_a_sequence():
+    # `I` is prepended by the generator. Writing it would silently mean a second one.
+    with pytest.raises(CategoryError, match="unknown block id"):
+        validate_block_seq("IX")
+
+
+def test_an_empty_sequence_is_rejected_rather_than_producing_a_bare_first_block():
+    with pytest.raises(CategoryError, match="empty block sequence"):
+        validate_block_seq("")
+
+
+def test_the_rejection_message_names_the_category_it_came_from():
+    with pytest.raises(CategoryError, match="for category 'my_category'"):
+        validate_block_seq("Z", category="my_category")
+
+
+def test_every_shipped_category_has_a_buildable_block_sequence():
+    for name, category in CATEGORIES.items():
+        validate_block_seq(category.block_seq, category=name)
+
+
+def test_every_shipped_category_is_keyed_on_its_own_name():
+    assert all(name == category.name for name, category in CATEGORIES.items())
+
+
+def test_the_bank_is_seven_categories_at_five_seeds():
+    assert len(CATEGORIES) == 7
+    assert len(SEEDS) == 5
+
+
+def test_the_three_intersection_categories_share_one_road_and_differ_only_in_rule():
+    intersections = [c for name, c in CATEGORIES.items() if name.startswith("intersection_")]
+    assert {c.block_seq for c in intersections} == {"X"}
+    assert len({c.exit_rule for c in intersections}) == 3
+
+
+def test_asking_for_a_category_that_does_not_exist_lists_the_ones_that_do():
+    with pytest.raises(CategoryError, match="intersection_left"):
+        get_category("intersection_diagonal")
+
+
+@pytest.mark.parametrize(
+    ("length_m", "expected"),
+    [(0.0, 0), (10.0, 40), (117.2, 300), (122.5, 320), (452.1, 1140)],
+)
+def test_the_step_budget_rounds_up_so_a_route_is_never_short_of_its_own_estimate(
+    length_m, expected
+):
+    assert step_budget(length_m) == expected
+
+
+def test_every_category_budget_covers_the_longest_route_it_was_measured_at():
+    # The measured longest route per category, from docs/reference/destinations.md.
+    longest = {
+        "intersection_left": 117.2,
+        "intersection_right": 111.7,
+        "intersection_straight": 122.5,
+        "t_junction": 117.2,
+        "roundabout": 268.5,
+        "curve": 452.1,
+        "ramp_traffic_merge": 275.0,
+    }
+    for name, category in CATEGORIES.items():
+        assert category.max_steps >= step_budget(longest[name]), name
+
+
+@needs_sim
+def test_the_valid_block_ids_are_exactly_what_this_metadrive_can_build():
+    # The literal in `categories.py` exists so the module imports without MetaDrive. This is
+    # what stops it drifting from the simulator it describes.
+    from metadrive.component.algorithm.blocks_prob_dist import PGBlockDistConfig
+    from metadrive.utils.registry import get_metadrive_class
+
+    registered = {get_metadrive_class(name).ID for name in PGBlockDistConfig.all_blocks("v2")}
+    assert registered == VALID_BLOCK_IDS
+
+
+@needs_sim
+def test_every_rule_a_category_uses_is_one_the_selector_implements():
+    from scenariobank.sockets import select_exit  # noqa: F401
+
+    assert {c.exit_rule for c in CATEGORIES.values()} <= set(ExitRule)

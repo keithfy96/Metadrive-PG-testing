@@ -47,6 +47,13 @@ def base_config(**overrides: Any) -> dict[str, Any]:
     """
     from metadrive.obs.state_obs import StateObservation
 
+    from scenariobank.handedness import install
+
+    # Left-side traffic. This is the one function every env-building path in this package goes
+    # through, and the mirror has to be in place before any map is built -- so it is installed
+    # here rather than left to each caller to remember. Idempotent; see `handedness.install`.
+    install()
+
     config: dict[str, Any] = {
         "use_render": False,
         "agent_observation": StateObservation,

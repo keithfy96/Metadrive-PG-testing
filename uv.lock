@@ -772,6 +772,7 @@ dev = [
     { name = "ruff" },
 ]
 sim = [
+    { name = "matplotlib" },
     { name = "metadrive-simulator" },
 ]
 
@@ -788,7 +789,10 @@ dev = [
     { name = "pytest", specifier = ">=8,<9" },
     { name = "ruff", specifier = ">=0.12,<1" },
 ]
-sim = [{ name = "metadrive-simulator", git = "https://github.com/metadriverse/metadrive.git?rev=85e5dadc" }]
+sim = [
+    { name = "matplotlib", specifier = ">=3.8,<4" },
+    { name = "metadrive-simulator", git = "https://github.com/metadriverse/metadrive.git?rev=85e5dadc" },
+]
 
 [[package]]
 name = "yapf"

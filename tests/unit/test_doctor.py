@@ -1,16 +1,22 @@
 """`doctor` is the only thing standing between a reproducible bank and a plausible one."""
 
-import importlib.util
-
 import pytest
 
 from scenariobank.config import OBSERVATION_SHAPE
-from scenariobank.doctor import DoctorReport, check, collect, format_report, resolved_source
+from scenariobank.doctor import (
+    DoctorReport,
+    check,
+    collect,
+    format_report,
+    has_simulator,
+    resolved_source,
+)
+from scenariobank.handedness import DRIVE_SIDE_LEFT, DRIVE_SIDE_RIGHT
 
 # Named, so that a skip is legible in the report rather than a silent absence. A guard that
 # stops running quietly is worse than one that fails.
 needs_sim = pytest.mark.skipif(
-    importlib.util.find_spec("metadrive") is None,
+    not has_simulator(),
     reason="needs_sim: MetaDrive is not installed (uv sync --group sim)",
 )
 
@@ -27,6 +33,7 @@ HEALTHY = dict(
     observation_space="Box(19,)",
     observation_shape=OBSERVATION_SHAPE,
     action_space="Box(2,)",
+    drive_side=DRIVE_SIDE_LEFT,
 )
 
 
@@ -68,6 +75,17 @@ def test_any_observation_other_than_the_pinned_one_fails(shape):
     assert "lidar block" in problems[0]
 
 
+def test_a_right_side_traffic_environment_is_rejected():
+    """The mirror not taking is silent everywhere else: the bank builds, and it is wrong."""
+    problems = check(report(drive_side=DRIVE_SIDE_RIGHT))
+    assert len(problems) == 1
+    assert "traffic keeps right" in problems[0]
+
+
+def test_an_unmeasured_drive_side_is_not_treated_as_a_failure():
+    assert check(report(drive_side=None)) == []
+
+
 def test_an_unprobed_report_does_not_invent_an_observation_verdict():
     # --no-probe skips the reset; it must not then claim the observation is wrong.
     assert check(report(observation_shape=None, observation_space=None)) == []
@@ -89,3 +107,17 @@ def test_the_installed_simulator_is_the_pinned_commit_with_the_pinned_observatio
     collected = collect(probe=True)
     assert collected.observation_shape == OBSERVATION_SHAPE
     assert check(collected, require_commit="85e5dadc") == []
+
+
+def test_the_simulator_guard_agrees_with_actually_importing_the_simulator():
+    # Runs in both configurations and is the check that matters: uninstalling the sim group
+    # leaves `site-packages/metadrive/assets/` behind, Python reads the leftover directory as a
+    # namespace package, and a guard built on `find_spec(...) is None` answers "installed" for
+    # a MetaDrive that cannot be imported. Every needs_sim skipif in this repo rests on this.
+    try:
+        import metadrive.envs.base_env  # noqa: F401
+
+        importable = True
+    except ImportError:
+        importable = False
+    assert has_simulator() is importable

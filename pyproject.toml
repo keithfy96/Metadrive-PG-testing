@@ -30,7 +30,12 @@ dev = [
 #
 # `scenariobank doctor` exists to make this pin observable at run time rather than at
 # resolve time -- it reads the SHA back out of the installed dist's `direct_url.json`.
+#
+# matplotlib is named here rather than relied on as a MetaDrive transitive dependency:
+# `figures.py` draws the road network itself, because MetaDrive's top-down renderer has no
+# notion of a route and the route is the whole question a Phase 1 figure answers.
 sim = [
+  "matplotlib>=3.8,<4",
   "metadrive-simulator @ git+https://github.com/metadriverse/metadrive.git@85e5dadc",
 ]
 
