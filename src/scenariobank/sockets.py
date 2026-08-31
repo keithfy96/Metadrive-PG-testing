@@ -20,6 +20,11 @@ from scenariobank.categories import (
     validate_block_seq,
 )
 
+#: Heading samples per route lane when integrating rotation. Dense enough that a single step
+#: never approaches pi even on the tightest arc MetaDrive builds (radius 25 m), which is what
+#: lets `route_rotation` sum wrapped deltas without losing a full turn.
+_ROTATION_SAMPLES = 20
+
 
 class SocketError(RuntimeError):
     """Raised when a block does not offer the exit a category asked for."""
@@ -131,12 +136,84 @@ def resolve_destination(category: Category, seed: int) -> SocketReading:
         raise SocketError(f"{category.name} at seed {seed}: {error}") from error
 
 
-def route_length(category: Category, seed: int, destination: str) -> float:
-    """Return the length of the pinned route, in metres, by building the env that drives it.
+@dataclass(frozen=True)
+class RouteMeasurement:
+    """Everything one reset of the pinned route can tell us. One env build, three facts."""
+
+    #: `navigation.total_length`. Measured on a reference lane, so it is **blind to
+    #: `spawn_lane`** -- the five `X` seeds all read 111.70 while starting in two different lanes.
+    length_m: float
+    #: The lane the ego actually spawned in, drawn by `random_spawn_lane_index`. See
+    #: `config.base_config`: this is the only thing that differs between the five `X` seeds.
+    spawn_lane: int
+    #: Total rotation **along the driven route**, unwrapped, in degrees. Not the same as
+    #: `SocketReading.angle_deg`, which is a `wrap_to_pi` of the *final heading* -- correct for
+    #: choosing an exit, wrong for describing one. `curve` seed 0 sweeps +239.5 deg and its
+    #: wrapped final heading reads -120.5.
+    net_rotation_deg: float
+    #: One character per `Curve` block the route passes, `L` or `R`, in order. `""` for a
+    #: sequence with no curves. This is what makes `CC`'s four-way direction coverage checkable.
+    turn_pairs: str
+
+
+def route_rotation(env) -> tuple[float, list[tuple[str, float]]]:
+    """Integrate heading along the pinned route, and attribute the rotation to blocks.
+
+    Summing **wrapped deltas** between closely spaced samples recovers the unwrapped total: a
+    240 degree sweep comes out as +239.5 rather than folding to -120.5. Sampling is dense enough
+    that no single step approaches pi, which is what makes the wrap safe rather than lossy.
+
+    Rotation is measured from the geometry rather than read off `Parameter.dir`, so it describes
+    the map as *built* -- `handedness.install` mirrors it, and a parameter-based reading would
+    silently label every turn backwards.
+    """
+    import numpy as np
+    from metadrive.utils.math import wrap_to_pi
+
+    road_map = env.engine.current_map
+    network = road_map.road_network
+    checkpoints = list(env.agent.navigation.checkpoints)
+
+    per_block: dict[int, float] = {}
+    theta = float(env.agent.heading_theta)
+    for start, end in zip(checkpoints[:-1], checkpoints[1:], strict=True):
+        lane = network.graph[start][end][-1]
+        owner = next(
+            (
+                index
+                for index, block in enumerate(road_map.blocks)
+                if end in block.block_network.graph.get(start, {})
+            ),
+            None,
+        )
+        for step in range(1, _ROTATION_SAMPLES + 1):
+            sampled = float(lane.heading_theta_at(lane.length * step / _ROTATION_SAMPLES))
+            per_block[owner] = per_block.get(owner, 0.0) + float(wrap_to_pi(sampled - theta))
+            theta = sampled
+
+    rotations = [
+        (road_map.blocks[index].ID, float(np.degrees(radians)))
+        for index, radians in sorted(per_block.items(), key=lambda item: (item[0] is None, item[0]))
+        if index is not None
+    ]
+    total = float(np.degrees(sum(per_block.values())))
+    return total, rotations
+
+
+def turn_pairs(rotations: list[tuple[str, float]]) -> str:
+    """Reduce per-block rotations to the `Curve` blocks' directions. Pure: no simulator."""
+    return "".join(
+        "L" if degrees > 0 else "R" for block_id, degrees in rotations if block_id == "C"
+    )
+
+
+def measure_route(category: Category, seed: int, destination: str) -> RouteMeasurement:
+    """Build the env that drives the pinned route, reset once, and measure it.
 
     Separate from `read_sockets` on purpose: this one proves the destination is *reachable*,
     which naming a node does not. `set_route` runs a shortest path and would raise here rather
-    than at run time.
+    than at run time. The spawn lane and the rotation are read from the same reset, so they
+    cost nothing beyond the build that was already happening.
     """
     from metadrive.envs.metadrive_env import MetaDriveEnv
 
@@ -152,9 +229,20 @@ def route_length(category: Category, seed: int, destination: str) -> float:
     )
     try:
         env.reset(seed=seed)
-        return float(env.agent.navigation.total_length)
+        rotation, rotations = route_rotation(env)
+        return RouteMeasurement(
+            length_m=float(env.agent.navigation.total_length),
+            spawn_lane=int(env.agent.lane_index[2]),
+            net_rotation_deg=round(rotation, 2),
+            turn_pairs=turn_pairs(rotations),
+        )
     finally:
         env.close()
+
+
+def route_length(category: Category, seed: int, destination: str) -> float:
+    """Return the length of the pinned route, in metres. Thin wrapper over `measure_route`."""
+    return measure_route(category, seed, destination).length_m
 
 
 def survey(category: Category, seeds: tuple[int, ...]) -> list[dict[str, Any]]:
@@ -162,13 +250,19 @@ def survey(category: Category, seeds: tuple[int, ...]) -> list[dict[str, Any]]:
     rows = []
     for seed in seeds:
         exit_socket = resolve_destination(category, seed)
+        measured = measure_route(category, seed, exit_socket.node)
         rows.append(
             {
                 "seed": seed,
                 "destination": exit_socket.node,
                 "angle_deg": exit_socket.angle_deg,
-                "turn": _turn_word(exit_socket.angle_deg),
-                "route_length_m": round(route_length(category, seed, exit_socket.node), 1),
+                # The turn word comes from the *route*, not from the socket. They disagree
+                # whenever a route sweeps past 180 degrees -- `curve` seeds 0 and 4 do.
+                "turn": _turn_word(measured.net_rotation_deg),
+                "net_rotation_deg": measured.net_rotation_deg,
+                "turn_pairs": measured.turn_pairs,
+                "spawn_lane": measured.spawn_lane,
+                "route_length_m": round(measured.length_m, 1),
             }
         )
     return rows
@@ -176,11 +270,15 @@ def survey(category: Category, seeds: tuple[int, ...]) -> list[dict[str, Any]]:
 
 __all__ = [
     "CategoryError",
+    "RouteMeasurement",
     "SocketError",
     "SocketReading",
+    "measure_route",
     "read_sockets",
+    "route_rotation",
     "resolve_destination",
     "route_length",
     "select_exit",
     "survey",
+    "turn_pairs",
 ]

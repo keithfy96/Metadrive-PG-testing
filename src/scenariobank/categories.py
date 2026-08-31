@@ -116,8 +116,14 @@ def validate_block_seq(block_seq: str, *, category: str | None = None) -> None:
 #: and the map pins `lane_num=3` and `lane_width=3.5`, so the junction has no seeded degree of
 #: freedom left. Accepted deliberately: the five seeds of an intersection category vary the
 #: *scene* -- traffic and hazard placement, which the option axes drive -- on a controlled road.
-#: Two consequences downstream: Phase 2 must not assert 35 distinct `map_id`s, and at option
-#: level zero those five runs are the same run. `scenariobank destinations` re-measures it.
+#: Phase 2 must therefore not assert 35 distinct `map_id`s. `scenariobank destinations` re-measures
+#: it.
+#:
+#: Those five runs are still not identical: `random_spawn_lane_index` is left on (see
+#: `config.base_config`), so the ego starts in lane 0, 1, 0, 1, 1 across seeds 0-4. Until Phase 3's
+#: options arrive that is the *only* thing separating them, and `route_length` will not show it --
+#: `navigation.total_length` is measured on a reference lane. The drawn lane is recorded per
+#: scenario instead of being left implicit.
 #:
 #: Route lengths measured on this simulator at seeds 0-4, in metres, longest of the five, and
 #: **measured on the mirrored, left-side-traffic map** (`scenariobank.handedness`):
@@ -183,7 +189,13 @@ CATEGORIES: dict[str, Category] = {
             block_seq="CC",
             exit_rule=ExitRule.ONLY,
             max_steps=1200,
-            description="Two consecutive curves. Radius and arc both vary with the seed.",
+            description=(
+                "Two consecutive curves. The two blocks draw radius, arc and *direction* "
+                "independently, so what the seed picks is a pair: seeds 0-4 cover all four of "
+                "left-left, left-right, right-right and right-left. Net rotation runs from "
+                "+67.5 to +239.5 degrees -- two of the five sweep past a U-turn, which is a "
+                "consequence of the pairing rather than an accident of it."
+            ),
         ),
         Category(
             name="ramp_traffic_merge",

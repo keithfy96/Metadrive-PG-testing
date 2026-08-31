@@ -113,3 +113,33 @@ def test_every_rule_a_category_uses_is_one_the_selector_implements():
     from scenariobank.sockets import select_exit  # noqa: F401
 
     assert {c.exit_rule for c in CATEGORIES.values()} <= set(ExitRule)
+
+
+def test_turn_pairs_reads_only_the_curve_blocks_and_in_order():
+    # Pure, so it runs without the simulator. `I` and `S` contribute no turn; the sign of each
+    # `C` block's rotation is the letter.
+    from scenariobank.sockets import turn_pairs
+
+    assert turn_pairs([("I", 0.0), ("C", 115.5), ("C", -50.5)]) == "LR"
+    assert turn_pairs([("I", 0.0), ("C", -69.5), ("C", -71.4)]) == "RR"
+    assert turn_pairs([("I", 0.0), ("r", 0.0), ("S", 0.0)]) == ""
+
+
+@needs_sim
+def test_the_curve_seeds_cover_every_combination_of_two_turn_directions():
+    """`CC` is two independent draws, so the seeds must reach all four pairs -- not just two
+    lefts and two rights, but left-then-right and right-then-left as well.
+
+    This holds today by luck rather than by construction: the seeds are fixed at 0-4 and the
+    parameters come from MetaDrive's own RNG. That is exactly why it is asserted. A simulator
+    bump that shifts the draw would quietly collapse the coverage to three combinations, and
+    every road would still build, every route would still resolve, and nothing else would fail.
+    """
+    from scenariobank.sockets import measure_route, resolve_destination
+
+    category = get_category("curve")
+    signatures = {
+        measure_route(category, seed, resolve_destination(category, seed).node).turn_pairs
+        for seed in SEEDS
+    }
+    assert signatures == {"LL", "LR", "RL", "RR"}

@@ -64,6 +64,16 @@ def base_config(**overrides: Any) -> dict[str, Any]:
         "traffic_density": 0.0,
         "random_traffic": False,
         "accident_prob": 0.0,
+        # Spawn lane is a seeded draw, and it is deliberately left on. It is the only `random_*`
+        # key MetaDrive defaults to `True` (`metadrive_env.py:61`), and it is the *only* thing
+        # that differs between the five seeds of an `X` category -- `StdInterSection` builds one
+        # identical road at all five, so without this the five runs would coincide at option
+        # level zero. `agent_manager.py:111-119` draws `randint(lane_num)` once per reset.
+        # Named here at its own default so that keeping it is a decision on the record rather
+        # than an inherited one. Measured invariant under `traffic_density` and `accident_prob`
+        # and across env rebuilds, so it does not threaten Phase 2b; the drawn lane is recorded
+        # per scenario rather than left implicit. See `sockets.measure_route`.
+        "random_spawn_lane_index": True,
         # One scenario at seed 0. Phases 1-2 replace this with the real seed range.
         "start_seed": 0,
         "num_scenarios": 1,

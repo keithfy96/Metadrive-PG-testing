@@ -59,3 +59,12 @@ def test_a_freshly_built_env_produces_exactly_the_pinned_observation():
         assert tuple(env.observation_space.shape) == OBSERVATION_SHAPE
     finally:
         env.close()
+
+
+def test_the_spawn_lane_draw_is_named_rather_than_inherited():
+    # MetaDrive defaults `random_spawn_lane_index` to True (`metadrive_env.py:61`) -- the only
+    # `random_*` key that does. It is left on deliberately, because for `X` it is the sole
+    # difference between the five seeds. Naming it here is what makes that a decision rather
+    # than an accident, so this test guards the *presence* of the key, not just its value.
+    assert "random_spawn_lane_index" in base_config()
+    assert base_config()["random_spawn_lane_index"] is True

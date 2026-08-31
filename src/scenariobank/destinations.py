@@ -54,12 +54,108 @@ is how a change in block geometry becomes visible.
 Angles are degrees from the ego's spawn heading, counter-clockwise-positive, so **positive is a
 left turn** (`straight_lane.py:56`). `route_length` is `navigation.total_length` with the
 destination pinned, which also proves the destination is reachable and not merely named.
+
+**Two different angles appear below.** The resolved-destination table reports the *final heading*,
+`wrap_to_pi`'d -- correct for choosing an exit, and what `ExitRule` matches against. "Turn taken"
+reports **total rotation along the driven route**, which is not wrapped. They agree everywhere
+except a route that sweeps past 180 degrees, where the wrapped one folds and changes sign: `curve`
+seed 0 turns +239.5 degrees left and its final heading reads -120.5.
 """
 
 
 def build_rows(seeds: tuple[int, ...] = SEEDS) -> dict[str, list[dict]]:
     """Resolve and measure every category at every seed."""
     return {name: survey(category, seeds) for name, category in CATEGORIES.items()}
+
+
+def _spawn_lane_section(rows: dict[str, list[dict]], seeds: tuple[int, ...]) -> list[str]:
+    """The spawn lane per seed -- the one thing a fixed road still varies.
+
+    `random_spawn_lane_index` is left on deliberately (`config.base_config`), so the lane is a
+    seeded draw rather than a constant. Measurement says it depends only on the seed, because
+    every map is `lane_num=3` -- but that is **checked here rather than assumed**, and the full
+    per-category table is emitted if it ever stops being true.
+    """
+    lanes = {
+        name: [row["spawn_lane"] for row in category_rows]
+        for name, category_rows in rows.items()
+    }
+    header = [
+        "",
+        "## Spawn lane",
+        "",
+        "Which of the three lanes the ego starts in. Drawn by `random_spawn_lane_index`, which",
+        "this bank deliberately leaves on -- for `X` it is the *only* thing that differs between",
+        "the five seeds, since the road is identical at all five. `route_length` is measured on a",
+        "reference lane and so does not reflect it.",
+        "",
+    ]
+    shared = next(iter(lanes.values()))
+    if all(seq == shared for seq in lanes.values()):
+        return header + [
+            "| | " + " | ".join(f"seed {s}" for s in seeds) + " |",
+            "|---|" + "---|" * len(seeds),
+            "| every category | " + " | ".join(str(lane) for lane in shared) + " |",
+            "",
+            "Identical for every block sequence -- the draw is `randint(lane_num)` and every "
+            f"map is `lane_num=3`, so it depends only on the seed. {len(set(shared))} distinct "
+            f"starting lanes across these {len(seeds)} seeds.",
+        ]
+    return header + [
+        "| category | " + " | ".join(f"seed {s}" for s in seeds) + " |",
+        "|---|" + "---|" * len(seeds),
+        *(
+            f"| `{name}` | " + " | ".join(str(lane) for lane in seq) + " |"
+            for name, seq in lanes.items()
+        ),
+        "",
+        "**The spawn lane is no longer seed-only.** It used to depend on nothing but the seed;",
+        "if this table is not uniform, a block sequence has changed its lane count.",
+    ]
+
+
+def _turn_pair_section(rows: dict[str, list[dict]], seeds: tuple[int, ...]) -> list[str]:
+    """Which direction each `Curve` block turns, per seed.
+
+    `CC` is two curves drawn independently, so the pair is the property that matters: two lefts
+    and two rights are not enough on their own, the seeds have to reach left-then-right and
+    right-then-left as well. `tests/unit/test_categories.py` asserts the coverage.
+    """
+    curved = {
+        name: category_rows
+        for name, category_rows in rows.items()
+        if any(row["turn_pairs"] for row in category_rows)
+    }
+    if not curved:
+        return []
+    lines = [
+        "",
+        "## Curve direction pairs",
+        "",
+        "One letter per `Curve` block on the route, in order. The two blocks of `CC` draw their",
+        "direction independently (`pg_space.py:284-289`), so the pair -- not the net angle -- is",
+        "what says whether the seeds cover the manoeuvre.",
+        "",
+        "| category | " + " | ".join(f"seed {s}" for s in seeds) + " | combinations |",
+        "|---|" + "---|" * len(seeds) + "---|",
+    ]
+    for name, category_rows in curved.items():
+        signatures = [row["turn_pairs"] for row in category_rows]
+        distinct = len(set(signatures))
+        possible = 2 ** len(signatures[0])
+        marker = "" if distinct == possible else "  **<**"
+        lines.append(
+            f"| `{name}` | "
+            + " | ".join(f"`{sig}`" for sig in signatures)
+            + f" | {distinct}/{possible}{marker} |"
+        )
+    lines += [
+        "",
+        "`L` is a left-turning block, `R` a right-turning one, measured from the built geometry",
+        "rather than from `Parameter.dir` -- the map is mirrored (`handedness.py`), and a",
+        "parameter reading would label every turn backwards.",
+    ]
+    return lines
 
 
 def render(
@@ -98,11 +194,16 @@ def render(
         "",
         "## Turn taken",
         "",
+        "Total rotation along the route, unwrapped -- see the note above.",
+        "",
         "| category | " + " | ".join(f"seed {s}" for s in seeds) + " |",
         "|---|" + "---|" * len(seeds),
     ]
     for name in CATEGORIES:
-        lines.append(f"| `{name}` | " + " | ".join(row["turn"] for row in rows[name]) + " |")
+        cells = [f"{row['turn']} {row['net_rotation_deg']:+.1f}deg" for row in rows[name]]
+        lines.append(f"| `{name}` | " + " | ".join(cells) + " |")
+
+    lines += _spawn_lane_section(rows, seeds) + _turn_pair_section(rows, seeds)
 
     if variety is not None:
         lines += [
@@ -130,7 +231,11 @@ def render(
             "`X` has no seeded degree of freedom left: `StdInterSection` fixes its radius and the",
             "map pins `lane_num=3` and `lane_width=3.5`. Accepted deliberately -- the five seeds",
             "of an intersection category vary the scene, not the road. Phase 2 must therefore not",
-            "assert one `map_id` per scenario, and at option level zero those five runs coincide.",
+            "assert one `map_id` per scenario.",
+            "",
+            "Those five runs are still not identical, though: the ego starts in a different lane",
+            "(see **Spawn lane**), which is the only thing distinguishing them until Phase 3's",
+            "options arrive.",
         ]
     lines.append("")
     return "\n".join(lines)

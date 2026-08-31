@@ -147,6 +147,10 @@ Prints one row per exit — socket index, destination node, angle from the spawn
 turn that implies — then what each `ExitRule` would resolve to. Angles are
 counter-clockwise-positive, so **positive is a left turn**.
 
+**The angle is the final heading, `wrap_to_pi`'d — not how far the ego turns.** That is what
+`ExitRule` needs, but it folds: `curve` seed 0 sweeps +239.5° and shows here as −120.5°, half the
+rotation and the wrong direction. For total rotation use `destinations`, which reports both.
+
 Expect one exit near `+90`, one near `-90` and one near `0` for a four-way junction. **Two exits
 of the same sign and similar magnitude mean the block is not what you think it is** — stop and
 look before pinning anything to it.
@@ -187,11 +191,19 @@ Resolves every category at every seed, proves each destination is reachable by r
 shortest path, measures the route, and fingerprints each block sequence's drivable surface. Two
 env builds per category per seed plus one per sequence — about a minute.
 
-The document it writes has four sections: the resolved destination and angle per category and
-seed; route length against the earned step budget; the turn actually taken; and **distinct roads
-per block sequence**, which is where the bank's least obvious property is recorded — `X` builds
-one identical road at all five seeds, `T` builds two, and the other three build five each, so
-there are **18 distinct roads across the 35 scenarios**.
+The document it writes has six sections: the resolved destination and angle per category and
+seed; route length against the earned step budget; the turn actually taken; the **spawn lane**;
+the **curve direction pairs**; and **distinct roads per block sequence**, which is where the
+bank's least obvious property is recorded — `X` builds one identical road at all five seeds, `T`
+builds two, and the other three build five each, so there are **18 distinct roads across the 35
+scenarios**.
+
+Those `X` seeds are still not five identical runs. `random_spawn_lane_index` is left on
+deliberately, so the ego starts in lane `0, 1, 0, 1, 1` — the only thing separating them until
+Phase 3's options arrive, and invisible in `route_length`, which is measured on a reference lane.
+The curve section records the other property that holds by luck: `CC` draws each block's direction
+independently, and seeds 0–4 happen to cover all four of `LL`, `LR`, `RR`, `RL`. Both are asserted
+by tests so a MetaDrive bump cannot quietly take them away.
 
 Regenerate it after any MetaDrive bump. That is how a change in block geometry becomes visible
 instead of silently changing what the bank means.
@@ -224,13 +236,13 @@ Nothing writes outside the repo, and no command writes to `$HOME`.
 ## Tests
 
 ```bash
-uv run pytest        # 111 tests, ~16s with the sim group installed
+uv run pytest        # 118 tests, ~22s with the sim group installed
 ```
 
 | | pass | skip |
 |---|---|---|
-| `uv sync --group sim` | 111 | 0 |
-| `uv sync` | 61 | 50 |
+| `uv sync --group sim` | 118 | 0 |
+| `uv sync` | 63 | 55 |
 
 Simulator-dependent tests are guarded by a **named** `needs_sim` skipif rather than a bare one, so
 a skip is legible in the report instead of being a silent absence:

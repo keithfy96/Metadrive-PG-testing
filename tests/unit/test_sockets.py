@@ -106,3 +106,90 @@ def test_the_t_junction_turns_on_every_seed_even_though_the_direction_changes(se
 
     chosen = resolve_destination(CATEGORIES["t_junction"], seed)
     assert abs(chosen.angle_deg) > 45.0
+
+
+@needs_sim
+def test_the_spawn_lane_is_reproducible_and_untouched_by_the_option_axes():
+    """The invariance Phase 2b rests on, for the one knob that is deliberately random.
+
+    `random_spawn_lane_index` draws from the seeded RNG, so a scenario is only reproducible if
+    that draw is a function of the seed alone. If MetaDrive ever changes how much randomness the
+    traffic or object managers consume before the agent manager draws, this is what catches it.
+    """
+    from metadrive.envs.metadrive_env import MetaDriveEnv
+
+    from scenariobank.config import base_config
+
+    def lanes(**overrides):
+        env = MetaDriveEnv(
+            base_config(map="X", start_seed=0, num_scenarios=len(SEEDS), **overrides)
+        )
+        try:
+            drawn = []
+            for seed in SEEDS:
+                env.reset(seed=seed)
+                drawn.append(env.agent.lane_index[2])
+            return drawn
+        finally:
+            env.close()
+
+    baseline = lanes()
+    assert len(set(baseline)) > 1, "a constant draw would make this test vacuous"
+    assert lanes() == baseline, "not reproducible across env rebuilds"
+    assert lanes(traffic_density=0.4) == baseline, "traffic moved the spawn lane"
+    assert lanes(accident_prob=0.8) == baseline, "hazards moved the spawn lane"
+
+
+@needs_sim
+def test_the_spawn_lane_depends_on_the_seed_and_not_on_the_block_sequence():
+    # Every map is `lane_num=3` and the draw is `randint(lane_num)`, so the sequence cannot
+    # matter. `destinations.md` collapses its table to one row on the strength of this.
+    from metadrive.envs.metadrive_env import MetaDriveEnv
+
+    from scenariobank.config import base_config
+
+    def lanes(block_seq):
+        env = MetaDriveEnv(
+            base_config(map=block_seq, start_seed=0, num_scenarios=len(SEEDS))
+        )
+        try:
+            drawn = []
+            for seed in SEEDS:
+                env.reset(seed=seed)
+                drawn.append(env.agent.lane_index[2])
+            return drawn
+        finally:
+            env.close()
+
+    assert lanes("X") == lanes("O")
+
+
+@needs_sim
+def test_every_surveyed_row_records_the_lane_the_ego_actually_spawned_in():
+    from scenariobank.sockets import survey
+
+    rows = survey(CATEGORIES["intersection_left"], SEEDS)
+    lanes = [row["spawn_lane"] for row in rows]
+    assert all(isinstance(lane, int) and 0 <= lane < 3 for lane in lanes)
+    # The road is identical at all five seeds, so if this were constant too the five scenarios
+    # would be one scenario repeated.
+    assert len(set(lanes)) > 1
+
+
+@needs_sim
+def test_a_route_past_a_u_turn_reports_its_true_rotation_not_the_wrapped_one():
+    """The regression test for the bug this pair of fields exists to fix.
+
+    `curve` seed 0 sweeps +239.5 degrees. `wrap_to_pi` folds that to -120.5, which reads as a
+    *right* turn of half the size. Both numbers are kept because both are wanted: the wrapped one
+    is what `ExitRule` matches against, the unwrapped one is what a driver does.
+    """
+    from scenariobank.sockets import measure_route, resolve_destination
+
+    category = CATEGORIES["curve"]
+    exit_socket = resolve_destination(category, 0)
+    measured = measure_route(category, 0, exit_socket.node)
+
+    assert abs(measured.net_rotation_deg) > 180.0
+    assert abs(exit_socket.angle_deg) <= 180.0
+    assert measured.net_rotation_deg > 0 > exit_socket.angle_deg, "the fold flips the sign"

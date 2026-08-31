@@ -12,7 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from scenariobank.categories import Category
-from scenariobank.sockets import resolve_destination
+from scenariobank.sockets import resolve_destination, route_rotation
 
 #: How many points each lane centreline is sampled at. Enough for a roundabout's arcs to look
 #: like arcs rather than chords.
@@ -63,6 +63,10 @@ def draw_route(category: Category, seed: int, out_path: Path) -> dict:
         spawn = np.asarray(env.agent.position, dtype=float)
         heading = float(env.agent.heading_theta)
         total_length = float(env.agent.navigation.total_length)
+        # The title reports rotation along the route, not `exit_socket.angle_deg`. The latter is
+        # `wrap_to_pi`'d, so a `curve` seed that sweeps past a U-turn would be labelled with half
+        # its rotation and the opposite sign -- and the picture would visibly disagree with it.
+        net_rotation, _ = route_rotation(env)
 
         figure, axes = plt.subplots(figsize=(8, 8))
         for start, tos in network.graph.items():
@@ -99,7 +103,7 @@ def draw_route(category: Category, seed: int, out_path: Path) -> dict:
         axes.set_title(
             f"{category.name}  seed {seed}\n"
             f"{category.exit_rule.value} -> {exit_socket.node} "
-            f"({exit_socket.angle_deg:+.1f} deg, {total_length:.0f} m)",
+            f"({net_rotation:+.1f} deg, {total_length:.0f} m)",
             fontsize=11,
         )
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -113,6 +117,7 @@ def draw_route(category: Category, seed: int, out_path: Path) -> dict:
         "seed": seed,
         "destination": exit_socket.node,
         "angle_deg": exit_socket.angle_deg,
+        "net_rotation_deg": round(net_rotation, 2),
         "route_length_m": round(total_length, 1),
         "path": str(out_path),
     }

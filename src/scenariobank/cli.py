@@ -159,7 +159,7 @@ def inspect_route(
         raise typer.Exit(code=1) from error
     typer.echo(
         f"{result['category']} seed {result['seed']} -> {result['destination']} "
-        f"({result['angle_deg']:+.1f} deg, {result['route_length_m']} m): {result['path']}"
+        f"({result['net_rotation_deg']:+.1f} deg, {result['route_length_m']} m): {result['path']}"
     )
 
 

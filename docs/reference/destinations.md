@@ -8,6 +8,12 @@ Angles are degrees from the ego's spawn heading, counter-clockwise-positive, so 
 left turn** (`straight_lane.py:56`). `route_length` is `navigation.total_length` with the
 destination pinned, which also proves the destination is reachable and not merely named.
 
+**Two different angles appear below.** The resolved-destination table reports the *final heading*,
+`wrap_to_pi`'d -- correct for choosing an exit, and what `ExitRule` matches against. "Turn taken"
+reports **total rotation along the driven route**, which is not wrapped. They agree everywhere
+except a route that sweeps past 180 degrees, where the wrapped one folds and changes sign: `curve`
+seed 0 turns +239.5 degrees left and its final heading reads -120.5.
+
 ## Resolved destination per category and seed
 
 | category | block_seq | rule | seed 0 | seed 1 | seed 2 | seed 3 | seed 4 |
@@ -37,15 +43,44 @@ rounded up to 20. Provisional until Phase 4b measures what a policy actually nee
 
 ## Turn taken
 
+Total rotation along the route, unwrapped -- see the note above.
+
 | category | seed 0 | seed 1 | seed 2 | seed 3 | seed 4 |
 |---|---|---|---|---|---|
-| `intersection_left` | left | left | left | left | left |
-| `intersection_right` | right | right | right | right | right |
-| `intersection_straight` | straight | straight | straight | straight | straight |
-| `t_junction` | left | left | right | right | left |
-| `roundabout` | right | right | right | right | right |
-| `curve` | right | left | right | left | right |
-| `ramp_traffic_merge` | straight | straight | straight | straight | straight |
+| `intersection_left` | left +90.0deg | left +90.0deg | left +90.0deg | left +90.0deg | left +90.0deg |
+| `intersection_right` | right -90.0deg | right -90.0deg | right -90.0deg | right -90.0deg | right -90.0deg |
+| `intersection_straight` | straight +0.0deg | straight +0.0deg | straight +0.0deg | straight +0.0deg | straight +0.0deg |
+| `t_junction` | left +90.0deg | left +90.0deg | right -90.0deg | right -90.0deg | left +90.0deg |
+| `roundabout` | right -90.0deg | right -90.0deg | right -90.0deg | right -90.0deg | right -90.0deg |
+| `curve` | left +239.5deg | left +81.3deg | right -140.8deg | left +67.5deg | left +225.4deg |
+| `ramp_traffic_merge` | straight +0.0deg | straight +0.0deg | straight +0.0deg | straight +0.0deg | straight +0.0deg |
+
+## Spawn lane
+
+Which of the three lanes the ego starts in. Drawn by `random_spawn_lane_index`, which
+this bank deliberately leaves on -- for `X` it is the *only* thing that differs between
+the five seeds, since the road is identical at all five. `route_length` is measured on a
+reference lane and so does not reflect it.
+
+| | seed 0 | seed 1 | seed 2 | seed 3 | seed 4 |
+|---|---|---|---|---|---|
+| every category | 0 | 1 | 0 | 1 | 1 |
+
+Identical for every block sequence -- the draw is `randint(lane_num)` and every map is `lane_num=3`, so it depends only on the seed. 2 distinct starting lanes across these 5 seeds.
+
+## Curve direction pairs
+
+One letter per `Curve` block on the route, in order. The two blocks of `CC` draw their
+direction independently (`pg_space.py:284-289`), so the pair -- not the net angle -- is
+what says whether the seeds cover the manoeuvre.
+
+| category | seed 0 | seed 1 | seed 2 | seed 3 | seed 4 | combinations |
+|---|---|---|---|---|---|---|
+| `curve` | `LL` | `LR` | `RR` | `RL` | `LL` | 4/4 |
+
+`L` is a left-turning block, `R` a right-turning one, measured from the built geometry
+rather than from `Parameter.dir` -- the map is mirrored (`handedness.py`), and a
+parameter reading would label every turn backwards.
 
 ## Distinct roads per block sequence
 
@@ -65,4 +100,8 @@ carries `map_config.seed` and would make every road look unique.
 `X` has no seeded degree of freedom left: `StdInterSection` fixes its radius and the
 map pins `lane_num=3` and `lane_width=3.5`. Accepted deliberately -- the five seeds
 of an intersection category vary the scene, not the road. Phase 2 must therefore not
-assert one `map_id` per scenario, and at option level zero those five runs coincide.
+assert one `map_id` per scenario.
+
+Those five runs are still not identical, though: the ego starts in a different lane
+(see **Spawn lane**), which is the only thing distinguishing them until Phase 3's
+options arrive.

@@ -141,6 +141,8 @@ section rather than in a phase because the temptation recurs — someone will re
 | Use `accident_prob` for the Cones and Barriers axes | Set it 0–1 and `TrafficObjectManager` scatters debris — but `object_manager.py:51-53` skips any block that is not `Straight`/`Curve`/`InRampOnStraight`/`OutRampOnStraight`, so `X`, `T` and `O` receive **nothing, with no error** — 5 of our 7 categories. And one scalar drives all three scene types mutually exclusively (`:54-91`), so "cones yes, barriers no" is inexpressible. **`accident_prob` stays `0.0` permanently**; write `obstacles.py`. See **Scenario options**. |
 | Look for MetaDrive's left-hand-traffic option | **There is none**, and the negative is exhaustive rather than a keyword grep: all 249 keys of `BASE_DEFAULT_CONFIG`, `METADRIVE_DEFAULT_CONFIG` and `SCENARIO_ENV_CONFIG` dumped and filtered — nothing; OpenDRIVE carries drive side as `rule="RHT"/"LHT"` and MetaDrive never parses it (`utils/opendrive/parser.py:509-535` has no such field, upstream `main` still reads `# Rules` / `# TODO implementation`); SUMO's `lefthand="true"` is dropped too; ScenarioNet's `coordinate` means coordinate *frame*, not traffic side. Every "handed" word in the package is coordinate chirality. **And there is nothing to upgrade to** — upstream `main`'s `version.py` still reads `0.4.3`. A geometry reflection is the only route: `handedness.py`. *Enforced in:* Phase 1 build, Phase 0 `doctor`, Phase 3 `verify`. |
 | Reach for `need_inverse_traffic=True` to put traffic on the other side | It does not do that. It only lets the traffic manager *also* spawn NPCs on the opposing carriageway (`traffic_manager.py:246-247`, `:381-382`), and only for block IDs `S C r R` — so `X`, `T` and `O` are unaffected, silently, exactly like `accident_prob` above. Which side anyone **keeps** is geometry, not this flag. It is still worth turning on for the Traffic axis, because without it a two-way map has no oncoming traffic at all — but that is a **Scenario options** item, not a handedness switch. |
+| Assume a fixed road means a fixed scenario | `X` builds **one identical road** at all five seeds (`StdInterSection` has a fixed radius, the map pins `lane_num=3`/`lane_width=3.5`), which invites the conclusion that its five seeds are one run repeated. They are not: `random_spawn_lane_index` defaults to `True` (`metadrive_env.py:61`) — the only `random_*` key that does — and `agent_manager.py:111-119` draws `randint(lane_num)` per reset, giving lanes `0, 1, 0, 1, 1`. **`route_length` will not show you**, because `navigation.total_length` is measured on a reference lane and reads `111.70` at all five. Kept on deliberately and recorded per scenario. *Enforced in:* `config.base_config` names the key; `sockets.measure_route` records the draw; `test_sockets.py` asserts it is invariant under the option axes. |
+| Read `SocketReading.angle_deg` as how far the ego turns | It is the **final heading**, `wrap_to_pi`'d (`sockets.py:80`). Correct for choosing an exit — which is all `ExitRule` needs — and wrong for describing one. `curve` seed 0 sweeps **+239.5°** and this field reads **−120.5°**: half the rotation, and the opposite direction. `X`/`T`/`O` never pass 180° so they are unaffected, which is what let it sit unnoticed. Use `RouteMeasurement.net_rotation_deg`, integrated along the driven route. *Enforced in:* `destinations.md` reports both and says which is which; `test_sockets.py` pins the disagreement. |
 | Defend seed identity by hashing a hand-picked list of config keys (+ pin `curriculum_level=1`) | Rejected outright rather than corrected. An audit of the config that went *in* cannot catch a simulator that builds a different map from it. Replaced wholesale by fingerprinting **the map that actually came out** — see **Integrity by fingerprint**. `config_hash` survives only as a diagnostic that *explains* a `map_id` failure; it is never itself the gate. |
 
 One more that is not a trap but is easy to over-build: **`crash_human` termination is already wired
@@ -566,10 +568,20 @@ into a stored fact and makes the same five seeds reusable across every category.
   | `intersection_straight` | `X` | far exit socket | 0–4 |
   | `t_junction` | `T` | chosen exit socket | 0–4 |
   | `roundabout` | `O` | chosen exit socket | 0–4 |
-  | `curve` | `CC` | terminal socket | 0–4 |
+  | `curve` | `CC` | terminal socket | 0–4 |  ← two blocks **on purpose**: see below
   | `ramp_merge` | `rS` | terminal socket | 0–4 |
 
   Each entry also carries `description` and `max_steps` (roundabout needs more than curve).
+- **`curve` is `CC`, and the second block is the point.** The two `Curve` blocks draw radius, arc
+  and **direction** independently (`pg_space.py:284-289`), so a seed picks a *pair*, and seeds 0–4
+  cover all four of `LL`, `LR`, `RR`, `RL` — two lefts and two rights are not enough on their own.
+  Net rotation runs +67.5° to +239.5°, so two of the five sweep past a U-turn; that is a consequence
+  of the pairing, not a defect. The coverage currently holds by luck — fixed seeds against
+  MetaDrive's own RNG — so `test_categories.py` asserts it: a simulator bump that shifted the draw
+  would collapse it to three combinations while every road still built and every route still
+  resolved. Contrast `rS`, the other two-block sequence, where the trailing `S` exists so the route
+  continues *past* the merge point rather than ending on it.
+
 - **Validate every `block_seq` character on load**, against the keys of
   `BLOCK_TYPE_DISTRIBUTION_V2` (`blocks_prob_dist.py:22-41`) — the valid set is exactly
   `C S r R X T O f F y Y P $ B U`. `I` is the first block and is auto-prepended, so it is never
@@ -627,9 +639,13 @@ categories, and the three intersection variants visibly turn the right way on se
 
 **Build**
 - `base_config` built once and stored **in full** in the manifest. It sets `curriculum_level=1`,
-  `random_traffic=False`, `random_spawn_lane_index=False`, `random_lane_num=False`,
+  `random_traffic=False`, `random_spawn_lane_index=True`, `random_lane_num=False`,
   `random_lane_width=False`, `accident_prob=0.0`, `store_map=True`, the whole lidar/detector block,
-  `agent_observation` and `navigation_module`.
+  `agent_observation` and `navigation_module`. *(Amended 2026-08-31 — was
+  `random_spawn_lane_index=False`. Reversed after measuring that it is the only thing
+  distinguishing the five `X` seeds, which build one identical road, and that the draw is
+  invariant under `traffic_density` and `accident_prob` and across env rebuilds — so it costs
+  Phase 2b nothing. The drawn lane is recorded per scenario instead of being suppressed.)*
 - `config_hash` over a **canonical JSON** dump (sorted keys, no whitespace) of that config, minus
   cosmetics (`use_render`, `log_level`, `debug`). **Diagnostic only** — it is not the gate, and the
   per-run option keys (`traffic_density` and friends) are deliberately **not** in it, because they
