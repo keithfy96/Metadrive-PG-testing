@@ -58,7 +58,7 @@ def base_config(**overrides: Any) -> dict[str, Any]:
         "use_render": False,
         "agent_observation": StateObservation,
         "vehicle_config": dict(SENSOR_CONFIG),
-        # Neutral values for the axes Phase 3's options own. They are named here, at zero,
+        # Neutral values for the axes Phase 4's options own. They are named here, at zero,
         # so that "the option was never applied" and "the option is at its floor" are the
         # same state rather than two different ones.
         "traffic_density": 0.0,
@@ -71,8 +71,8 @@ def base_config(**overrides: Any) -> dict[str, Any]:
         # level zero. `agent_manager.py:111-119` draws `randint(lane_num)` once per reset.
         # Named here at its own default so that keeping it is a decision on the record rather
         # than an inherited one. Measured invariant under `traffic_density` and `accident_prob`
-        # and across env rebuilds, so it does not threaten Phase 2b; the drawn lane is recorded
-        # per scenario rather than left implicit. See `sockets.measure_route`.
+        # and across env rebuilds, so it does not threaten the invariance tests; the drawn lane is
+        # recorded per scenario rather than left implicit. See `sockets.measure_route`.
         "random_spawn_lane_index": True,
         # One scenario at seed 0. Phases 1-2 replace this with the real seed range.
         "start_seed": 0,

@@ -10,7 +10,7 @@ What a category stores is the **rule**, not the node name. `StdTInterSection` do
 same two arms on every seed -- seeds 0, 1 and 4 offer right-and-straight, seeds 2 and 3 offer
 left-and-straight -- so a hardcoded node would be unresolvable on 2 of the 5 seeds. The rule
 resolves to a node at generation time and the resolved node is what gets recorded, which is the
-same discipline `map_id` follows: declare the intent, store the fact.
+same discipline the manifest follows throughout: declare the intent, store the fact.
 """
 
 from __future__ import annotations
@@ -116,11 +116,11 @@ def validate_block_seq(block_seq: str, *, category: str | None = None) -> None:
 #: and the map pins `lane_num=3` and `lane_width=3.5`, so the junction has no seeded degree of
 #: freedom left. Accepted deliberately: the five seeds of an intersection category vary the
 #: *scene* -- traffic and hazard placement, which the option axes drive -- on a controlled road.
-#: Phase 2 must therefore not assert 35 distinct `map_id`s. `scenariobank destinations` re-measures
+#: Phase 2 must therefore not assert 35 distinct roads. `scenariobank destinations` re-measures
 #: it.
 #:
 #: Those five runs are still not identical: `random_spawn_lane_index` is left on (see
-#: `config.base_config`), so the ego starts in lane 0, 1, 0, 1, 1 across seeds 0-4. Until Phase 3's
+#: `config.base_config`), so the ego starts in lane 0, 1, 0, 1, 1 across seeds 0-4. Until Phase 4's
 #: options arrive that is the *only* thing separating them, and `route_length` will not show it --
 #: `navigation.total_length` is measured on a reference lane. The drawn lane is recorded per
 #: scenario instead of being left implicit.

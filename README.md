@@ -11,7 +11,7 @@ All scenarios are **left-side traffic** (right-hand-drive market). See
 first thing to check if a figure ever looks wrong.
 
 **Built so far:** Phase 0 (skeleton, environment truth) and Phase 1 (categories, forced
-destinations, left-side traffic). `generate`, `verify`, `run` and the rest arrive in later
+destinations, left-side traffic). `generate`, `run` and the rest arrive in later
 phases.
 
 ## Install
@@ -200,7 +200,7 @@ scenarios**.
 
 Those `X` seeds are still not five identical runs. `random_spawn_lane_index` is left on
 deliberately, so the ego starts in lane `0, 1, 0, 1, 1` — the only thing separating them until
-Phase 3's options arrive, and invisible in `route_length`, which is measured on a reference lane.
+Phase 4's options arrive, and invisible in `route_length`, which is measured on a reference lane.
 The curve section records the other property that holds by luck: `CC` draws each block's direction
 independently, and seeds 0–4 happen to cover all four of `LL`, `LR`, `RR`, `RL`. Both are asserted
 by tests so a MetaDrive bump cannot quietly take them away.
@@ -216,9 +216,9 @@ instead of silently changing what the bank means.
 ./scripts/bank-check.sh
 ```
 
-`ruff check` (the gate — `ruff format --check` deliberately is not), then `pytest`, then
-`scenariobank verify` over every bank in `banks/`. Until Phase 2 puts a bank there it says so out
-loud rather than letting an empty loop read as a green check.
+`ruff check` (the gate — `ruff format --check` deliberately is not), then `pytest`. There is no
+per-bank step: `scenariobank verify` was cut on 2026-08-31 with the durable-bank premise it
+enforced, since a bank is regenerated per batch and there is nothing to check it against.
 
 **Writes:** `.ruff_cache/`, `.pytest_cache/` — both gitignored.
 

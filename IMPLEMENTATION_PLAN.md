@@ -21,8 +21,9 @@ Three things shape the design beyond that:
    separately from maps and applied at run time. See **Scenario options**.
 2. **Seeds are fixed at 0–4 for every category.** 7 categories x 5 seeds = 35 maps. "Seed 3" means
    the same thing everywhere.
-3. **Integrity is a fingerprint of the map that came out, not an audit of the config that went in.**
-   See **Integrity by fingerprint**.
+3. **A bank is a disposable, per-batch artifact.** It is regenerated whenever someone wants
+   scenarios; nothing checks that a road matches a previous run's. The container pinning one
+   MetaDrive commit is what makes a single batch self-consistent. See Phase 2, **Scope**.
 
 Everything in this plan was verified against the MetaDrive source actually installed here
 (`converter-scenarionet-stage2-redesign/.venv/.../metadrive/`). File:line references are real.
@@ -135,15 +136,15 @@ section rather than in a phase because the temptation recurs — someone will re
 
 | The tempting move | Why it fails, and what to do instead |
 |---|---|
-| Pin `metadrive-simulator==0.4.3` and trust the version string | `metadrive.constants.EDITION` reports `"MetaDrive v0.4.3"` for **both** the tag and the commit we actually run (`85e5dadc` = `MetaDrive-0.4.3-32-g85e5dadc`); `pyproject.toml:31-36` already warns about this trap. **The version string is not an integrity check.** Record the resolved dist version + git SHA + `asset_version()`, and pin the same commit. *Enforced in:* Phase 0 `doctor`, the Phase 2 manifest, Phase 3 `verify` step 2. |
-| Treat `random_traffic=True` as a cosmetic knob | `traffic_manager.py:339-341`: with it on, the traffic manager is **never re-seeded**, so traffic differs on every reset at the same seed. *Enforced in:* Phase 3's hard-assert. It is also **Phase 2b's negative test** — the one setting guaranteed to break invariance, which is what gives that check teeth. |
+| Pin `metadrive-simulator==0.4.3` and trust the version string | `metadrive.constants.EDITION` reports `"MetaDrive v0.4.3"` for **both** the tag and the commit we actually run (`85e5dadc` = `MetaDrive-0.4.3-32-g85e5dadc`); `pyproject.toml:31-36` already warns about this trap. **The version string is not an integrity check.** Record the resolved dist version + git SHA + `asset_version()`, and pin the same commit. *Enforced in:* Phase 0 `doctor`. The Phase 2 manifest records all three as **information** — nothing refuses on them, because a road differing between batches is not an error here. |
+| Treat `random_traffic=True` as a cosmetic knob | `traffic_manager.py:339-341`: with it on, the traffic manager is **never re-seeded**, so traffic differs on every reset at the same seed. *Enforced in:* `base_config`, and `tests/unit/test_invariance.py::test_random_traffic_breaks_invariance` — the one setting guaranteed to break invariance, which is what stops a green invariance run from being a silently empty loop. |
 | Let the last block set the destination | True *only* when the ego spawns on a positive road — `node_network_navigation.py:80` falls back to `map.blocks[0]` on a negative one, and the socket within the block is a seeded random draw among three for X/O/T. **We never let it choose:** `node_network_navigation.py:60` reads `vehicle.config["destination"]` (`base_env.py:141`), and when it is set `auto_assign_task` is skipped entirely. Every category pins its destination. *Enforced in:* Phase 1 — this is what deletes the turn classifier. |
 | Use `accident_prob` for the Cones and Barriers axes | Set it 0–1 and `TrafficObjectManager` scatters debris — but `object_manager.py:51-53` skips any block that is not `Straight`/`Curve`/`InRampOnStraight`/`OutRampOnStraight`, so `X`, `T` and `O` receive **nothing, with no error** — 5 of our 7 categories. And one scalar drives all three scene types mutually exclusively (`:54-91`), so "cones yes, barriers no" is inexpressible. **`accident_prob` stays `0.0` permanently**; write `obstacles.py`. See **Scenario options**. |
-| Look for MetaDrive's left-hand-traffic option | **There is none**, and the negative is exhaustive rather than a keyword grep: all 249 keys of `BASE_DEFAULT_CONFIG`, `METADRIVE_DEFAULT_CONFIG` and `SCENARIO_ENV_CONFIG` dumped and filtered — nothing; OpenDRIVE carries drive side as `rule="RHT"/"LHT"` and MetaDrive never parses it (`utils/opendrive/parser.py:509-535` has no such field, upstream `main` still reads `# Rules` / `# TODO implementation`); SUMO's `lefthand="true"` is dropped too; ScenarioNet's `coordinate` means coordinate *frame*, not traffic side. Every "handed" word in the package is coordinate chirality. **And there is nothing to upgrade to** — upstream `main`'s `version.py` still reads `0.4.3`. A geometry reflection is the only route: `handedness.py`. *Enforced in:* Phase 1 build, Phase 0 `doctor`, Phase 3 `verify`. |
+| Look for MetaDrive's left-hand-traffic option | **There is none**, and the negative is exhaustive rather than a keyword grep: all 249 keys of `BASE_DEFAULT_CONFIG`, `METADRIVE_DEFAULT_CONFIG` and `SCENARIO_ENV_CONFIG` dumped and filtered — nothing; OpenDRIVE carries drive side as `rule="RHT"/"LHT"` and MetaDrive never parses it (`utils/opendrive/parser.py:509-535` has no such field, upstream `main` still reads `# Rules` / `# TODO implementation`); SUMO's `lefthand="true"` is dropped too; ScenarioNet's `coordinate` means coordinate *frame*, not traffic side. Every "handed" word in the package is coordinate chirality. **And there is nothing to upgrade to** — upstream `main`'s `version.py` still reads `0.4.3`. A geometry reflection is the only route: `handedness.py`. *Enforced in:* Phase 1 build, Phase 0 `doctor`, and Phase 2 `generate`, which **measures** the drive side off the built map. |
 | Reach for `need_inverse_traffic=True` to put traffic on the other side | It does not do that. It only lets the traffic manager *also* spawn NPCs on the opposing carriageway (`traffic_manager.py:246-247`, `:381-382`), and only for block IDs `S C r R` — so `X`, `T` and `O` are unaffected, silently, exactly like `accident_prob` above. Which side anyone **keeps** is geometry, not this flag. It is still worth turning on for the Traffic axis, because without it a two-way map has no oncoming traffic at all — but that is a **Scenario options** item, not a handedness switch. |
 | Assume a fixed road means a fixed scenario | `X` builds **one identical road** at all five seeds (`StdInterSection` has a fixed radius, the map pins `lane_num=3`/`lane_width=3.5`), which invites the conclusion that its five seeds are one run repeated. They are not: `random_spawn_lane_index` defaults to `True` (`metadrive_env.py:61`) — the only `random_*` key that does — and `agent_manager.py:111-119` draws `randint(lane_num)` per reset, giving lanes `0, 1, 0, 1, 1`. **`route_length` will not show you**, because `navigation.total_length` is measured on a reference lane and reads `111.70` at all five. Kept on deliberately and recorded per scenario. *Enforced in:* `config.base_config` names the key; `sockets.measure_route` records the draw; `test_sockets.py` asserts it is invariant under the option axes. |
 | Read `SocketReading.angle_deg` as how far the ego turns | It is the **final heading**, `wrap_to_pi`'d (`sockets.py:80`). Correct for choosing an exit — which is all `ExitRule` needs — and wrong for describing one. `curve` seed 0 sweeps **+239.5°** and this field reads **−120.5°**: half the rotation, and the opposite direction. `X`/`T`/`O` never pass 180° so they are unaffected, which is what let it sit unnoticed. Use `RouteMeasurement.net_rotation_deg`, integrated along the driven route. *Enforced in:* `destinations.md` reports both and says which is which; `test_sockets.py` pins the disagreement. |
-| Defend seed identity by hashing a hand-picked list of config keys (+ pin `curriculum_level=1`) | Rejected outright rather than corrected. An audit of the config that went *in* cannot catch a simulator that builds a different map from it. Replaced wholesale by fingerprinting **the map that actually came out** — see **Integrity by fingerprint**. `config_hash` survives only as a diagnostic that *explains* a `map_id` failure; it is never itself the gate. |
+| Defend seed identity by hashing config keys, or by fingerprinting the built map | Both rejected, for different reasons. The config-key audit cannot be proven complete — `curriculum_level`, which silently rewrites the seed you asked for, was missing from the first draft. Fingerprinting the output *would* have worked, but **cross-batch identity is not a goal**: a bank is regenerated per batch and a road that comes out different is simply a different batch. `map_id` and `config_hash` are both cut (2026-08-31); the container's pinned commit is the whole guarantee. |
 
 One more that is not a trap but is easy to over-build: **`crash_human` termination is already wired
 and free** — `TerminationState.CRASH_HUMAN` (`constants.py:28`), `crash_human_done=True` by default
@@ -245,54 +246,6 @@ caveats that follow from it:
 
 ---
 
-## Integrity by fingerprint
-
-The bank stores integers. Something has to guarantee that integer still means the same road when
-the runner rebuilds it months later on someone else's machine.
-
-**The rejected approach** was to enumerate every config key that could change the road, hash them,
-and assert the dangerous ones. It fails for a structural reason: the list is only as good as what
-somebody thought to put on it, and `curriculum_level` — the nastiest of them, which silently
-rewrites the seed you asked for — was missing from the first draft. You cannot prove such a list is
-complete.
-
-**The approach taken** is to check the output instead of enumerating the inputs.
-
-`pg_map.py:111` `get_meta_data()` returns the full structure of a generated map: every block, its
-parameters, its socket connections, plus `map_config`. Combine that with the route and hash it:
-
-```python
-map_id = sha256(canonical_json([
-    round_floats(map.get_meta_data()["block_sequence"], 3),   # structure only
-    map.config["lane_num"], map.config["lane_width"],
-    vehicle.config["spawn_lane_index"],
-    vehicle.config["destination"],
-    list(vehicle.navigation.checkpoints),
-]))
-```
-
-Written per row at generation. Recomputed at run time and compared before the first episode.
-Mismatch → refuse, and print which field differs.
-
-This subsumes the whole config-key question. A wrong `curriculum_level`, a different MetaDrive
-commit, a config key neither of us thought of — every one of them produces a different road, and a
-different road produces a different `map_id`. One check, and it cannot go stale.
-
-**Two implementation notes that matter:**
-
-- **Do not hash `map_features`.** It is raw lane polylines — floats that can differ in their last
-  bits across numpy versions, producing mismatches on roads that are actually identical. Hash the
-  structural block config, rounded to 3 dp (millimetres), which is discrete enough to be stable.
-- **`config_hash` stays, demoted to a diagnostic.** `map_id` tells you *that* something drifted;
-  `config_hash`'s key-by-key diff tells you *what*. Because it is no longer the gate, its key list
-  no longer has to be perfect.
-
-`curriculum_level = 1`, `random_spawn_lane_index = False`, `random_lane_num = False` and
-`random_lane_width = False` are still set in `base_config` because they are the sane values.
-Nothing now *depends* on anyone remembering to.
-
----
-
 ## Scenario options
 
 > **Every option below is camera-only.** See "The observation ceiling" above. A state-vector policy
@@ -313,10 +266,10 @@ A run is one permutation of that form applied across whichever maps are ticked.
 
 ### Stored normalized, applied at run time
 
-**Bank (fixed, 35 rows):** `category`, `seed`, `block_seq`, `destination`, `spawn_lane_index`,
-`map_id`, `max_steps`, thumbnail. Written once.
+**Bank (35 rows per batch):** `category`, `seed`, `block_seq`, `destination`,
+`spawn_lane_index`, `max_steps`, thumbnail. Written once per batch, then disposable.
 
-**Options (per run):** the six axes. They never enter `map_id`.
+**Options (per run):** the six axes. They are never part of a bank row.
 
 **Results:** each row carries the map row *and* the options fully expanded — level name *and*
 resolved numeric — so a result is self-describing without the options file beside it.
@@ -330,7 +283,8 @@ object, light, ego or route is ever drawn.
 **Why it is sound:** managers hold independent RNG streams, all re-seeded from the same episode seed
 every reset (`base_engine.py:562-569`). `PGMapManager` has `PRIORITY = 0` and its own `np_random`,
 so map geometry and the ego route are unaffected by how many vehicles or cones other managers place.
-**That assumption has teeth, and Phase 2b tests it rather than trusting it.**
+It holds structurally — `Randomizable.__init__` hands every manager its *own* generator — but
+`tests/unit/test_invariance.py` asserts it anyway, because the obstacle and VRU managers are ours.
 
 One coupling to preserve: `traffic_manager.py:253` excludes `object_manager.accident_lanes` from
 vehicle spawning. Our obstacle manager must publish the same attribute and carry `PRIORITY = 9`
@@ -445,7 +399,7 @@ full of it collides." That matters for Phase 4b.
 - **Categories**: the seven as drafted.
 - **Seeds**: fixed at 0, 1, 2, 3, 4 for every category. 35 maps.
 - **Options**: six axes, stored normalized, applied at run time.
-- **Handedness**: **left-side traffic** (right-hand-drive market — Singapore, UK, Malaysia, Japan). This is not a MetaDrive setting; see **Traps**. Enforced by `handedness.install()`, called from `base_config()` so no caller can forget it, and **measured** rather than asserted by Phase 0 `doctor` and Phase 3 `verify`.
+- **Handedness**: **left-side traffic** (right-hand-drive market — Singapore, UK, Malaysia, Japan). This is not a MetaDrive setting; see **Traps**. Enforced by `handedness.install()`, called from `base_config()` so no caller can forget it, and **measured** rather than asserted by Phase 0 `doctor` and Phase 2 `generate`.
 - **Policy**: the AV3 camera adapter is the contract from Phase 0, not adapted in later. *(Amended
   2026-08-30 — was "build against the state-vector callable now". Reversed because a state-vector
   policy cannot perceive five of the six option axes, so it could never have been the thing scored.)*
@@ -462,15 +416,14 @@ metadrive-PG/
   pyproject.toml            # uv, requires-python >=3.10,<3.11, [project.scripts] scenariobank=...
   uv.lock
   src/scenariobank/
-    cli.py                  # Typer app: doctor generate inspect sockets verify options-invariance
+    cli.py                  # Typer app: doctor categories sockets inspect destinations generate
                             #            calibrate run selftest schema validate
     categories.py           # CATEGORIES dict: block_seq, destination, max_steps, description
     options.py              # LEVELS, TIERS, resolve_options() -> expanded dict
-    config.py               # base config builder, canonicalisation, config_hash (diagnostic)
-    fingerprint.py          # map_id: get_meta_data -> round -> canonical json -> sha256
+    config.py               # base config builder
+    fingerprint.py          # sha256_hex, lane_geometry_digest (road fingerprint, tests + docs)
     manifest.py             # pydantic models: Manifest, Category, Scenario  (schema_version)
     generate.py             # build the 35 maps + thumbnails
-    verify.py               # the gate
     obstacles.py            # ObstacleManager  — cones, barriers
     actors.py               # VRUManager       — pedestrians, cyclists
     lights.py               # PGTrafficLightManager  (Phase 8)
@@ -495,7 +448,7 @@ metadrive-PG/
   rigs/av3.txt              # the six AV3 cameras, ported from the converter
   docker/Dockerfile         # adapted from converter-scenarionet-stage2-redesign/docker/Dockerfile
   compose.yaml
-  scripts/bank-check.sh     # ruff -> pytest -> verify every bank in banks/
+  scripts/bank-check.sh     # ruff -> pytest
   tests/
   docs/reference/
     destinations.md         # the resolved destination socket per category (Phase 1)
@@ -633,34 +586,61 @@ categories, and the three intersection variants visibly turn the right way on se
 
 ---
 
-# Phase 2 — Manifest, map_id, thumbnails
+# Phase 2 — Generate: scenarios on disk
 
-**Goal:** the bank becomes a real on-disk artifact, fingerprinted by what it actually built.
+**Goal:** one command turns the categories into scenarios a runner can consume.
+
+**Scope, decided 2026-08-31.** A bank is a **disposable, per-batch artifact**. It is regenerated
+whenever someone wants scenarios, and *nothing* checks that a road matches a previous run's — if it
+comes out different, that is a different batch, and that is fine. The container pinning one
+MetaDrive commit is what makes a single batch self-consistent; that is the whole guarantee.
+*(Amended 2026-08-31 — `map_id`, `config_hash`, the commit gate and the entire Phase 3 `verify`
+command are cut. They existed to prove cross-batch identity, which is not a goal. Roughly two
+phases of work, deleted rather than corrected.)*
 
 **Build**
-- `base_config` built once and stored **in full** in the manifest. It sets `curriculum_level=1`,
-  `random_traffic=False`, `random_spawn_lane_index=True`, `random_lane_num=False`,
-  `random_lane_width=False`, `accident_prob=0.0`, `store_map=True`, the whole lidar/detector block,
-  `agent_observation` and `navigation_module`. *(Amended 2026-08-31 — was
-  `random_spawn_lane_index=False`. Reversed after measuring that it is the only thing
-  distinguishing the five `X` seeds, which build one identical road, and that the draw is
-  invariant under `traffic_density` and `accident_prob` and across env rebuilds — so it costs
-  Phase 2b nothing. The drawn lane is recorded per scenario instead of being suppressed.)*
-- `config_hash` over a **canonical JSON** dump (sorted keys, no whitespace) of that config, minus
-  cosmetics (`use_render`, `log_level`, `debug`). **Diagnostic only** — it is not the gate, and the
-  per-run option keys (`traffic_density` and friends) are deliberately **not** in it, because they
-  are not part of map identity.
-- **`map_id` per scenario** — the gate. Computed as in "Integrity by fingerprint".
-- Per scenario also record `destination` and `spawn_lane_index`, so the runner can set
+- `base_config` built once and stored **in full** in the manifest, so a run is self-describing. It
+  sets `curriculum_level=1`, `random_traffic=False`, `random_spawn_lane_index=True`,
+  `random_lane_num=False`, `random_lane_width=False`, `accident_prob=0.0`, `store_map=True`, the
+  whole lidar/detector block, `agent_observation` and `navigation_module`.
+  *(Amended 2026-08-31 — `random_spawn_lane_index` was `False`. Reversed after measuring that it is
+  the only thing distinguishing the five `X` seeds, which build one identical road.)*
+- Record the resolved MetaDrive dist version, git SHA and `asset_version()` **as information**. They
+  explain a result months later; nothing refuses on them.
+- Per scenario record `destination` and `spawn_lane_index`, so the runner can set
   `vehicle_config["destination"]` and bypass `auto_assign_task` entirely.
 - Assert all five fixed seeds build for every category. Map generation is a **backtracking search**
   (`BIG.py:91-103`), so a requested block sequence can simply fail to plug in for a given seed. With
   seeds fixed at 0–4 that is a hard failure, not a scan: **fail loudly** and record the substitute
   seed explicitly in the manifest rather than shifting silently.
+- **Assert the drive side, measured from the map** — not read off `handedness._installed`. Reuse
+  `doctor.measure_drive_side`. This is the one check kept from the old `verify`, and it is not a
+  reproducibility check: if the mirror fails to install, every map builds right-side, every manifest
+  field stays correct, every thumbnail still looks like a road, and the only symptom is that a
+  right-hand-drive model fails everything for reasons no result explains.
 - Thumbnails: `draw_top_down_map(env.current_map, resolution=(512,512))` → `cv2.imwrite` into
   `thumbs/`. Note RGB→BGR for cv2. Map-only by construction.
 - Write `manifest.json` **last and atomically** (temp file + `os.replace`).
 - `scenario_id` is the stable public key; format `{category}_{index:04d}`.
+
+**Cost — this is on the critical path now.** With no durable bank, generation runs before every
+batch. Measured on this machine: env *construction* is free (~0.00 s), all the cost is in `reset()`,
+and `close()` throws away a warm engine. Reset cost is **superlinear in block count**, ~×1.6 per
+added block:
+
+| sequence | blocks | mean reset | worst |
+|---|---|---|---|
+| `T` | 2 | 0.044 s | 0.061 s |
+| `TT` | 3 | 0.076 s | 0.077 s |
+| `TTT` | 4 | 0.121 s | 0.144 s |
+| `TTTT` | 5 | 0.196 s | **0.410 s** |
+| `OOO` | 4 | 0.237 s | 0.271 s |
+
+A 1,000-scenario bank of 5-block user maps is ~7 minutes of generation before a single step is
+simulated. So `generate` **reuses one env per block sequence** and resets per seed, sizes it
+`num_scenarios = max(seeds) - min(seeds) + 1`, and **emits per-scenario progress** — a silent
+multi-minute command is not acceptable at that scale. (All 20 seeds built for every sequence above;
+longer sequences are viable, they are just slower.)
 
 **Manifest schema (v1.0)**
 ```json
@@ -674,7 +654,6 @@ categories, and the three intersection variants visibly turn the right way on se
     "commit": "85e5dadc...",
     "asset_version": "0.4.3"
   },
-  "config_hash": "sha256:a3f1c2...",
   "base_config": { "...full env config dict..." },
   "categories": {
     "intersection_left": {
@@ -684,7 +663,7 @@ categories, and the three intersection variants visibly turn the right way on se
       "max_steps": 500,
       "scenarios": [
         {"scenario_id": "intersection_left_0000", "seed": 0,
-         "map_id": "sha256:9c4e1b...", "spawn_lane_index": 1,
+         "spawn_lane_index": 1,
          "thumbnail": "thumbs/intersection_left_0000.png"}
       ]
     }
@@ -699,133 +678,57 @@ uv run scenariobank generate \
                t_junction roundabout curve ramp_merge \
   --count 5 --out ./banks/pg-bank-2026-08 --bank-id pg-bank-2026-08
 ```
-- **Expect:** exit 0; `manifest.json` + 35 PNGs.
+- **Expect:** exit 0; `manifest.json` + 35 PNGs; progress on stderr as it goes.
 - Structural check:
   `jq '.categories | to_entries[] | {k:.key, n:(.value.scenarios|length)}' manifest.json`
   → every count is 5.
 - Seeds are the same five everywhere:
   `jq -r '[.categories[].scenarios[].seed] | unique' manifest.json` → `[0,1,2,3,4]`.
-- The three intersection categories share maps:
-  ```bash
-  jq -r '.categories.intersection_left.scenarios[].map_id'     manifest.json > l.txt
-  jq -r '.categories.intersection_straight.scenarios[].map_id' manifest.json > s.txt
-  diff l.txt s.txt
-  ```
-  **Expect: non-empty.** `map_id` includes the destination and route, so the same junction driven
-  two ways must fingerprint differently. If the diff is empty, `map_id` is not covering the route
-  and the whole integrity story is weaker than it looks — fix it here.
 - Every thumbnail exists and is non-trivial:
   `jq -r '.categories[].scenarios[].thumbnail' manifest.json | while read f; do test -s "$f" || echo "MISSING $f"; done`
 - **Open the thumbnails.** `eog banks/pg-bank-2026-08/thumbs/` — an intersection thumbnail should
   look like an intersection. Remember they show the map only — never traffic, objects, lights,
   the ego or its route — and that each is zoomed to fit, so a curve and a roundabout both fill
   their frame despite being very different sizes.
-- **Idempotence:** regenerate into a second directory with the same args; the two `manifest.json`
-  files must differ only in `created_utc` and `bank_id`.
-  `diff <(jq 'del(.created_utc,.bank_id)' a/manifest.json) <(jq 'del(.created_utc,.bank_id)' b/manifest.json)`
 
-**Done when:** the idempotence diff is empty, the intersection `map_id` diff is *not*, and the
-thumbnails match their labels.
+**Done when:** 35 rows and 35 thumbnails, every category count is 5, the seed list is `[0,1,2,3,4]`,
+the drive-side assert passes, and the thumbnails match their labels.
 
 ---
 
-# Phase 2b — Prove options do not move the map  ⟵ *gates the whole design*
+# Phase 2b — *(folded into a unit test)*
 
-**Goal:** the storage design assumes that changing traffic, cones, actors or lights leaves the map
-and the route untouched. Test it. If it fails, options must be baked into the bank and everything
-downstream changes.
+The storage design assumes changing traffic, cones, actors or lights leaves the map and the route
+untouched. That still matters: comparing a score at `traffic=none` against `traffic=high` only means
+something if the road and the route were the same both times. Otherwise the difference is
+"traffic is harder **and** it is a different junction", and the two cannot be separated.
 
-**Build** — `scenariobank options-invariance --bank ... --sample N`. For each sampled scenario,
-reset under **every level of every axis** and assert identical:
-- `map_id` (recomputed, not read),
-- ego spawn position and heading,
-- `navigation.checkpoints`.
+**But it is not a phase.** `Randomizable.__init__` (`base_class/randomizable.py`) gives **every
+manager its own `np_random`**, re-seeded per episode by `BaseEngine.seed()`
+(`base_engine.py:562-569`) — so the traffic manager cannot perturb the map manager's draws. The
+spawn lane was measured invariant under `traffic_density=0.4` and `accident_prob=0.8` besides.
 
-Compare with `np.testing.assert_array_equal`, not `allclose`. Only the object sets may differ.
+So it becomes two tests in `tests/unit/test_invariance.py`, which **never run during generation**:
 
-**How you test it**
-```bash
-uv run scenariobank options-invariance --bank ./banks/pg-bank-2026-08 --sample 10
-```
-**Expect:** exit 0, and a printed count of how many (scenario x level) combinations were compared
-so a silently-empty loop cannot pass.
+- `test_option_levels_do_not_move_the_map_or_route` (`needs_sim`): reset one scenario at several
+  option levels; assert `fingerprint.lane_geometry_digest` and `navigation.checkpoints` match, with
+  `assert_array_equal` rather than `allclose`. Only the object sets may differ.
+- `test_random_traffic_breaks_invariance`: `random_traffic=True` leaves the traffic manager
+  unseeded (`traffic_manager.py:339-341`), so it **must** fail the same comparison. Without it, a
+  green run only proves two things were compared that were never going to differ.
 
-```bash
-# The negative test — this is the one that gives the check teeth
-uv run scenariobank options-invariance --bank ./banks/pg-bank-2026-08 --sample 10 \
-  --force-config random_traffic=true
-```
-**Expect: non-zero exit**, naming the scenario and what differed. `random_traffic=True` leaves the
-traffic manager unseeded (`traffic_manager.py:339-341`), so this is the one setting guaranteed to
-break invariance.
-Without this case passing, a green run only proves you compared two things that were never going to
-differ.
-
-**Done when:** the positive run is green with a non-zero comparison count, and the negative run
-fails. **Do not build Phase 4b or Phase 8 until this passes** — both assume run-time options.
+Their real job is guarding `ObstacleManager` and `VRUManager` — code *we* write, and the code that
+could plausibly get the RNG wiring wrong. Green today; it stays green or someone broke it.
 
 ---
 
-# Phase 3 — `verify`: the gate
+# Phase 3 — *(deleted)*
 
-**Goal:** the one command that catches the ways a seed bank goes quietly wrong — simulator drift,
-config drift, and platform float nondeterminism.
-
-**Build** — `scenariobank verify --bank ./banks/pg-bank-2026-08` checks, in order:
-1. `schema_version` is supported.
-2. Compare `metadrive.commit` and `asset_version` against the running container. Commit mismatch
-   is fatal — the `EDITION` string alone would not have caught it; see **Traps**.
-3. **Measure the drive side of each rebuilt scenario and refuse on `right`.** Not read off
-   `handedness._installed` — measured from the map, the way `doctor.measure_drive_side` does it.
-   A bank whose manifest claims left-side traffic while its maps are right-side is worse than a
-   commit mismatch: every other field is correct, every thumbnail looks like a road, and the only
-   symptom is that a right-hand-drive model fails everything for reasons no result explains.
-4. **Rebuild each sampled scenario and recompute `map_id`; compare.** This is the gate. On mismatch,
-   name the scenario and print which fingerprint field differs.
-5. Re-derive `config_hash` from `base_config` and compare. **Diagnostic:** on mismatch print a
-   key-by-key diff. It explains a `map_id` failure; it is not itself the failure.
-6. Hard-assert the determinism-hostile settings: `random_traffic is False`, `curriculum_level == 1`,
-   `store_map is True`.
-7. Sample `--sample N` (default 10). For each: reset twice and assert **byte-identical** initial
-   state — ego position/heading, `navigation.checkpoints`, and the sorted array of traffic vehicle
-   spawn positions.
-
-**How you test it**
-```bash
-uv run scenariobank verify --bank ./banks/pg-bank-2026-08          # exit 0
-```
-Then each negative case, all of which **must** exit non-zero with a specific message
-(work on a `cp -r` copy):
-```bash
-# a) the gate itself
-jq '.categories.intersection_left.scenarios[0].map_id = "sha256:0"' manifest.json > tmp && mv tmp manifest.json
-uv run scenariobank verify --bank ...   # -> "intersection_left_0000: map_id mismatch"
-
-# b) the bug the old assert was aimed at — caught without knowing it exists
-jq '.base_config.curriculum_level = 2' manifest.json > tmp && mv tmp manifest.json
-uv run scenariobank verify --bank ...   # -> map_id mismatch on every scenario, AND
-                                        #    "curriculum_level=2: seeds are remapped by level"
-
-# c) simulator drift
-jq '.metadrive.commit = "0000000"' manifest.json > tmp && mv tmp manifest.json
-uv run scenariobank verify --bank ...   # -> "simulator mismatch: bank built on 0000000, running 85e5dadc"
-
-# d) the silent killer
-jq '.base_config.random_traffic = true' manifest.json > tmp && mv tmp manifest.json
-uv run scenariobank verify --bank ...   # -> "random_traffic=True: traffic is not reproducible"
-```
-
-Case (b) is the point of this phase. The draft would have caught it only because someone
-remembered to write the assertion; `map_id` catches it because the road came out different.
-
-**Done when:** all four negatives fail with their specific message, and (b) fails on `map_id`
-*before* it fails on the named assertion.
-
-> **Note on "the CI gate".** The sibling repo has **no `.github/workflows`** — its gate is the
-> manual pair `uv run pytest` + `uv run ruff check`, plus `scripts/container-check.sh` (build →
-> GPU check → pytest → sweep, stopping at the first failure, non-zero exit). Follow that: add
-> `scripts/bank-check.sh` running `ruff check` → `pytest` → `verify` on every bank in `banks/`,
-> and make *that* the thing you run before a handoff. Do not invent a CI system for this repo alone.
+`scenariobank verify` was the gate over `map_id`, `config_hash` and the recorded MetaDrive commit.
+All three are cut with the durable-bank premise (see Phase 2, **Scope**). Of its seven checks, the
+drive-side measurement moved into Phase 2's `generate` and into `doctor`; the rest were
+reproducibility checks that a per-batch bank does not need. Later phases are deliberately **not**
+renumbered.
 
 ---
 
@@ -898,9 +801,6 @@ remembered to write the assertion; `map_id` catches it because the road came out
   and checks callability, and `ConstantPolicy` / `ExpertPolicy` still take
   `(observation: np.ndarray) -> Sequence[float]`. They are CLI-only floor and ceiling checks, never
   the thing under evaluation.
-- **Refuse on mismatch before the first episode** — `map_id` per scenario plus the commit check.
-  Precedent: `tools/drive.py:300` `_refuse_mismatch`. A result computed on a drifted map is worse
-  than no result.
 - **Options resolution:** `resolve_options()` expands tiers, applies explicit flag overrides, and
   returns level names *and* numerics. Registers `ObstacleManager`, `VRUManager` and (Phase 8)
   `PGTrafficLightManager` only when their axis is above `none`.
@@ -965,12 +865,7 @@ diff <(jq 'del(.started_utc) | del(.results[].wall_time_s)' r1.json) \
 with `--tier hard` so the reproducibility claim covers the option managers too, not just the map.
 
 ```bash
-# 4. Refusal
-cp -r banks/pg-bank-2026-08 /tmp/bad
-jq '.categories.intersection_left.scenarios[0].map_id="sha256:0"' /tmp/bad/manifest.json > tmp && mv tmp /tmp/bad/manifest.json
-uv run scenariobank run --bank /tmp/bad ...    # must exit non-zero, run zero episodes
-
-# 5. Batch resilience
+# 4. Batch resilience
 uv run scenariobank run --policy scenariobank.policies:RaisingPolicy ...
 ```
 **Expect:** every scenario present in `results` with `status:"error"` and a traceback; the process
@@ -991,7 +886,7 @@ placing anything — the same class of bug as floor equals ceiling.
 
 # Phase 4b — Calibrate the levels
 
-**Goal:** replace the provisional numbers with measured ones. Requires Phase 2b green.
+**Goal:** replace the provisional numbers with measured ones. Requires the invariance tests green.
 
 The `LEVELS` table is a guess. A `high` traffic setting that makes every intersection unpassable is
 not a test point, it is a broken scenario.
@@ -1032,14 +927,14 @@ separated success rates, measured rather than guessed, and `options.py` matches 
 and `HOME=/tmp`.
 
 Changes for scenariobank:
-- Top-down rendering is pygame/CPU only, so `generate` / `verify` need **no GPU**. Keep the EGL
+- Top-down rendering is pygame/CPU only, so `generate` needs **no GPU**. Keep the EGL
   layer anyway — Phase 8's lights and any camera-model run need real 3D, and the AV3 runner will
   later want the same image. One image, not two.
 - `ENV SDL_VIDEODRIVER=dummy MPLBACKEND=Agg`.
 - Build-time smoke test: generate one scenario and render one thumbnail. Fail the build if it fails.
-- `scenariobank selftest`: reset one known seed and assert its **`map_id`** matches a value baked
-  into the image. Reuses the Phase 2 fingerprint rather than inventing a second one — two commands
-  must not be able to disagree about what a map is.
+- `scenariobank selftest`: build one known seed, assert it resets and that the map measures
+  **left-side drive**. It proves the image can generate at all; it deliberately does not compare
+  the road against a baked-in value, because roads are not promised stable between batches.
 - Mount banks **read-only** (`compose.yaml` already uses `${RIG_DIR}:/rig:ro`, `${MODEL_DIR}:/models:ro`
   — follow that pattern with `${BANK_DIR}:/bank:ro`). Do not bake banks into the image.
 
@@ -1051,8 +946,7 @@ docker run --rm scenariobank:85e5dad doctor
 **Expect:** the *same* commit + asset_version your host `doctor` printed in Phase 0.
 
 ```bash
-docker run --rm scenariobank:85e5dad selftest        # exit 0, prints matching map_id
-docker run --rm -v $PWD/banks/pg-bank-2026-08:/bank:ro scenariobank:85e5dad verify --bank /bank
+docker run --rm scenariobank:85e5dad selftest        # exit 0, prints "drive side: left"
 ```
 
 **The acceptance test — host vs container must agree:**
@@ -1090,9 +984,11 @@ inside the container must fail.
     distinction most likely to be misread, and it decides whether a result means "the model can do
     left turns" or "the model can do *this* left turn".
   - The six axes, their four levels each, and the resolved numeric each maps to; the tier aliases.
-  - Options are echoed **expanded** in results; `map_id` deliberately excludes them.
+  - Options are echoed **expanded** in results, level name *and* resolved numeric.
   - `scenario_id` is the key he stores; **seeds are ours and may change between banks**.
-  - `map_id` + `metadrive.commit` must be echoed back in results; a runner refuses on mismatch.
+  - `metadrive.commit` is echoed back in results as a **label**, so an old result can be read
+    later. Nothing refuses on it: a bank is per-batch, and roads are not promised stable across
+    batches.
   - **Success rates are over 5 scenarios per category — 20% granularity.** So the UI must not render
     `0.6` as though it meant 60% +/- 1%.
   - Thumbnails are relative paths inside the bank dir, 512x512 RGB PNG, and **map-only** — never
@@ -1403,7 +1299,7 @@ disagree, one of them is configuring the env differently.
 
 # Phase 8 — Traffic lights, camera-model scope  (~1 day)
 
-**Goal:** the Lights axis. Requires Phase 2b green.
+**Goal:** the Lights axis. Requires the invariance tests green.
 
 Two pieces, not four. The observation extension is skipped because a camera policy sees the light
 natively; the stop-line geometry is skipped because ghost contact already yields the correct
@@ -1503,19 +1399,18 @@ colleague moving between the two should not have to relearn anything.
 - Record `tool_versions` (metadrive, numpy, shapely, opencv, panda3d, pygame,
   `platform.python_version()`) read **live**, not hardcoded.
 - **One shared `_sha256` / `canonical_checksum` helper imported across modules, never
-  reimplemented.** This matters more than usual here: `map_id` is computed at generation, again in
-  `verify`, again in `selftest`, and again in the runner's refusal check. Four call sites that must
-  never be able to disagree about what a map is.
+  reimplemented.** `fingerprint.sha256_hex` already is that helper; `lane_geometry_digest` is built
+  on it and is used by `destinations` and by the invariance tests.
 
 **Tests**
 - `tests/unit/*.py`, no `conftest.py`, fixtures local to the module that needs them, heavy
   `@pytest.mark.parametrize`. Test names are full English sentences —
-  `test_changing_traffic_level_does_not_change_map_id`.
+  `test_option_levels_do_not_move_the_map_or_route`.
 - Simulator-dependent tests: `pytest.importorskip("metadrive")`, and **named** `skipif` guards
   (`needs_sim`, `needs_bank`) rather than bare ones. The repo's rule: *"a skipif that stops running
-  silently is worse than one that fails."* Applies directly to Phases 2b and 3 — an invariance
-  check skipping its comparison loop because MetaDrive was missing would be the worst possible
-  failure mode, because it looks exactly like a pass.
+  silently is worse than one that fails."* Applies directly to `test_invariance.py` — a check
+  skipping its comparison loop because MetaDrive was missing would be the worst possible failure
+  mode, because it looks exactly like a pass.
 
 **Container / compose**
 - One service. `user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"` set from `id -u`/`id -g` in a
@@ -1545,7 +1440,6 @@ colleague moving between the two should not have to relearn anything.
 ## Reference checkouts (read these, do not guess)
 
 - `/home/keith/Desktop/work/wingfin/metadrive/` — MetaDrive source. Every file:line in this plan.
-  - `component/map/pg_map.py:111` — `get_meta_data()`, the source of `map_id`.
   - `component/navigation_module/node_network_navigation.py:60,72-91` — `destination` and the
     `auto_assign_task` draw it bypasses.
   - `manager/object_manager.py:51-91` — why `accident_prob` cannot build the obstacle axes.
@@ -1571,8 +1465,6 @@ colleague moving between the two should not have to relearn anything.
   - `db/job_presets.py`, `db/migrations/005_job_presets.sql` — the model for our `job_scenarios`
     table: identity minted before launch, `skipped` distinct from `failed`.
   - `api/queue.py:197` — the ETA bug that one queue forces us to fix.
-- `converter-scenarionet-stage2-redesign/tools/drive.py:300` — `_refuse_mismatch`, the precedent
-  for Phase 4's integrity refusal.
 - `converter-scenarionet-stage2-redesign/tools/signal_control.py` — the phase model Phase 8 ports,
   including the timestep and per-group-offset traps already paid for there.
 - `converter-scenarionet-stage2-redesign/docker/Dockerfile` — the base for Phase 5.

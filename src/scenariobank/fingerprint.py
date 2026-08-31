@@ -5,7 +5,7 @@ here than usual: a map's identity is computed at generation, again in `verify`, 
 `selftest`, and again in the runner's refusal check. Four call sites that must never be able to
 disagree about what a map is.
 
-Phase 2 builds `map_id` on top of this. Phase 1 needs only `lane_geometry_digest`, to answer a
+Phase 2's invariance tests build on this. Phase 1 needs only `lane_geometry_digest`, to answer a
 question the manifest will ask later -- how many *distinct roads* a block sequence actually
 produces across its seeds.
 """

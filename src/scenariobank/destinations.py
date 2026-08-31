@@ -231,10 +231,10 @@ def render(
             "`X` has no seeded degree of freedom left: `StdInterSection` fixes its radius and the",
             "map pins `lane_num=3` and `lane_width=3.5`. Accepted deliberately -- the five seeds",
             "of an intersection category vary the scene, not the road. Phase 2 must therefore not",
-            "assert one `map_id` per scenario.",
+            "assert 35 distinct roads.",
             "",
             "Those five runs are still not identical, though: the ego starts in a different lane",
-            "(see **Spawn lane**), which is the only thing distinguishing them until Phase 3's",
+            "(see **Spawn lane**), which is the only thing distinguishing them until Phase 4's",
             "options arrive.",
         ]
     lines.append("")

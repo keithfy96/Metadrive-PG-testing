@@ -1,0 +1,1286 @@
+<title>Did the Phase 5 bag lose messages?</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+
+<style>
+:root {
+  color-scheme: light;
+  --ground:   #edf0f5;
+  --surface:  #fbfcfd;
+  --inset:    #f2f5f9;
+  --ink:      #0f1621;
+  --ink-2:    #4c5768;
+  --muted:    #78829a;
+  --hair:     #dbe1ea;
+  --hair-2:   #c6cedb;
+  --accent:   #2743c4;
+  --accent-soft: #dfe4fa;
+  --good:     #0ca30c;
+  --good-ink: #056b05;
+  --warn:     #fab219;
+  --warn-ink: #7d5300;
+  --crit:     #d03b3b;
+  --crit-ink: #a72525;
+  --ord-1:    #2743c4;
+  --ord-2:    #6478e8;
+  --ord-3:    #a3b0f2;
+  --on-ord-1: #ffffff;
+  --on-ord-3: #0f1621;
+  --on-accent: #ffffff;
+  --shadow:   0 1px 2px rgba(15, 22, 33, .05);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground:   #0c1016;
+    --surface:  #12161c;
+    --inset:    #171d26;
+    --ink:      #e7ecf4;
+    --ink-2:    #98a3b6;
+    --muted:    #6d7788;
+    --hair:     #212836;
+    --hair-2:   #2d3644;
+    --accent:   #6f84f0;
+    --accent-soft: #1e2540;
+    --good:     #0ca30c;
+    --good-ink: #35c035;
+    --warn:     #fab219;
+    --warn-ink: #fab219;
+    --crit:     #d03b3b;
+    --crit-ink: #ef6b6b;
+    --ord-1:    #8f9ff5;
+    --ord-2:    #5f74e0;
+    --ord-3:    #3c4aa0;
+    --on-ord-1: #0c1016;
+    --on-ord-3: #e7ecf4;
+    --ord-1:    #8f9ff5;
+  --ord-2:    #5f74e0;
+  --ord-3:    #3c4aa0;
+  --on-ord-1: #0c1016;
+  --on-ord-3: #e7ecf4;
+  --on-accent: #0c1016;
+    --shadow:   0 1px 2px rgba(0, 0, 0, .4);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground:   #0c1016;
+  --surface:  #12161c;
+  --inset:    #171d26;
+  --ink:      #e7ecf4;
+  --ink-2:    #98a3b6;
+  --muted:    #6d7788;
+  --hair:     #212836;
+  --hair-2:   #2d3644;
+  --accent:   #6f84f0;
+  --accent-soft: #1e2540;
+  --good:     #0ca30c;
+  --good-ink: #35c035;
+  --warn:     #fab219;
+  --warn-ink: #fab219;
+  --crit:     #d03b3b;
+  --crit-ink: #ef6b6b;
+  --ord-1:    #8f9ff5;
+  --ord-2:    #5f74e0;
+  --ord-3:    #3c4aa0;
+  --on-ord-1: #0c1016;
+  --on-ord-3: #e7ecf4;
+  --on-accent: #0c1016;
+  --shadow:   0 1px 2px rgba(0, 0, 0, .4);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 0 24px 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 44px;
+}
+
+/* ---------- header ---------- */
+.masthead {
+  padding: 56px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.eyebrow {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+.eyebrow .sep { color: var(--hair-2); }
+h1 {
+  font-family: Archivo, ui-sans-serif, system-ui, sans-serif;
+  font-weight: 700;
+  font-size: clamp(34px, 5.6vw, 54px);
+  line-height: 1.04;
+  letter-spacing: -.026em;
+  margin: 0;
+  text-wrap: balance;
+  max-width: 17ch;
+}
+.standfirst {
+  font-size: 18.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  margin: 0;
+  max-width: 62ch;
+}
+.standfirst strong { color: var(--ink); font-weight: 600; }
+
+/* ---------- stat strip ---------- */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1px;
+  background: var(--hair);
+  border: 1px solid var(--hair);
+  border-radius: 5px;
+  overflow: hidden;
+}
+.stat {
+  background: var(--surface);
+  padding: 20px 22px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.stat-k {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 10.5px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.stat-v {
+  font-family: Archivo, ui-sans-serif, system-ui, sans-serif;
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: -.02em;
+  line-height: 1.1;
+}
+.stat-v .unit { font-size: 15px; font-weight: 500; color: var(--ink-2); margin-left: 3px; }
+.stat-note { font-size: 12.5px; color: var(--muted); line-height: 1.45; }
+
+/* ---------- verdict ---------- */
+.verdict {
+  border: 1px solid var(--hair);
+  border-left: 3px solid var(--good);
+  background: var(--surface);
+  border-radius: 5px;
+  padding: 22px 26px;
+  display: flex;
+  gap: 18px;
+  align-items: flex-start;
+  box-shadow: var(--shadow);
+}
+.verdict.caution { border-left-color: var(--warn); }
+.verdict-icon {
+  flex: none;
+  width: 22px; height: 22px;
+  margin-top: 3px;
+}
+.verdict h2 {
+  font-family: Archivo, sans-serif;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -.01em;
+  margin: 0 0 6px;
+}
+.verdict p { margin: 0; color: var(--ink-2); max-width: 68ch; }
+
+/* ---------- sections ---------- */
+section { display: flex; flex-direction: column; gap: 18px; }
+.sec-head { display: flex; flex-direction: column; gap: 7px; }
+.sec-num {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  letter-spacing: .12em;
+  color: var(--accent);
+  text-transform: uppercase;
+}
+h2.sec-title {
+  font-family: Archivo, sans-serif;
+  font-size: clamp(23px, 3vw, 29px);
+  font-weight: 600;
+  letter-spacing: -.02em;
+  margin: 0;
+  text-wrap: balance;
+}
+.sec-head p { margin: 0; color: var(--ink-2); max-width: 68ch; }
+p { max-width: 68ch; }
+a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--hair);
+  border-radius: 5px;
+  box-shadow: var(--shadow);
+}
+.card-pad { padding: 26px; }
+
+/* ---------- timeline figure ---------- */
+.timeline { padding: 30px 26px 22px; }
+.tl-track {
+  position: relative;
+  height: 54px;
+  display: flex;
+  border-radius: 3px;
+  overflow: hidden;
+  border: 1px solid var(--hair-2);
+}
+.tl-data {
+  background: var(--accent);
+  display: flex;
+  align-items: center;
+  padding-left: 14px;
+  color: var(--on-accent);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: .02em;
+}
+.tl-tail {
+  background: repeating-linear-gradient(
+    135deg, var(--inset), var(--inset) 5px, var(--hair) 5px, var(--hair) 10px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tl-axis {
+  display: flex;
+  justify-content: space-between;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 9px;
+  font-variant-numeric: tabular-nums;
+}
+.tl-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 22px;
+  margin-top: 22px;
+  padding-top: 20px;
+  border-top: 1px solid var(--hair);
+}
+.tl-item { display: flex; gap: 11px; align-items: flex-start; max-width: 40ch; }
+.swatch { flex: none; width: 13px; height: 13px; border-radius: 2px; margin-top: 4px; border: 1px solid var(--hair-2); }
+.swatch.data { background: var(--accent); border-color: var(--accent); }
+.swatch.tail { background: repeating-linear-gradient(135deg, var(--inset), var(--inset) 3px, var(--hair) 3px, var(--hair) 6px); }
+.tl-item b { font-size: 13.5px; font-weight: 600; display: block; }
+.tl-item span { font-size: 13px; color: var(--ink-2); line-height: 1.5; }
+
+/* ---------- table ---------- */
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; min-width: 800px; font-size: 13.5px; }
+thead th {
+  background: var(--surface);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10.5px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  font-weight: 500;
+  color: var(--muted);
+  text-align: left;
+  padding: 14px 14px 11px;
+  border-bottom: 1px solid var(--hair-2);
+  white-space: nowrap;
+}
+thead th.num, td.num { text-align: right; }
+tr.group th {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10.5px;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  font-weight: 500;
+  color: var(--ink-2);
+  text-align: left;
+  background: var(--inset);
+  padding: 8px 14px;
+  border-top: 1px solid var(--hair);
+  border-bottom: 1px solid var(--hair);
+}
+td { padding: 9px 14px; border-bottom: 1px solid var(--hair); vertical-align: baseline; }
+tr.row:hover td { background: var(--inset); }
+td.chan code {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12.5px;
+  color: var(--ink);
+}
+td.chan .note {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.45;
+  margin-top: 2px;
+  max-width: 46ch;
+}
+td.num { font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; }
+td.num.strong { font-weight: 600; }
+td.num.dim { color: var(--ink-2); }
+tr.flagged td.num.strong { color: var(--crit-ink); }
+td.dev { width: 190px; min-width: 190px; }
+.meter {
+  position: relative;
+  display: block;
+  height: 7px;
+  width: 118px;
+  background: var(--inset);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.meter-zero { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--hair-2); }
+.meter-bar { position: absolute; top: 0; bottom: 0; border-radius: 2px; }
+.devnum {
+  font-family: "IBM Plex Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+  color: var(--ink-2);
+  display: block;
+  margin-top: 3px;
+}
+tr.flagged .devnum { color: var(--crit-ink); font-weight: 500; }
+.na { font-size: 11.5px; color: var(--muted); }
+
+/* ---------- checks ---------- */
+.checks { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px; }
+.check { padding: 22px 24px 24px; display: flex; flex-direction: column; gap: 10px; }
+.check-tag {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--good-ink);
+  font-weight: 500;
+}
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--good); flex: none; }
+.check h3 {
+  font-family: Archivo, sans-serif;
+  font-size: 16.5px; font-weight: 600; margin: 0; letter-spacing: -.012em;
+}
+.check p { margin: 0; font-size: 13.5px; color: var(--ink-2); }
+.check .figure {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 13px;
+  background: var(--inset);
+  border-radius: 4px;
+  padding: 12px 14px;
+  color: var(--ink);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.figure .frow { display: flex; justify-content: space-between; gap: 14px; }
+.figure .frow span:first-child { color: var(--ink-2); }
+
+/* ---------- histogram ---------- */
+.hist { padding: 28px 26px 20px; }
+.hist-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 14px; align-items: baseline; margin-bottom: 26px; }
+.hist-title { font-family: Archivo, sans-serif; font-size: 16px; font-weight: 600; margin: 0; }
+.hist-sub { font-size: 12.5px; color: var(--muted); font-family: "IBM Plex Mono", monospace; }
+.plot {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 210px;
+  border-bottom: 1px solid var(--hair-2);
+  padding-bottom: 0;
+}
+.bar-col {
+  position: relative;
+  flex: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  outline: none;
+}
+.bar {
+  width: 100%;
+  border-radius: 3px 3px 0 0;
+  background: var(--accent);
+  transition: filter .12s ease;
+}
+.bar.crit { background: var(--crit); }
+.bar-col:hover .bar, .bar-col:focus-visible .bar { filter: brightness(1.15); }
+.bar-col:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+.bar-tag {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--ink-2);
+  margin-bottom: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.bar-x {
+  position: absolute;
+  bottom: -26px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.tip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--ink);
+  color: var(--surface);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11.5px;
+  padding: 5px 9px;
+  border-radius: 3px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .12s ease;
+  z-index: 3;
+}
+.bar-col:hover .tip, .bar-col:focus-visible .tip { opacity: 1; }
+.plot-x { height: 34px; }
+.plot-axis-label {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+  letter-spacing: .04em;
+}
+
+/* ---------- comparison ---------- */
+.cmp-table table { min-width: 720px; }
+.cmp-table th.cmp-k {
+  text-align: left;
+  font-weight: 500;
+  color: var(--ink-2);
+  font-size: 13px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--hair);
+  vertical-align: baseline;
+}
+.cmp-table th.cmp-k code { font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--ink); }
+.cmp-table th.cmp-k .note { display: block; font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+.cmp-table th.cmp-k .note code { font-size: 11.5px; color: var(--muted); }
+td.cmp {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+td.cmp.accent { color: var(--accent); font-weight: 500; }
+.cmp-table thead th.lead { color: var(--ink); font-weight: 600; letter-spacing: .04em; }
+
+.composition { padding: 26px; display: flex; flex-direction: column; gap: 26px; }
+.comp-row { display: flex; flex-direction: column; gap: 8px; }
+.comp-label {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11.5px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.comp-bar { display: flex; gap: 2px; height: 34px; }
+.comp-seg {
+  display: flex; align-items: center; padding: 0 10px;
+  border-radius: 3px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11.5px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.comp-seg.can { background: var(--accent); color: var(--on-accent); }
+.comp-seg.rest { background: var(--accent-soft); color: var(--ink-2); }
+.comp-outside {
+  display: flex; align-items: center; padding-left: 10px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11.5px; color: var(--accent); white-space: nowrap;
+}
+.comp-note { font-size: 12.5px; color: var(--muted); max-width: 70ch; }
+
+/* ---------- session composition ---------- */
+.oob { padding: 28px 26px 24px; display: flex; flex-direction: column; gap: 24px; }
+.oob-row { display: flex; flex-direction: column; gap: 8px; }
+.oob-label {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2);
+}
+.oob-bar { display: flex; gap: 2px; height: 38px; }
+.oob-seg {
+  display: flex; align-items: center; padding: 0 10px; border-radius: 3px;
+  font-family: "IBM Plex Mono", monospace; font-size: 11.5px;
+  white-space: nowrap; overflow: hidden;
+}
+.oob-seg.s1 { background: var(--ord-1); color: var(--on-ord-1); }
+.oob-seg.s2 { background: var(--ord-2); color: var(--on-ord-1); }
+.oob-seg.s3 { background: var(--ord-3); color: var(--on-ord-3); }
+.oob-total { font-size: 12.5px; color: var(--muted); }
+.oob-legend {
+  display: flex; flex-wrap: wrap; gap: 20px;
+  padding-top: 20px; border-top: 1px solid var(--hair);
+}
+.oob-key { display: flex; gap: 10px; align-items: baseline; max-width: 34ch; }
+.oob-sw { flex: none; width: 12px; height: 12px; border-radius: 2px; }
+.oob-sw.s1 { background: var(--ord-1); }
+.oob-sw.s2 { background: var(--ord-2); }
+.oob-sw.s3 { background: var(--ord-3); }
+.oob-key b { font-size: 13px; font-weight: 600; }
+.oob-key span:last-child { font-size: 12.5px; color: var(--ink-2); line-height: 1.5; }
+
+/* ---------- findings list ---------- */
+.findings { display: flex; flex-direction: column; gap: 1px; background: var(--hair); border: 1px solid var(--hair); border-radius: 5px; overflow: hidden; }
+.finding { background: var(--surface); padding: 20px 24px; display: grid; grid-template-columns: 108px 1fr; gap: 20px; align-items: start; }
+.finding .chip {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  font-weight: 500;
+  padding: 4px 8px;
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.chip.ok { color: var(--good-ink); background: color-mix(in srgb, var(--good) 12%, transparent); }
+.chip.watch { color: var(--warn-ink); background: color-mix(in srgb, var(--warn) 18%, transparent); }
+.chip.info { color: var(--accent); background: var(--accent-soft); }
+.finding h3 { font-family: Archivo, sans-serif; font-size: 15.5px; font-weight: 600; margin: 0 0 5px; letter-spacing: -.01em; }
+.finding p { margin: 0; font-size: 13.5px; color: var(--ink-2); }
+.finding code { font-family: "IBM Plex Mono", monospace; font-size: 12.5px; background: var(--inset); padding: 1px 5px; border-radius: 3px; }
+
+/* ---------- method ---------- */
+.method { padding: 26px; display: flex; flex-direction: column; gap: 14px; }
+.method h3 { font-family: Archivo, sans-serif; font-size: 15px; font-weight: 600; margin: 0; }
+.method p, .method li { font-size: 13.5px; color: var(--ink-2); }
+.method ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 7px; }
+.method code { font-family: "IBM Plex Mono", monospace; font-size: 12.5px; }
+
+footer {
+  border-top: 1px solid var(--hair);
+  padding-top: 22px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11.5px;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+@media (max-width: 620px) {
+  .finding { grid-template-columns: 1fr; gap: 10px; }
+  .masthead { padding-top: 40px; }
+}
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="eyebrow">
+      <span>ros2_mig_phase_5_p1</span><span class="sep">/</span>
+      <span>drive_20260824-051337</span><span class="sep">/</span>
+      <span>mcap · zstd · 2,165 chunks</span>
+    </div>
+    <h1>Did the Phase&nbsp;5 bag lose messages?</h1>
+    <p class="standfirst">
+      No. Across <strong>1,466,940 messages</strong> and 7.41&nbsp;GB, 39 of 42 periodic
+      channels recorded within 0.1% of nominal and the writer never once fell behind. One channel
+      is short of its configured rate — and it was short before the recorder ever saw it.
+      Two drives from the ROS 1 archive, read the same way, say the same thing about the stack
+      this one replaced.
+    </p>
+  </header>
+
+  <div class="stats">
+    <div class="stat">
+      <span class="stat-k">Periodic channels</span>
+      <span class="stat-v">39<span class="unit">/ 42</span></span>
+      <span class="stat-note">within 0.1% of nominal rate</span>
+    </div>
+    <div class="stat">
+      <span class="stat-k">Writer latency</span>
+      <span class="stat-v">0.10<span class="unit">ms</span></span>
+      <span class="stat-note">median publish → write; worst p99 was 2.24 ms</span>
+    </div>
+    <div class="stat">
+      <span class="stat-k">Sustained write</span>
+      <span class="stat-v">9.5<span class="unit">MB/s</span></span>
+      <span class="stat-note">1,882 msg/s over 779.6 s</span>
+    </div>
+    <div class="stat">
+      <span class="stat-k">Dropped by recorder</span>
+      <span class="stat-v">0</span>
+      <span class="stat-note">on three independent checks</span>
+    </div>
+  </div>
+
+  <div class="verdict">
+    <svg class="verdict-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="10" stroke="var(--good)" stroke-width="1.8"></circle>
+      <path d="M7.5 12.4l3 3 6-6.6" stroke="var(--good)" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round"></path>
+    </svg>
+    <div>
+      <h2>The bag is complete and usable</h2>
+      <p>
+        All six rig cameras landed 15,589–15,590 frames — a spread of one. The GNSS/INS stack,
+        the 100 Hz vehicle bus and the 10 Hz perception chain are all exactly on rate. The only
+        rate shortfall, <code>/localization/odometry</code>, is the fusion EKF missing its own
+        update cycles, which the recorder faithfully recorded.
+      </p>
+    </div>
+  </div>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">First — read the duration right</span>
+      <h2 class="sec-title">The bag spans 828.8 s. The data spans 779.6 s.</h2>
+      <p>
+        Dividing message counts by the duration in <code>metadata.yaml</code> under-reports every
+        rate by 5.9% — that is the artefact that makes a solid 100 Hz <code>/vehicle/state</code>
+        look like 94.07 Hz. Every figure on this page uses the 779.6 s window.
+      </p>
+    </div>
+    <div class="card timeline">
+      <div class="tl-track">
+        <div class="tl-data" style="width:94.1%">all 55 topics recording</div>
+        <div class="tl-tail" style="width:5.9%"></div>
+      </div>
+      <div class="tl-axis">
+        <span>0 s</span>
+        <span>779.6 s — controller_manager shutdown</span>
+        <span>828.8 s</span>
+      </div>
+      <div class="tl-legend">
+        <div class="tl-item">
+          <span class="swatch data"></span>
+          <span><b>0 → 779.6 s · data</b>
+          Every sensor, vehicle and control topic, continuous, on rate, no interruption.</span>
+        </div>
+        <div class="tl-item">
+          <span class="swatch tail"></span>
+          <span><b>779.6 → 828.8 s · 49.2 s tail</b>
+          <code>/diagnostics</code> only. <code>/rosout</code> shows a clean
+          <em>Shutdown request received</em> — the recorder simply outlived the stack.</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">The evidence — three independent checks</span>
+      <h2 class="sec-title">Nothing was dropped on the way to disk</h2>
+    </div>
+    <div class="checks">
+      <div class="card check">
+        <span class="check-tag"><span class="dot"></span>Counts vs nominal</span>
+        <h3>Every rate family lands on target</h3>
+        <p>39 of 42 periodic channels sit within 0.1% of nominal. The exceptions are a
+        free-running sensor clock and the EKF below.</p>
+        <div class="figure">
+          <div class="frow"><span>6 rig cameras</span><span>15,589–15,590</span></div>
+          <div class="frow"><span>spread</span><span>1 frame</span></div>
+        </div>
+      </div>
+      <div class="card check">
+        <span class="check-tag"><span class="dot"></span>Writer latency</span>
+        <h3>The writer was never backlogged</h3>
+        <p>MCAP stores the DDS source timestamp alongside the write time, so publish → disk
+        is directly measurable. A queue that never builds cannot overflow.</p>
+        <div class="figure">
+          <div class="frow"><span>median</span><span>0.10 ms</span></div>
+          <div class="frow"><span>worst p99</span><span>2.24 ms</span></div>
+          <div class="frow"><span>worst single</span><span>35.5 ms</span></div>
+        </div>
+      </div>
+      <div class="card check">
+        <span class="check-tag"><span class="dot"></span>Driver counters</span>
+        <h3>The cameras agree</h3>
+        <p>The synchronised rig driver prints its own tally every 25 s, independent of the
+        recorder — zero dropped frames for the whole drive.</p>
+        <div class="figure">
+          <div class="frow"><span>frequency</span><span>20.011 Hz</span></div>
+          <div class="frow"><span>drop / icmp</span><span>0 / 0</span></div>
+          <div class="frow"><span>jitter</span><span>≤ 1.1%</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">The one shortfall</span>
+      <h2 class="sec-title">/localization/odometry runs at 43.90 Hz against a configured 50</h2>
+      <p>
+        The gap is 12.2% — roughly 4,700 missing cycles. It is not a transport problem: writer
+        latency on this topic is 0.08 ms median, 0.33 ms p99. The interval histogram shows the
+        shape of a producer skipping whole cycles, not of messages arriving late and being
+        discarded. <code>ekf_global</code> in
+        <code>config/localization/rl_odom_fusion.yaml</code> is set to
+        <code>frequency: 50.0</code> and is failing to meet it.
+      </p>
+    </div>
+    <div class="card hist">
+      <div class="hist-head">
+        <h3 class="hist-title">Interval between consecutive odometry messages</h3>
+        <span class="hist-sub">34,224 intervals · median 20.03 ms</span>
+      </div>
+      <div class="plot" role="list" aria-label="Histogram of intervals between odometry messages">
+        <div class="bar-col" tabindex="0" role="listitem" aria-label="0–15 milliseconds: 3 intervals, 0.0 percent"><div class="bar accent" style="height:0.60%"></div><span class="bar-x">0–15</span><span class="tip">3 intervals · 0.01%</span></div>
+<div class="bar-col" tabindex="0" role="listitem" aria-label="15–19 milliseconds: 30 intervals, 0.1 percent"><div class="bar accent" style="height:0.60%"></div><span class="bar-x">15–19</span><span class="tip">30 intervals · 0.09%</span></div>
+<div class="bar-col" tabindex="0" role="listitem" aria-label="19–21 milliseconds: 29,400 intervals, 85.9 percent"><span class="bar-tag">85.9%</span><div class="bar accent" style="height:100.00%"></div><span class="bar-x">19–21</span><span class="tip">29,400 intervals · 85.90%</span></div>
+<div class="bar-col" tabindex="0" role="listitem" aria-label="21–25 milliseconds: 36 intervals, 0.1 percent"><div class="bar accent" style="height:0.60%"></div><span class="bar-x">21–25</span><span class="tip">36 intervals · 0.11%</span></div>
+<div class="bar-col" tabindex="0" role="listitem" aria-label="25–30 milliseconds: 1 intervals, 0.0 percent"><div class="bar accent" style="height:0.60%"></div><span class="bar-x">25–30</span><span class="tip">1 intervals · 0.00%</span></div>
+<div class="bar-col" tabindex="0" role="listitem" aria-label="30–35 milliseconds: 0 intervals, 0.0 percent"><div class="bar crit" style="height:0.60%"></div><span class="bar-x">30–35</span><span class="tip">0 intervals · 0.00%</span></div>
+<div class="bar-col" tabindex="0" role="listitem" aria-label="35–40 milliseconds: 1,904 intervals, 5.6 percent"><span class="bar-tag">5.6%</span><div class="bar crit" style="height:6.48%"></div><span class="bar-x">35–40</span><span class="tip">1,904 intervals · 5.56%</span></div>
+<div class="bar-col" tabindex="0" role="listitem" aria-label="40–45 milliseconds: 2,850 intervals, 8.3 percent"><span class="bar-tag">8.3%</span><div class="bar crit" style="height:9.69%"></div><span class="bar-x">40–45</span><span class="tip">2,850 intervals · 8.33%</span></div>
+      </div>
+      <div class="plot-x"></div>
+      <div class="plot-axis-label">interval (ms) — red buckets are skipped publish cycles</div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">Reads as loss, isn't</span>
+      <h2 class="sec-title">Three things that will look wrong on a first pass</h2>
+    </div>
+    <div class="findings">
+      <div class="finding">
+        <span class="chip info">bursty</span>
+        <div>
+          <h3><code>/sensing/gnss/imu/velocity</code> — 76% of intervals under 0.5 ms</h3>
+          <p>The SBG driver delivers in bursts of four followed by a ~20 ms gap. The mean
+          interval is exactly 5.00 ms: a clean 200 Hz. A naive median-interval check calls
+          this 99% loss.</p>
+        </div>
+      </div>
+      <div class="finding">
+        <span class="chip info">aperiodic</span>
+        <div>
+          <h3><code>/tf</code>, <code>/rosout</code>, <code>/diagnostics</code> have no nominal rate</h3>
+          <p>Multi-publisher and event-driven. <code>/tf</code> at 86.6 Hz is the sum of several
+          broadcasters, not a 100 Hz topic that lost 13%.</p>
+        </div>
+      </div>
+      <div class="finding">
+        <span class="chip info">sensor clock</span>
+        <div>
+          <h3><code>/sensing/lidar/imu</code> at 202.92 Hz, not 200</h3>
+          <p>The Livox IMU free-runs slightly fast. 200 Hz is the datasheet figure, not a rate
+          it fell short of.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">Against the ROS 1 archive</span>
+      <h2 class="sec-title">The same question, asked of the stack this one replaced</h2>
+      <p>
+        Two Mosque50 drives from the ROS 1 archive — <code>20260727-113152</code> and
+        <code>20260805-145214</code>, nine days apart — read with the same index-only method.
+        They are a different route and a different day, so this is not a controlled A/B. What
+        transfers is the <em>shape</em> of each recording and what each format lets you prove
+        about it. The last three rows count the companion log folder that ships beside the 07-27
+        bag — <a href="#session">unpacked further down</a>, because it turns out to be most of
+        the recording.
+      </p>
+    </div>
+    <div class="card tablewrap cmp-table">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">&nbsp;</th>
+            <th scope="col" class="lead">ROS 2 · 08-24</th>
+            <th scope="col" class="lead">ROS 1 · 08-05</th>
+            <th scope="col" class="lead">ROS 1 · 07-27</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="group"><th colspan="4" scope="rowgroup">Shape of the recording</th></tr>
+<tr class="row"><th scope="row" class="cmp-k">Format</th><td class="cmp ">MCAP · zstd</td><td class="cmp ">rosbag v2.0 · uncompressed</td><td class="cmp ">rosbag v2.0 · uncompressed</td></tr>
+<tr class="row"><th scope="row" class="cmp-k">Duration</th><td class="cmp ">779.6 s</td><td class="cmp ">339.35 s</td><td class="cmp ">319.92 s</td></tr>
+<tr class="row"><th scope="row" class="cmp-k">Topics</th><td class="cmp ">55</td><td class="cmp ">132</td><td class="cmp ">132</td></tr>
+<tr class="row"><th scope="row" class="cmp-k">Messages</th><td class="cmp ">1,466,940</td><td class="cmp ">2,389,567</td><td class="cmp ">2,375,416</td></tr>
+<tr class="row"><th scope="row" class="cmp-k">Message rate</th><td class="cmp accent">1,882 /s</td><td class="cmp accent">7,042 /s</td><td class="cmp accent">7,425 /s</td></tr>
+<tr class="group"><th colspan="4" scope="rowgroup">Volume</th></tr>
+<tr class="row"><th scope="row" class="cmp-k">Payload (uncompressed)</th><td class="cmp ">10.50 GB</td><td class="cmp ">4.30 GB</td><td class="cmp ">4.05 GB</td></tr>
+<tr class="row"><th scope="row" class="cmp-k">On disk</th><td class="cmp ">7.41 GB · 1.42× zstd</td><td class="cmp ">same — no compression</td><td class="cmp ">same — no compression</td></tr>
+<tr class="row"><th scope="row" class="cmp-k">Payload rate</th><td class="cmp ">13.5 MB/s</td><td class="cmp ">12.7 MB/s</td><td class="cmp ">12.7 MB/s</td></tr>
+<tr class="row"><th scope="row" class="cmp-k">Bytes per message</th><td class="cmp ">7,159 B</td><td class="cmp ">1,799 B</td><td class="cmp ">1,706 B</td></tr>
+<tr class="row"><th scope="row" class="cmp-k">Lidar share of payload</th><td class="cmp ">87.3%</td><td class="cmp ">91.7%</td><td class="cmp ">91.4%</td></tr>
+<tr class="row"><th scope="row" class="cmp-k">Everything except lidar</th><td class="cmp ">1.33 GB</td><td class="cmp ">0.36 GB</td><td class="cmp ">0.35 GB</td></tr>
+<tr class="group"><th colspan="4" scope="rowgroup">Integrity</th></tr>
+<tr class="row"><th scope="row" class="cmp-k">Periodic channels on rate</th><td class="cmp accent">39 / 42</td><td class="cmp accent">112 / 126</td><td class="cmp accent">112 / 126</td></tr>
+<tr class="row"><th scope="row" class="cmp-k">Camera images</th><td class="cmp ">7 streams in-band, 20/30 Hz</td><td class="cmp ">6 streams out-of-band, 10 Hz</td><td class="cmp ">6 streams out-of-band, 10 Hz</td></tr>
+<tr class="row"><th scope="row" class="cmp-k">Companion files on disk</th><td class="cmp ">none — one file</td><td class="cmp ">not archived here</td><td class="cmp ">5.86 GB</td></tr>
+<tr class="row"><th scope="row" class="cmp-k">Whole session on disk</th><td class="cmp accent">7.41 GB</td><td class="cmp accent">bag only, 4.36 GB</td><td class="cmp accent">9.97 GB</td></tr>
+<tr class="row"><th scope="row" class="cmp-k">Formats to read it</th><td class="cmp ">1 — MCAP</td><td class="cmp ">1 archived</td><td class="cmp ">4 — rosbag, capnp, HEVC, pickle</td></tr>
+<tr class="row"><th scope="row" class="cmp-k">Writer latency measurable</th><td class="cmp ">yes — 0.10 ms median</td><td class="cmp ">no — no source timestamp</td><td class="cmp ">no — no source timestamp</td></tr>
+<tr class="row"><th scope="row" class="cmp-k">All topics live by</th><td class="cmp ">0.1 s</td><td class="cmp ">13.3 s</td><td class="cmp ">12.5 s</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">Where the message count goes</span>
+      <h2 class="sec-title">ROS 1 wrote 3.7× the messages at the same bytes per second</h2>
+      <p>
+        The ROS 1 stack fanned every decoded CAN signal out to its own topic, each carrying one
+        scalar in a <code>geometry_msgs/TwistStamped</code> — a header plus six float64s to hold
+        a single number. 95 of its 132 topics are one CAN signal, and 104 of its 137 connections
+        are that message type. It is why the older bag averages 7,042 messages a second against
+        this one's 1,882, and 1,799 bytes a message against 7,159.
+        The byte rates barely differ — 12.7 MB/s against 13.5 — so what the fan-out cost was
+        never disk. It was 3.7× the per-message overhead, 132 topics to reason about instead of
+        55, and a decode spread across a hundred topics that have to be re-joined to mean
+        anything.
+      </p>
+    </div>
+    <div class="card composition">
+      <div class="comp-row"><div class="comp-label">ROS 1 · 132 topics</div><div class="comp-bar"><div class="comp-seg can" style="width:71.97%"><span>95 CAN signal topics</span></div><div class="comp-seg rest" style="width:28.03%"><span>37 other</span></div></div><div class="comp-note">95 of them are a single CAN signal each, every one a geometry_msgs/TwistStamped</div></div>
+<div class="comp-row"><div class="comp-label">ROS 2 · 55 topics</div><div class="comp-bar"><div class="comp-seg can" style="width:1.52%"></div><div class="comp-seg rest" style="width:40.15%"><span>53 other</span></div><div class="comp-outside">2 CAN topics</div></div><div class="comp-note">CAN is two topics of raw frames; the decode arrives as /vehicle/state</div></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">A loss test ROS 1 hands you</span>
+      <h2 class="sec-title">The CAN counters look like 123 missing frames. They aren't.</h2>
+      <p>
+        Six of those per-signal topics are the rolling <code>COUNTER</code> of a CAN message —
+        a wire sequence number sitting in a topic of its own, which makes a direct
+        drop test almost free. Read across 101,327 counter messages, it finds 19 holes and
+        123 frames unaccounted for. That reads like loss.
+      </p>
+      <p>
+        It isn't. Every hole was checked against the arrival gap that should accompany it:
+        a genuinely missing frame leaves a gap of 40 ms or more at 50 Hz. Not one does.
+        The gaps at those holes run 5.9–19.5 ms — <em>shorter</em> than the nominal 20 ms
+        period. Messages arrived early with the counter jumping, and 17 of the 19 land in a
+        single 0.1 s burst at t=10.8 s. The other drive reproduces it at t=10.6 s. It is the
+        ADAS transmit path settling after startup, not a recorder dropping frames.
+      </p>
+    </div>
+    <div class="checks">
+      <div class="card check">
+        <span class="check-tag"><span class="dot"></span>What the test found</span>
+        <h3>19 holes, 123 frames</h3>
+        <p>Across six <code>COUNTER</code> topics and 101,327 messages, on the 08-05 drive.</p>
+        <div class="figure">
+          <div class="frow"><span>ACC_CMD</span><span>5 holes · 31</span></div>
+          <div class="frow"><span>LKAS_HUD_ADAS</span><span>7 holes · 45</span></div>
+          <div class="frow"><span>STEERING_MODULE_ADAS</span><span>6 holes · 45</span></div>
+          <div class="frow"><span>STEERING_TORQUE</span><span>1 hole · 2</span></div>
+          <div class="frow"><span>WHEEL_SPEED2, ACC_HUD_ADAS</span><span>none</span></div>
+        </div>
+      </div>
+      <div class="card check">
+        <span class="check-tag"><span class="dot"></span>What refutes it</span>
+        <h3>Every gap is shorter than one period</h3>
+        <p>A missing frame has to leave a hole in time as well as in the sequence. None of
+        these do.</p>
+        <div class="figure">
+          <div class="frow"><span>nominal period</span><span>20.0 ms</span></div>
+          <div class="frow"><span>gap at holes, median</span><span>9.2 ms</span></div>
+          <div class="frow"><span>gap at holes, range</span><span>5.9 – 19.5 ms</span></div>
+          <div class="frow"><span>gaps over 25 ms</span><span>0 of 19</span></div>
+        </div>
+      </div>
+      <div class="card check">
+        <span class="check-tag"><span class="dot"></span>And it reproduces</span>
+        <h3>Same burst, both drives</h3>
+        <p>Nine days apart, the same clustering at the same moment after start — the signature
+        of an initialisation, not of a machine under load.</p>
+        <div class="figure">
+          <div class="frow"><span>08-05 · 17 of 19 at</span><span>t = 10.8 s</span></div>
+          <div class="frow"><span>07-27 · 11 of 11 at</span><span>t = 10.6 s</span></div>
+          <div class="frow"><span>gaps over 25 ms</span><span>0 of 11</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">What each format can prove</span>
+      <h2 class="sec-title">The two bags answer different questions about loss</h2>
+    </div>
+    <div class="findings">
+      <div class="finding">
+        <span class="chip ok">MCAP only</span>
+        <div>
+          <h3>The writer-latency proof does not exist for a ROS 1 bag</h3>
+          <p>rosbag v2.0 stores one timestamp per message — when the recorder received it.
+          MCAP stores that <em>and</em> the DDS source timestamp, so publish → disk is a
+          measurable quantity. On the ROS 1 side, "was the recorder keeping up" has no
+          answer in the file; you are left with counts against nominal.</p>
+        </div>
+      </div>
+      <div class="finding">
+        <span class="chip info">easier in ROS 1</span>
+        <div>
+          <h3>The wire counters sit in their own topics</h3>
+          <p>A by-product of the per-signal fan-out: a rolling CAN counter is a scalar topic
+          you can read without a DBC. The same counters exist in this bag, inside the frames on
+          <code>/vehicle/can_rx</code> — the test is still available, it just needs a decode
+          first.</p>
+        </div>
+      </div>
+      <div class="finding">
+        <span class="chip watch">both bags</span>
+        <div>
+          <h3>Neither format flags a dropped message</h3>
+          <p>Nothing in either file says "a message was here and is gone". Every loss figure on
+          this page is inferred — from rates against nominal, from gaps in time, from sequence
+          holes. That is why a finding needs two of them to agree before it counts.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">Unchanged by the migration</span>
+      <h2 class="sec-title">The sensor layer records at exactly the same rates</h2>
+      <p>
+        Same hardware, two stacks, three drives across four weeks. Every shared sensor stream
+        lands within 0.08 Hz. The Livox IMU's 202.9 Hz — the one figure on this page that sits
+        off its datasheet number — is 202.88, 202.92 and 202.96 across the three, which settles
+        it as the sensor's own clock rather than anything either recorder did.
+      </p>
+    </div>
+    <div class="card tablewrap cmp-table">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Stream</th>
+            <th scope="col" class="num lead">ROS 2 · 08-24</th>
+            <th scope="col" class="num lead">ROS 1 · 08-05</th>
+            <th scope="col" class="num lead">ROS 1 · 07-27</th>
+            <th scope="col" class="num">Spread</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="row"><th scope="row" class="cmp-k"><code>/sensing/lidar/imu</code><span class="note">ROS 1: <code>/livox/imu</code></span></th><td class="num">202.92</td><td class="num">202.88</td><td class="num">202.96</td><td class="num dim">0.08</td></tr>
+<tr class="row"><th scope="row" class="cmp-k"><code>/sensing/lidar/points</code><span class="note">ROS 1: <code>/livox/lidar</code></span></th><td class="num">10.00</td><td class="num">10.00</td><td class="num">10.00</td><td class="num dim">0.00</td></tr>
+<tr class="row"><th scope="row" class="cmp-k"><code>/sensing/gnss/ekf_nav</code><span class="note">ROS 1: <code>/sbg/ekf_nav</code></span></th><td class="num">50.00</td><td class="num">50.01</td><td class="num">49.99</td><td class="num dim">0.02</td></tr>
+<tr class="row"><th scope="row" class="cmp-k"><code>/sensing/gnss/ekf_euler</code><span class="note">ROS 1: <code>/sbg/ekf_euler</code></span></th><td class="num">50.00</td><td class="num">50.00</td><td class="num">49.99</td><td class="num dim">0.01</td></tr>
+<tr class="row"><th scope="row" class="cmp-k"><code>/sensing/gnss/imu_data</code><span class="note">ROS 1: <code>/sbg/imu_data</code></span></th><td class="num">50.00</td><td class="num">50.01</td><td class="num">49.98</td><td class="num dim">0.03</td></tr>
+<tr class="row"><th scope="row" class="cmp-k"><code>/sensing/gnss/imu/velocity</code><span class="note">ROS 1: <code>/imu/velocity</code></span></th><td class="num">200.00</td><td class="num">200.04</td><td class="num">199.95</td><td class="num dim">0.09</td></tr>
+<tr class="row"><th scope="row" class="cmp-k"><code>/sensing/gnss/imu/nav_sat_fix</code><span class="note">ROS 1: <code>/imu/nav_sat_fix</code></span></th><td class="num">5.00</td><td class="num">5.00</td><td class="num">5.00</td><td class="num dim">0.00</td></tr>
+<tr class="row"><th scope="row" class="cmp-k"><code>/sensing/gnss/gps_pos</code><span class="note">ROS 1: <code>/sbg/gps_pos</code></span></th><td class="num">5.00</td><td class="num">5.00</td><td class="num">5.00</td><td class="num dim">0.00</td></tr>
+<tr class="row"><th scope="row" class="cmp-k"><code>/sensing/gnss/status</code><span class="note">ROS 1: <code>/sbg/status</code></span></th><td class="num">1.00</td><td class="num">1.00</td><td class="num">1.00</td><td class="num dim">0.00</td></tr>
+<tr class="row"><th scope="row" class="cmp-k"><code>/sensing/gnss/utc_time</code><span class="note">ROS 1: <code>/sbg/utc_time</code></span></th><td class="num">1.00</td><td class="num">1.00</td><td class="num">1.00</td><td class="num dim">0.00</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-num" id="session">The other half of the ROS 1 recording</span>
+      <h2 class="sec-title">The bag was never the whole drive</h2>
+      <p>
+        The 07-27 drive ships a companion folder next to its bag —
+        <code>~/ww/bags/20260727-113152/</code>, 5.86 GB against the bag's
+        4.11 GB. Counting it changes the comparison: that session is
+        <strong>9.97 GB and 2,643,203 records spread across four formats</strong>,
+        where the ROS 2 drive is one file with one index. It also corrects a claim the earlier
+        version of this page made: the ROS 1 cameras <em>were</em> recorded — as HEVC, outside
+        the bag, at 10 Hz.
+      </p>
+    </div>
+    <div class="card oob">
+      <div class="oob-row"><div class="oob-label">ROS 1 · 07-27 session</div><div class="oob-bar"><div class="oob-seg s1" style="width:41.20%" title="the bag: 4.11 GB"><span>4.11 GB</span></div><div class="oob-seg s2" style="width:10.91%" title="video: 1.09 GB"><span>1.09 GB</span></div><div class="oob-seg s3" style="width:47.90%" title="logs & dumps: 4.77 GB"><span>4.77 GB</span></div></div><div class="oob-total">9.97 GB across 4 formats</div></div>
+<div class="oob-row"><div class="oob-label">ROS 2 · 08-24</div><div class="oob-bar"><div class="oob-seg s1" style="width:74.34%"><span>7.41 GB</span></div></div><div class="oob-total">one file, one index, video included</div></div>
+      <div class="oob-legend">
+        <div class="oob-key"><span class="oob-sw s1"></span><b>the bag</b><span>indexed, queryable, one timestamp per message</span></div><div class="oob-key"><span class="oob-sw s2"></span><b>video</b><span>6 HEVC streams + the cabin MKV, with sidecar timestamp files</span></div><div class="oob-key"><span class="oob-sw s3"></span><b>logs & dumps</b><span>pickles, rlogs, and plain-text prints — no index of any kind</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">What is in the companion folder</span>
+      <h2 class="sec-title">Two thirds of it is Python pickles</h2>
+      <p>
+        3.79 GB of <code>logs/hostmodel_logs_*.pickle</code> and
+        <code>debug_trace/*.pickle</code> — more bytes than the point clouds inside the bag,
+        and the one part of the session that no index, schema or tool can enumerate without
+        unpickling it. The openpilot segments are the readable half:
+        234,614 rlog messages and 14,749 qlog messages across six segments, in
+        vendored capnp schemas.
+      </p>
+    </div>
+    <div class="card tablewrap cmp-table">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Content</th>
+            <th scope="col" class="num">GB</th>
+            <th scope="col" class="num">Share</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="row"><th scope="row" class="cmp-k">model & control pickles (logs/)</th><td class="num">3.79</td><td class="num dim">64.6%</td></tr>
+<tr class="row"><th scope="row" class="cmp-k">camera video — 6 × HEVC</th><td class="num">0.91</td><td class="num dim">15.5%</td></tr>
+<tr class="row"><th scope="row" class="cmp-k">text dumps — openpilot, CAN, car_state, launch</th><td class="num">0.61</td><td class="num dim">10.5%</td></tr>
+<tr class="row"><th scope="row" class="cmp-k">openpilot rlog + qlog — 6 segments</th><td class="num">0.19</td><td class="num dim">3.3%</td></tr>
+<tr class="row"><th scope="row" class="cmp-k">cabin video — MKV</th><td class="num">0.18</td><td class="num dim">3.0%</td></tr>
+<tr class="row"><th scope="row" class="cmp-k">debug_trace pickles</th><td class="num">0.10</td><td class="num dim">1.7%</td></tr>
+<tr class="row"><th scope="row" class="cmp-k">encoder side logs</th><td class="num">0.08</td><td class="num dim">1.3%</td></tr>
+<tr class="row"><th scope="row" class="cmp-k">everything else</th><td class="num">0.01</td><td class="num dim">0.1%</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">The out-of-band cameras</span>
+      <h2 class="sec-title">Six streams, 10 Hz, synchronised to 0.000 ms</h2>
+      <p>
+        Each camera's sidecar timestamp file carries one epoch-nanosecond stamp per encoded
+        frame, so the same rate-and-gap treatment applies. All six ran at 9.99 Hz for 307.4 s and
+        are <strong>frame-for-frame identical to 0.000 ms</strong> across 3,061 frames — a
+        hardware-triggered rig, the same result the ROS 2 driver reports at 20 Hz.
+      </p>
+      <p>
+        Every camera loses frames exactly once, and all of it inside the first half second:
+        3–7 frames each while the encoders start. cam3's 795 ms gap is the worst and is why it
+        finishes three frames short. After t = 0.5 s not one frame is missing from any stream.
+      </p>
+    </div>
+    <div class="card tablewrap cmp-table">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Camera</th>
+            <th scope="col" class="num">Frames</th>
+            <th scope="col" class="num">Rate (Hz)</th>
+            <th scope="col" class="num">Median interval (ms)</th>
+            <th scope="col" class="num">Worst gap (ms)</th>
+            <th scope="col" class="num">MB</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="row"><th scope="row" class="cmp-k"><code>cam0</code></th><td class="num">3,071</td><td class="num strong">9.99</td><td class="num dim">99.92</td><td class="num dim">492</td><td class="num dim">153</td></tr>
+<tr class="row"><th scope="row" class="cmp-k"><code>cam1</code></th><td class="num">3,071</td><td class="num strong">9.99</td><td class="num dim">99.92</td><td class="num dim">502</td><td class="num dim">156</td></tr>
+<tr class="row"><th scope="row" class="cmp-k"><code>cam2</code></th><td class="num">3,071</td><td class="num strong">9.99</td><td class="num dim">99.92</td><td class="num dim">492</td><td class="num dim">153</td></tr>
+<tr class="row"><th scope="row" class="cmp-k"><code>cam3</code></th><td class="num">3,068</td><td class="num strong">9.98</td><td class="num dim">99.92</td><td class="num dim">795</td><td class="num dim">146</td></tr>
+<tr class="row"><th scope="row" class="cmp-k"><code>cam4</code></th><td class="num">3,071</td><td class="num strong">9.99</td><td class="num dim">99.92</td><td class="num dim">492</td><td class="num dim">152</td></tr>
+<tr class="row"><th scope="row" class="cmp-k"><code>cam5</code></th><td class="num">3,072</td><td class="num strong">9.99</td><td class="num dim">99.92</td><td class="num dim">398</td><td class="num dim">150</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="findings">
+      <div class="finding">
+        <span class="chip info">the trade</span>
+        <div>
+          <h3>10 Hz out-of-band against 20 Hz in-band</h3>
+          <p>The ROS 1 rig wrote 18,424 frames in 0.91 GB of HEVC over 307 s. The ROS 2
+          rig wrote 93,535 frames in 0.67 GB of ffmpeg over 780 s — twice the rate, inside the
+          bag, indexed alongside everything else. What ROS 1 bought for that was a codec the
+          recorder never had to touch; what it cost is that the pixels and their metadata live
+          in different files, joined only by a timestamp.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">Also worth knowing</span>
+      <h2 class="sec-title">Two things this bag records about the drive itself</h2>
+      <p>Neither affects recording integrity, but both change what the bag can be used to answer.</p>
+    </div>
+    <div class="findings">
+      <div class="finding">
+        <span class="chip watch">empty</span>
+        <div>
+          <h3><code>/vehicle/can_tx</code> recorded zero messages</h3>
+          <p>Expected — the panda ran in shadow mode
+          (<code>transmit_enabled=false</code>, log reports <code>refused-unverified 116742</code>).
+          Worth knowing before anyone reaches for this bag to study transmitted frames.</p>
+        </div>
+      </div>
+      <div class="finding">
+        <span class="chip watch">defect A1</span>
+        <div>
+          <h3><code>panda safety model DRIFTED: asked for 29, board reports 0</code></h3>
+          <p>Logged roughly every 0.5 s for the entire drive — around 2,000 occurrences,
+          extrapolated from a 10% sample of <code>/rosout</code>. Present from the first
+          second to the last.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="sec-num">Every channel</span>
+      <h2 class="sec-title">All 55 topics</h2>
+      <p>Rates measured over the 779.6 s data window. Deviation is signed against
+      nominal, on a ±15% scale — red marks the one channel genuinely short of a rate something
+      configured. Latency is publish → write, p99, in milliseconds.</p>
+    </div>
+    <div class="card tablewrap">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Channel</th>
+            <th scope="col" class="num">Messages</th>
+            <th scope="col" class="num">Rate (Hz)</th>
+            <th scope="col" class="num">Nominal</th>
+            <th scope="col">Deviation</th>
+            <th scope="col" class="num">p99 (ms)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="group"><th colspan="6" scope="rowgroup">inertial · 200 Hz</th></tr>
+<tr class="row"><td class="chan"><code>/sensing/lidar/imu</code><span class="note">Livox IMU free-runs at 202.9 Hz; 200 is the spec figure, not a target it missed.</span></td><td class="num">158,202</td><td class="num strong">202.92</td><td class="num dim">200</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:50%;width:4.866666666666666%;background:var(--accent);"></span></span><span class="devnum">+1.46%</span></td><td class="num dim">0.32</td></tr>
+<tr class="row"><td class="chan"><code>/sensing/gnss/imu/velocity</code><span class="note">Delivered in bursts of four; mean interval is exactly 5.00 ms.</span></td><td class="num">155,926</td><td class="num strong">200.00</td><td class="num dim">200</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:50%;width:0.0%;background:var(--accent);"></span></span><span class="devnum">0.00%</span></td><td class="num dim">2.20</td></tr>
+<tr class="group"><th colspan="6" scope="rowgroup">vehicle & control · 100 Hz</th></tr>
+<tr class="row"><td class="chan"><code>/vehicle/can_rx</code></td><td class="num">77,961</td><td class="num strong">100.00</td><td class="num dim">100</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:50%;width:0.0%;background:var(--accent);"></span></span><span class="devnum">0.00%</span></td><td class="num dim">0.35</td></tr>
+<tr class="row"><td class="chan"><code>/vehicle/actuators_output</code></td><td class="num">77,961</td><td class="num strong">100.00</td><td class="num dim">100</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:50%;width:0.0%;background:var(--accent);"></span></span><span class="devnum">0.00%</span></td><td class="num dim">1.24</td></tr>
+<tr class="row"><td class="chan"><code>/vehicle/engagement</code></td><td class="num">77,960</td><td class="num strong">100.00</td><td class="num dim">100</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:50%;width:0.0%;background:var(--accent);"></span></span><span class="devnum">0.00%</span></td><td class="num dim">1.30</td></tr>
+<tr class="row"><td class="chan"><code>/vehicle/state</code></td><td class="num">77,960</td><td class="num strong">100.00</td><td class="num dim">100</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:50%;width:0.0%;background:var(--accent);"></span></span><span class="devnum">0.00%</span></td><td class="num dim">1.19</td></tr>
+<tr class="row"><td class="chan"><code>/sensing/cabin/audio_stamped</code></td><td class="num">77,960</td><td class="num strong">100.00</td><td class="num dim">100</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:50%;width:0.0%;background:var(--accent);"></span></span><span class="devnum">0.00%</span></td><td class="num dim">0.33</td></tr>
+<tr class="row"><td class="chan"><code>/control/actuators</code></td><td class="num">77,958</td><td class="num strong">100.00</td><td class="num dim">100</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:50%;width:0.0%;background:var(--accent);"></span></span><span class="devnum">0.00%</span></td><td class="num dim">1.30</td></tr>
+<tr class="group"><th colspan="6" scope="rowgroup">GNSS/INS · 50 Hz</th></tr>
+<tr class="row"><td class="chan"><code>/sensing/gnss/pose</code></td><td class="num">38,980</td><td class="num strong">50.00</td><td class="num dim">50</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:50%;width:0.0%;background:var(--accent);"></span></span><span class="devnum">0.00%</span></td><td class="num dim">0.28</td></tr>
+<tr class="row"><td class="chan"><code>/sensing/gnss/imu_data</code></td><td class="num">38,981</td><td class="num strong">50.00</td><td class="num dim">50</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:50%;width:0.0%;background:var(--accent);"></span></span><span class="devnum">0.00%</span></td><td class="num dim">2.16</td></tr>
+<tr class="row"><td class="chan"><code>/sensing/gnss/imu/pos_ecef</code></td><td class="num">38,982</td><td class="num strong">50.00</td><td class="num dim">50</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:50%;width:0.0%;background:var(--accent);"></span></span><span class="devnum">0.00%</span></td><td class="num dim">2.20</td></tr>
+<tr class="row"><td class="chan"><code>/sensing/gnss/ekf_quat</code></td><td class="num">38,982</td><td class="num strong">50.00</td><td class="num dim">50</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:50%;width:0.0%;background:var(--accent);"></span></span><span class="devnum">0.00%</span></td><td class="num dim">2.20</td></tr>
+<tr class="row"><td class="chan"><code>/sensing/gnss/imu/temp</code></td><td class="num">38,980</td><td class="num strong">50.00</td><td class="num dim">50</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:50%;width:0.0%;background:var(--accent);"></span></span><span class="devnum">0.00%</span></td><td class="num dim">2.17</td></tr>
+<tr class="row"><td class="chan"><code>/sensing/gnss/ekf_nav</code></td><td class="num">38,981</td><td class="num strong">50.00</td><td class="num dim">50</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:50%;width:0.03333333333333333%;background:var(--accent);"></span></span><span class="devnum">+0.01%</span></td><td class="num dim">2.20</td></tr>
+<tr class="row"><td class="chan"><code>/sensing/gnss/imu/data</code></td><td class="num">38,980</td><td class="num strong">50.00</td><td class="num dim">50</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:50%;width:0.0%;background:var(--accent);"></span></span><span class="devnum">0.00%</span></td><td class="num dim">2.21</td></tr>
+<tr class="row"><td class="chan"><code>/sensing/gnss/ekf_euler</code></td><td class="num">38,979</td><td class="num strong">50.00</td><td class="num dim">50</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:50%;width:0.0%;background:var(--accent);"></span></span><span class="devnum">0.00%</span></td><td class="num dim">2.19</td></tr>
+<tr class="row flagged"><td class="chan"><code>/localization/odometry</code><span class="note">ekf_global is configured frequency: 50.0 and skips cycles. Producer-side.</span></td><td class="num">34,225</td><td class="num strong">43.90</td><td class="num dim">50</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:9.333333333333336%;width:40.666666666666664%;background:var(--crit);"></span></span><span class="devnum">-12.20%</span></td><td class="num dim">0.32</td></tr>
+<tr class="group"><th colspan="6" scope="rowgroup">cabin camera · 30 Hz</th></tr>
+<tr class="row"><td class="chan"><code>/sensing/cabin/image_raw/ffmpeg</code></td><td class="num">23,390</td><td class="num strong">30.00</td><td class="num dim">30</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:50%;width:0.03333333333333333%;background:var(--accent);"></span></span><span class="devnum">+0.01%</span></td><td class="num dim">0.33</td></tr>
+<tr class="group"><th colspan="6" scope="rowgroup">rig cameras · 20 Hz</th></tr>
+<tr class="row"><td class="chan"><code>/sensing/camera/cam_sync_rig/rear_right/meta</code></td><td class="num">15,590</td><td class="num strong">20.00</td><td class="num dim">20</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:49.96666666666667%;width:0.03333333333333333%;background:var(--accent);"></span></span><span class="devnum">-0.01%</span></td><td class="num dim">1.90</td></tr>
+<tr class="row"><td class="chan"><code>/sensing/camera/cam_sync_rig/rear_right/image_raw/ffmpeg</code></td><td class="num">15,590</td><td class="num strong">20.00</td><td class="num dim">20</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:49.96666666666667%;width:0.03333333333333333%;background:var(--accent);"></span></span><span class="devnum">-0.01%</span></td><td class="num dim">1.70</td></tr>
+<tr class="row"><td class="chan"><code>/sensing/camera/cam_sync_rig/front_left/meta</code></td><td class="num">15,590</td><td class="num strong">20.00</td><td class="num dim">20</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:49.96666666666667%;width:0.03333333333333333%;background:var(--accent);"></span></span><span class="devnum">-0.01%</span></td><td class="num dim">1.89</td></tr>
+<tr class="row"><td class="chan"><code>/sensing/camera/cam_sync_rig/front_middle/meta</code></td><td class="num">15,590</td><td class="num strong">20.00</td><td class="num dim">20</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:49.96666666666667%;width:0.03333333333333333%;background:var(--accent);"></span></span><span class="devnum">-0.01%</span></td><td class="num dim">2.14</td></tr>
+<tr class="row"><td class="chan"><code>/sensing/camera/cam_sync_rig/front_left/image_raw/ffmpeg</code></td><td class="num">15,589</td><td class="num strong">20.00</td><td class="num dim">20</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:49.96666666666667%;width:0.03333333333333333%;background:var(--accent);"></span></span><span class="devnum">-0.01%</span></td><td class="num dim">1.33</td></tr>
+<tr class="row"><td class="chan"><code>/sensing/camera/cam_sync_rig/front_middle/image_raw/ffmpeg</code></td><td class="num">15,589</td><td class="num strong">20.00</td><td class="num dim">20</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:49.96666666666667%;width:0.03333333333333333%;background:var(--accent);"></span></span><span class="devnum">-0.01%</span></td><td class="num dim">1.30</td></tr>
+<tr class="row"><td class="chan"><code>/sensing/camera/cam_sync_rig/front_right/image_raw/ffmpeg</code></td><td class="num">15,589</td><td class="num strong">20.00</td><td class="num dim">20</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:49.96666666666667%;width:0.03333333333333333%;background:var(--accent);"></span></span><span class="devnum">-0.01%</span></td><td class="num dim">1.74</td></tr>
+<tr class="row"><td class="chan"><code>/sensing/camera/cam_sync_rig/front_right/meta</code></td><td class="num">15,589</td><td class="num strong">20.00</td><td class="num dim">20</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:49.96666666666667%;width:0.03333333333333333%;background:var(--accent);"></span></span><span class="devnum">-0.01%</span></td><td class="num dim">2.15</td></tr>
+<tr class="row"><td class="chan"><code>/sensing/camera/cam_sync_rig/rear_left/image_raw/ffmpeg</code></td><td class="num">15,589</td><td class="num strong">20.00</td><td class="num dim">20</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:49.96666666666667%;width:0.03333333333333333%;background:var(--accent);"></span></span><span class="devnum">-0.01%</span></td><td class="num dim">1.30</td></tr>
+<tr class="row"><td class="chan"><code>/sensing/camera/cam_sync_rig/rear_middle/image_raw/ffmpeg</code></td><td class="num">15,589</td><td class="num strong">20.00</td><td class="num dim">20</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:49.96666666666667%;width:0.03333333333333333%;background:var(--accent);"></span></span><span class="devnum">-0.01%</span></td><td class="num dim">1.86</td></tr>
+<tr class="row"><td class="chan"><code>/sensing/camera/cam_sync_rig/rear_left/meta</code></td><td class="num">15,589</td><td class="num strong">20.00</td><td class="num dim">20</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:49.96666666666667%;width:0.03333333333333333%;background:var(--accent);"></span></span><span class="devnum">-0.01%</span></td><td class="num dim">1.77</td></tr>
+<tr class="row"><td class="chan"><code>/sensing/camera/cam_sync_rig/rear_middle/meta</code></td><td class="num">15,589</td><td class="num strong">20.00</td><td class="num dim">20</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:49.96666666666667%;width:0.03333333333333333%;background:var(--accent);"></span></span><span class="devnum">-0.01%</span></td><td class="num dim">1.81</td></tr>
+<tr class="group"><th colspan="6" scope="rowgroup">perception & planning · 10 Hz</th></tr>
+<tr class="row"><td class="chan"><code>/control/predicted_trajectory</code></td><td class="num">7,796</td><td class="num strong">10.00</td><td class="num dim">10</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:50%;width:0.1%;background:var(--accent);"></span></span><span class="devnum">+0.03%</span></td><td class="num dim">0.33</td></tr>
+<tr class="row"><td class="chan"><code>/control/longitudinal_plan</code></td><td class="num">7,796</td><td class="num strong">10.00</td><td class="num dim">10</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:50%;width:0.1%;background:var(--accent);"></span></span><span class="devnum">+0.03%</span></td><td class="num dim">0.24</td></tr>
+<tr class="row"><td class="chan"><code>/sensing/lidar/points</code></td><td class="num">7,796</td><td class="num strong">10.00</td><td class="num dim">10</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:50%;width:0.0%;background:var(--accent);"></span></span><span class="devnum">0.00%</span></td><td class="num dim">0.35</td></tr>
+<tr class="row"><td class="chan"><code>/perception/inference_control</code></td><td class="num">7,796</td><td class="num strong">10.00</td><td class="num dim">10</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:50%;width:0.1%;background:var(--accent);"></span></span><span class="devnum">+0.03%</span></td><td class="num dim">0.36</td></tr>
+<tr class="row"><td class="chan"><code>/control/lateral_plan</code></td><td class="num">7,796</td><td class="num strong">10.00</td><td class="num dim">10</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:50%;width:0.1%;background:var(--accent);"></span></span><span class="devnum">+0.03%</span></td><td class="num dim">0.30</td></tr>
+<tr class="group"><th colspan="6" scope="rowgroup">GNSS fix · 5 Hz</th></tr>
+<tr class="row"><td class="chan"><code>/sensing/gnss/imu/nav_sat_fix</code></td><td class="num">3,898</td><td class="num strong">5.00</td><td class="num dim">5</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:50%;width:0.0%;background:var(--accent);"></span></span><span class="devnum">0.00%</span></td><td class="num dim">2.08</td></tr>
+<tr class="row"><td class="chan"><code>/sensing/gnss/gps_pos</code></td><td class="num">3,898</td><td class="num strong">5.00</td><td class="num dim">5</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:50%;width:0.0%;background:var(--accent);"></span></span><span class="devnum">0.00%</span></td><td class="num dim">2.08</td></tr>
+<tr class="row"><td class="chan"><code>/sensing/gnss/gps_vel</code></td><td class="num">3,898</td><td class="num strong">5.00</td><td class="num dim">5</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:50%;width:0.0%;background:var(--accent);"></span></span><span class="devnum">0.00%</span></td><td class="num dim">2.14</td></tr>
+<tr class="group"><th colspan="6" scope="rowgroup">GNSS status · 1 Hz</th></tr>
+<tr class="row"><td class="chan"><code>/sensing/gnss/status</code></td><td class="num">780</td><td class="num strong">1.00</td><td class="num dim">1</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:50%;width:0.0%;background:var(--accent);"></span></span><span class="devnum">0.00%</span></td><td class="num dim">1.34</td></tr>
+<tr class="row"><td class="chan"><code>/sensing/gnss/imu/utc_ref</code></td><td class="num">780</td><td class="num strong">1.00</td><td class="num dim">1</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:50%;width:0.0%;background:var(--accent);"></span></span><span class="devnum">0.00%</span></td><td class="num dim">2.24</td></tr>
+<tr class="row"><td class="chan"><code>/sensing/gnss/utc_time</code></td><td class="num">780</td><td class="num strong">1.00</td><td class="num dim">1</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:50%;width:0.0%;background:var(--accent);"></span></span><span class="devnum">0.00%</span></td><td class="num dim">2.24</td></tr>
+<tr class="group"><th colspan="6" scope="rowgroup">audio header · 0.2 Hz</th></tr>
+<tr class="row"><td class="chan"><code>/sensing/cabin/audio_info</code></td><td class="num">157</td><td class="num strong">0.20</td><td class="num dim">0.2</td><td class="dev"><span class="meter"><span class="meter-zero"></span><span class="meter-bar" style="left:50%;width:1.2666666666666666%;background:var(--accent);"></span></span><span class="devnum">+0.38%</span></td><td class="num dim">2949.15</td></tr>
+<tr class="group"><th colspan="6" scope="rowgroup">aperiodic — multi-publisher or event-driven, no target rate</th></tr>
+<tr class="row"><td class="chan"><code>/tf</code></td><td class="num">67,533</td><td class="num strong">86.62</td><td class="num dim">—</td><td class="dev"><span class="na">not applicable</span></td><td class="num dim">0.39</td></tr>
+<tr class="row"><td class="chan"><code>/diagnostics</code></td><td class="num">4,724</td><td class="num strong">5.70</td><td class="num dim">—</td><td class="dev"><span class="na">not applicable</span></td><td class="num dim">0.34</td></tr>
+<tr class="row"><td class="chan"><code>/rosout</code></td><td class="num">3,083</td><td class="num strong">3.95</td><td class="num dim">—</td><td class="dev"><span class="na">not applicable</span></td><td class="num dim">8279.96</td></tr>
+<tr class="group"><th colspan="6" scope="rowgroup">latched — one transient-local message, replayed to late joiners</th></tr>
+<tr class="row"><td class="chan"><code>/tf_static</code></td><td class="num">1</td><td class="num dim">—</td><td class="num dim">—</td><td class="dev"><span class="na">not applicable</span></td><td class="num dim">—</td></tr>
+<tr class="row"><td class="chan"><code>/vehicle/can_tx</code><span class="note">Empty — panda ran in shadow mode (transmit_enabled=false).</span></td><td class="num">0</td><td class="num dim">—</td><td class="num dim">—</td><td class="dev"><span class="na">not applicable</span></td><td class="num dim">—</td></tr>
+<tr class="row"><td class="chan"><code>/perception/model_info</code></td><td class="num">1</td><td class="num dim">—</td><td class="num dim">—</td><td class="dev"><span class="na">not applicable</span></td><td class="num dim">—</td></tr>
+<tr class="row"><td class="chan"><code>/sensing/cabin/camera_info_latched</code></td><td class="num">1</td><td class="num dim">—</td><td class="num dim">—</td><td class="dev"><span class="na">not applicable</span></td><td class="num dim">—</td></tr>
+<tr class="row"><td class="chan"><code>/sensing/camera/cam_sync_rig/rear_right/camera_info_latched</code></td><td class="num">1</td><td class="num dim">—</td><td class="num dim">—</td><td class="dev"><span class="na">not applicable</span></td><td class="num dim">—</td></tr>
+<tr class="row"><td class="chan"><code>/sensing/camera/cam_sync_rig/front_middle/camera_info_latched</code></td><td class="num">1</td><td class="num dim">—</td><td class="num dim">—</td><td class="dev"><span class="na">not applicable</span></td><td class="num dim">—</td></tr>
+<tr class="row"><td class="chan"><code>/sensing/camera/cam_sync_rig/front_right/camera_info_latched</code></td><td class="num">1</td><td class="num dim">—</td><td class="num dim">—</td><td class="dev"><span class="na">not applicable</span></td><td class="num dim">—</td></tr>
+<tr class="row"><td class="chan"><code>/sensing/camera/cam_sync_rig/rear_left/camera_info_latched</code></td><td class="num">1</td><td class="num dim">—</td><td class="num dim">—</td><td class="dev"><span class="na">not applicable</span></td><td class="num dim">—</td></tr>
+<tr class="row"><td class="chan"><code>/sensing/camera/cam_sync_rig/front_left/camera_info_latched</code></td><td class="num">1</td><td class="num dim">—</td><td class="num dim">—</td><td class="dev"><span class="na">not applicable</span></td><td class="num dim">—</td></tr>
+<tr class="row"><td class="chan"><code>/sensing/camera/cam_sync_rig/rear_middle/camera_info_latched</code></td><td class="num">1</td><td class="num dim">—</td><td class="num dim">—</td><td class="dev"><span class="na">not applicable</span></td><td class="num dim">—</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="card method">
+      <h3>How this was measured</h3>
+      <p>The host has neither the <code>mcap</code> Python module nor a ROS 2 CLI, so the file
+      was read directly.</p>
+      <ol>
+        <li>Parse the MCAP summary section for channels, chunk indexes and statistics, then read
+        every <code>MessageIndex</code> record — this yields all 1,466,940 log timestamps
+        without decompressing a byte of payload (0.3 s for the whole 7.41 GB file).</li>
+        <li>Derive per-topic rate, interval histograms and gap counts from those timestamps.</li>
+        <li>For latency, decompress a 10% chunk sample (216 of 2,165 chunks) and read each
+        <code>Message</code> record's <code>publish_time</code> — the DDS source timestamp —
+        against its <code>log_time</code>.</li>
+        <li>Decode <code>/rosout</code> from the same sample for driver counters and the
+        shutdown sequence.</li>
+        <li>For the ROS 1 bags, the same approach against rosbag v2.0: the bag header's
+        <code>index_pos</code>, then the connection and chunk-info records, then each chunk's
+        trailing <code>IndexData</code> records for every message's time and offset. Those
+        chunks are uncompressed, so the six <code>COUNTER</code> topics could be read back by
+        seeking straight to their offsets — 101,327 messages without touching the other 2.3
+        million.</li>
+        <li>Per-topic byte totals in both formats come from differencing consecutive message
+        offsets within a chunk against the chunk's uncompressed size — exact, and again without
+        reading a payload.</li>
+      </ol>
+      <p>Nominal rates are inferred by snapping each measured rate to the nearest standard rate;
+      <code>/localization/odometry</code>'s target was confirmed against
+      <code>rl_odom_fusion.yaml</code>.</p>
+    </div>
+  </section>
+
+  <footer>
+    <span>/home/hieupc/ww/ros2_bags/ros2_mig_phase_5_p1</span>
+    <span>7.41 GB · 1,466,940 messages · 55 topics</span>
+    <span>compared against ~/ww/bags/Mosque50_20260727-113152 and _20260805-145214</span>
+    <span>audited 2026-08-25</span>
+  </footer>
+
+</div>

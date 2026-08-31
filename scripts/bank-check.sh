@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
-# The one command CI and a human both run: lint, then tests, then every bank on disk.
+# The one command CI and a human both run: lint, then tests.
 #
 # `ruff check` is the gate; `ruff format --check` deliberately is not.
+#
+# There is no per-bank step. `scenariobank verify` was cut on 2026-08-31 along with the durable-bank
+# premise it enforced: a bank is regenerated per batch, so there is nothing to check a bank against.
+# What used to be its only non-reproducibility check -- that the map really is left-side drive --
+# moved into `generate` and `doctor`, and `tests/unit/test_invariance.py` covers the option axes.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -12,18 +17,3 @@ uv run ruff check .
 echo
 echo "== pytest =="
 uv run pytest
-
-echo
-echo "== banks =="
-shopt -s nullglob
-banks=(banks/*/)
-if [ ${#banks[@]} -eq 0 ]; then
-  # Not a pass. Phase 2 is what puts a bank here; until then say so out loud rather than
-  # letting an empty loop read as a green check.
-  echo "no banks in banks/ -- nothing verified (expected until Phase 2)"
-else
-  for bank in "${banks[@]}"; do
-    echo "-- ${bank}"
-    uv run scenariobank verify --bank "${bank}"
-  done
-fi
