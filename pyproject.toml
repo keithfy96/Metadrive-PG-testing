@@ -1,0 +1,59 @@
+[project]
+name = "wingfin-scenariobank"
+version = "0.1.0"
+description = "A bank of procedurally generated MetaDrive scenarios, and the runner that scores a model against it."
+readme = "README.md"
+requires-python = ">=3.10,<3.11"
+dependencies = [
+  "numpy>=1.26,<3",
+  "pydantic>=2.8,<3",
+  "structlog>=24,<26",
+  "typer>=0.12,<1",
+]
+
+[project.scripts]
+scenariobank = "scenariobank.cli:app"
+
+[dependency-groups]
+dev = [
+  "pytest>=8,<9",
+  "ruff>=0.12,<1",
+]
+# MetaDrive. Opt-in, so `uv sync` stays fast for anything that does not need a simulator:
+# `uv sync --group sim`.
+#
+# Pinned to a commit, not to `==0.4.3`. The reference checkout is 32 commits past that tag
+# (`git describe` -> MetaDrive-0.4.3-32-g85e5dadc) and `metadrive.constants.EDITION` reports
+# "MetaDrive v0.4.3" either way, so a version pin would let two machines run different
+# simulators while every map in the bank claimed to be the same map. This is the same commit
+# `converter-scenarionet` pins; a different commit means a different bank.
+#
+# `scenariobank doctor` exists to make this pin observable at run time rather than at
+# resolve time -- it reads the SHA back out of the installed dist's `direct_url.json`.
+sim = [
+  "metadrive-simulator @ git+https://github.com/metadriverse/metadrive.git@85e5dadc",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# Resolve only for the platform this runs on. Linux x86_64 is the only target either the host
+# or the container has ever been, and solving for the others costs time and invites failures
+# from environments nobody will run.
+[tool.uv]
+environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/scenariobank"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
