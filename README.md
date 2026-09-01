@@ -8,6 +8,8 @@ run-time difficulty options — plus the runner that scores a camera model again
 [`docs/reference/commands.md`](docs/reference/commands.md) is the full flag reference --
 generated from the CLI, so it cannot drift. This file explains *why* each command exists;
 that one lists every flag and every value they accept.
+[`docs/web-setup.md`](docs/web-setup.md) is how to install and run the studio, the local web
+page in front of these same commands.
 
 All scenarios are **left-side traffic** (right-hand-drive market). See
 [Which side of the road](#which-side-of-the-road) — it is not a MetaDrive setting, and it is the
