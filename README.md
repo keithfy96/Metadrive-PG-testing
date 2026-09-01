@@ -5,14 +5,17 @@ run-time difficulty options — plus the runner that scores a camera model again
 
 `IMPLEMENTATION_PLAN.md` is the source of truth for what gets built and in what order.
 `CONTRACT.md` (Phase 6) is what the bank will promise its consumers.
+[`docs/reference/commands.md`](docs/reference/commands.md) is the full flag reference --
+generated from the CLI, so it cannot drift. This file explains *why* each command exists;
+that one lists every flag and every value they accept.
 
 All scenarios are **left-side traffic** (right-hand-drive market). See
 [Which side of the road](#which-side-of-the-road) — it is not a MetaDrive setting, and it is the
 first thing to check if a figure ever looks wrong.
 
-**Built so far:** Phase 0 (skeleton, environment truth) and Phase 1 (categories, forced
-destinations, left-side traffic). `generate`, `run` and the rest arrive in later
-phases.
+**Built so far:** Phase 0 (skeleton, environment truth), Phase 1 (categories, forced
+destinations, left-side traffic) and Phase 2 (`generate` — scenarios and a manifest on disk).
+`run` and the rest arrive in later phases.
 
 ## Install
 
@@ -90,11 +93,7 @@ logging to DEBUG.
 Run this first on any machine and inside any container. Nothing else in the repo is meaningful
 until it passes.
 
-| option | effect |
-|---|---|
-| `--require-commit <prefix>` | exit non-zero unless the installed MetaDrive resolves to a commit with this prefix |
-| `--probe` / `--no-probe` | build a throwaway env to report the observation space. On by default; costs one reset |
-| `--json` | emit the report as JSON instead of aligned text |
+Flags: [`docs/reference/commands.md`](docs/reference/commands.md#doctor).
 
 ```bash
 uv run scenariobank doctor
@@ -131,12 +130,7 @@ command that does not need the `sim` group.
 The discovery command. It is how each category's destination was chosen, and it is what to re-run
 when MetaDrive changes shape.
 
-| option | effect |
-|---|---|
-| `--block-seq/-b <seq>` | a block sequence, e.g. `X`, `CC`, `rS`. `I` is prepended automatically |
-| `--category/-c <name>` | use that category's block sequence instead. Exactly one of `-b`/`-c` |
-| `--seed/-s <int>` | map seed, default `0` |
-| `--json` | emit the readings as JSON |
+Flags: [`docs/reference/commands.md`](docs/reference/commands.md#sockets).
 
 ```bash
 uv run scenariobank sockets --block-seq X --seed 0
@@ -159,15 +153,12 @@ look before pinning anything to it.
 
 ### `inspect` — see the route rather than trust it
 
-| option | effect |
-|---|---|
-| `--category/-c <name>` | **required**; one of the seven |
-| `--seed/-s <int>` | map seed, default `0` |
-| `--out/-o <path>` | PNG to write. Defaults to `docs/reference/figures/<category>-seed<N>.png` |
+Flags: [`docs/reference/commands.md`](docs/reference/commands.md#inspect).
 
 ```bash
 uv run scenariobank inspect --category intersection_left --seed 0
 uv run scenariobank inspect -c t_junction -s 2 -o /tmp/t2.png
+uv run scenariobank inspect --block-seq CC --seed 22 --rule only    # any sequence, any seed
 ```
 
 Draws the road network in grey with the **pinned route in red**, a blue arrow at the spawn pose
@@ -175,13 +166,17 @@ and a green star at the destination. Headless — no display, no window, no imag
 comes from the navigation module after the destination is pinned, so the picture shows what the
 runner will actually drive.
 
+**Which way is the ego facing?** Always **due east** — rightward in every figure this repo draws,
+with `+y` up. What moves with the seed is where that spawn lands in the frame: `curve` seeds 2 and 3
+start at the *top* and bend downward, while 0, 1 and 4 start at the bottom and bend up. A road
+picture read from the wrong end reverses every turn in it, which is why the spawn arrow is drawn and
+why `net_rotation_deg` is recorded per scenario. Trust the arrow, not the shape.
+
 **Writes:** one PNG, at `--out` or under `docs/reference/figures/`.
 
 ### `destinations` — regenerate the reference document
 
-| option | effect |
-|---|---|
-| `--out/-o <path>` | document to write, default `docs/reference/destinations.md` |
+Flags: [`docs/reference/commands.md`](docs/reference/commands.md#destinations).
 
 ```bash
 uv run scenariobank destinations
@@ -191,12 +186,19 @@ Resolves every category at every seed, proves each destination is reachable by r
 shortest path, measures the route, and fingerprints each block sequence's drivable surface. Two
 env builds per category per seed plus one per sequence — about a minute.
 
-The document it writes has six sections: the resolved destination and angle per category and
+The document it writes has seven sections: the resolved destination and angle per category and
 seed; route length against the earned step budget; the turn actually taken; the **spawn lane**;
-the **curve direction pairs**; and **distinct roads per block sequence**, which is where the
-bank's least obvious property is recorded — `X` builds one identical road at all five seeds, `T`
-builds two, and the other three build five each, so there are **18 distinct roads across the 35
-scenarios**.
+the **curve direction pairs**; **distinct roads per block sequence** — `X` builds one identical
+road at all five seeds, `T` builds two, and the other three build five each, so **18 distinct
+roads across the 35 scenarios** — and **how alike the closest two are**, which is the section that
+stops the first number being read as more than it is.
+
+**18 flatters the bank.** It counts roads that are not *identical*, and a hash cannot see a
+near-twin. Measured by shape instead, the closest pair of every sequence is a near-duplicate:
+`CC` seeds 0 and 4 are 7% apart, `rS` 2%, `O` not measurably apart at all. Only `CC` has real
+spread available. **The bank's variety is in the scene the Phase 4 options build, not in the
+road** — the position already accepted for `X`, and true of the bank as a whole. Use `seeds` to
+find a seed that would add more.
 
 Those `X` seeds are still not five identical runs. `random_spawn_lane_index` is left on
 deliberately, so the ego starts in lane `0, 1, 0, 1, 1` — the only thing separating them until
@@ -209,6 +211,88 @@ Regenerate it after any MetaDrive bump. That is how a change in block geometry b
 instead of silently changing what the bank means.
 
 **Writes:** `docs/reference/destinations.md` (or `--out`). Overwrites in place.
+
+### `generate` — write a bank
+
+Flags: [`docs/reference/commands.md`](docs/reference/commands.md#generate).
+
+```bash
+uv run scenariobank generate --out ./banks/pg-bank-2026-08 --bank-id pg-bank-2026-08
+uv run scenariobank generate -o /tmp/b --bank-id b -c curve --seeds 0,7,9 --no-thumbnails
+uv run scenariobank generate -o ./banks/b --bank-id b \
+    --seeds 0,1,2,3,4 --seeds curve=0,1,2,3,22       # one category on its own seeds
+```
+
+Builds every category at every seed and writes `manifest.json` plus one PNG per scenario. The
+full 35-scenario bank takes about **5 seconds** (6 on the first run after an install, which also
+builds matplotlib's font cache). Progress goes to stderr, one line per scenario.
+
+A thumbnail is the same route figure `inspect` draws (`figures.render_route`): road in grey, the
+driven route in red, a blue arrow at the spawn, a green star at the destination. It is **per
+scenario, not per map** — the three `X` categories share a road and a seed, and a picture of that
+road alone is the same picture three times, with nothing in it to say which of the three routes it
+belongs to. The manifest carries `net_rotation_deg` and `turn_pairs` for the same reason: the
+direction should be readable from the data, not only from the image.
+
+**A bank is a disposable, per-batch artifact.** Regenerate it whenever you want scenarios; nothing
+checks that a road matches a previous run's, and if it comes out different that is a different
+batch. What makes one batch self-consistent is the container pinning one MetaDrive commit — run
+`doctor` to see which. The manifest records that commit as *information*; nothing refuses on it.
+
+The manifest is the runner's input, not an audit trail. Per scenario it carries the resolved
+`destination` and the drawn `spawn_lane_index`, so the runner pins `vehicle_config["destination"]`
+and `auto_assign_task` never draws a random one. `destination` is **per scenario and not per
+category**: `t_junction` resolves to `1T0_1_` on seeds 0, 1 and 4 and `1T2_1_` on 2 and 3, because
+the arm the junction exposes changes with the seed.
+
+One check runs during generation and it is not a reproducibility check: every map is **measured**
+to be left-side traffic. If `handedness.install` fails to take, every field in the manifest stays
+correct and every thumbnail still looks like a road, and the only symptom is a right-hand-drive
+model failing everything for reasons no result explains.
+
+`manifest.json` is written **last and atomically**, so an interrupted run leaves a directory with
+no manifest — which reads as "no bank here" rather than as a bank quietly missing rows.
+
+**Writes:** `<out>/manifest.json` and `<out>/thumbs/*.png`.
+
+### `seeds` — which seeds are worth using
+
+Flags: [`docs/reference/commands.md`](docs/reference/commands.md#seeds).
+
+```bash
+uv run scenariobank seeds -c curve --keep 0,1,2,3 --scan 0-30
+```
+
+**A seed is not automatically a scenario.** Two seeds of one block sequence can draw roads a few
+percent apart — near enough that their thumbnails are the same picture. `curve` seeds 0 and 4 are
+7% apart and `roundabout` seeds 0 and 4 are not measurably apart at all, yet
+`docs/reference/destinations.md` calls both pairs distinct, because that count is hash equality
+and a hash cannot see a near-twin.
+
+So this measures each candidate against its **nearest kept seed** with `fingerprint.shape_gap` and
+ranks by the gap, largest first. It costs one reset per scanned seed. The workflow is: scan, look at
+the top few with `inspect --block-seq`, then commit what you like with `generate --seeds` or
+`replace`.
+
+**Writes:** nothing.
+
+### `replace` — correct one scenario in a bank
+
+Flags: [`docs/reference/commands.md`](docs/reference/commands.md#replace).
+
+```bash
+uv run scenariobank replace --bank ./banks/b --scenario curve_0004 --seed 22
+```
+
+Rebuilds one scenario at a different seed rather than regenerating all thirty-five. **The bank never
+changes size and never renumbers** — the scenario keeps its id and its position, and only the seed
+and what was measured from it change. A seed already used in that category is refused, and a route
+that would overrun the category's `max_steps` is written with a warning on stderr.
+
+`block_seq` and `exit_rule` come from the manifest's own category entry rather than from
+`categories.py`, so a bank generated before a code change is still correctable afterwards.
+
+**Writes:** `<bank>/manifest.json`, and that scenario's thumbnail.
 
 ### `scripts/bank-check.sh` — the one command CI and a human both run
 
@@ -228,7 +312,7 @@ enforced, since a bank is regenerated per batch and there is nothing to check it
 |---|---|---|
 | `docs/reference/destinations.md` | `destinations` | yes — it is the Phase 1 deliverable |
 | `docs/reference/figures/*.png` | `inspect` | yes — one per category at seed 0 |
-| `banks/<bank-name>/` | `generate` (Phase 2) | yes |
+| `banks/<bank-name>/` | `generate` | **no** — regenerate it; it is a per-batch artifact |
 | `.venv/`, `.ruff_cache/`, `.pytest_cache/` | tooling | no |
 
 Nothing writes outside the repo, and no command writes to `$HOME`.

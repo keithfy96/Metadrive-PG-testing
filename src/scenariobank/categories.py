@@ -18,8 +18,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-#: The seeds every category is built at. Fixed, and the same five for all seven, so the three
+#: The **default** seeds every category is built at. The same five for all seven, so the three
 #: intersection categories are the same junction driven three ways.
+#:
+#: A default, not a constant: `scenariobank generate --seeds` overrides it, per category if
+#: wanted, and `scenariobank replace` swaps one scenario's seed in an existing bank. That
+#: matters because **seed 4 is a poor draw for two categories** -- it builds a `curve` road 7%
+#: from seed 0's and a `roundabout` indistinguishable from seed 0's. Kept as the default
+#: anyway: 0-4 is the set every measurement in this repo was taken at, and which seeds a bank
+#: uses is a decision for whoever builds it. `scenariobank seeds` ranks the alternatives.
 SEEDS: tuple[int, ...] = (0, 1, 2, 3, 4)
 
 #: Every block ID `BLOCK_TYPE_DISTRIBUTION_V2` can produce (`blocks_prob_dist.py:22-41`), by the
@@ -119,6 +126,15 @@ def validate_block_seq(block_seq: str, *, category: str | None = None) -> None:
 #: Phase 2 must therefore not assert 35 distinct roads. `scenariobank destinations` re-measures
 #: it.
 #:
+#: **And 18 flatters the bank**, because it counts roads that are not *identical*. Measured by
+#: `fingerprint.shape_gap` instead -- total lane length and map extent -- the closest pair of
+#: every sequence is a near-duplicate: `CC` seeds 0 and 4 are 7% apart, `rS` seeds 0 and 4 are
+#: 2% apart, and `O` seeds 0 and 4 are not measurably apart at all. Only `CC` has real spread
+#: available (median pair gap 40% over seeds 0-25, against 12% for `O` and under 14% for every
+#: `rS` pair); `X` and `T` have none by construction. **The bank's variety is in the scene the
+#: Phase 4 options build, not in the road** -- already the accepted position for `X`, and true
+#: of the bank as a whole. `scenariobank seeds` is how you find a seed that would add more.
+#:
 #: Those five runs are still not identical: `random_spawn_lane_index` is left on (see
 #: `config.base_config`), so the ego starts in lane 0, 1, 0, 1, 1 across seeds 0-4. Until Phase 4's
 #: options arrive that is the *only* thing separating them, and `route_length` will not show it --
@@ -190,11 +206,15 @@ CATEGORIES: dict[str, Category] = {
             exit_rule=ExitRule.ONLY,
             max_steps=1200,
             description=(
-                "Two consecutive curves. The two blocks draw radius, arc and *direction* "
-                "independently, so what the seed picks is a pair: seeds 0-4 cover all four of "
-                "left-left, left-right, right-right and right-left. Net rotation runs from "
-                "+67.5 to +239.5 degrees -- two of the five sweep past a U-turn, which is a "
-                "consequence of the pairing rather than an accident of it."
+                "Two consecutive curves, each followed by a straight. A MetaDrive `Curve` "
+                "block is an arc *and* a trailing straight of drawn length -- "
+                "`create_bend_straight` returns both and `pgblock/curve.py` builds both -- so "
+                "the road runs straight, arc, straight, arc, straight. The two blocks draw "
+                "radius, arc and *direction* independently, so what the seed picks is a pair: "
+                "seeds 0-4 cover all four of left-left, left-right, right-right and "
+                "right-left, with left-left drawn twice. Net rotation runs from +67.5 to "
+                "+239.5 degrees -- two of the five sweep past a U-turn, which is a consequence "
+                "of the pairing rather than an accident of it."
             ),
         ),
         Category(

@@ -30,100 +30,106 @@ Everything in this plan was verified against the MetaDrive source actually insta
 
 ---
 
-## How this ships — one queue, two backends
+## How this ships — one queue, two orchestrators, two rigs
 
-**Decision (2026-08-30, with the manager).** This bank is not driven by a CLI and a JSON file. It is
-driven by the existing webapp, `~/Desktop/work/wingfin/wing-sim` (Tyrone Tang) — a FastAPI
-orchestrator plus a React frontend owning a single-GPU rig. The frontend gets two sections, one
-CARLA and one MetaDrive, and **both post into the same queue**. A `backend` label on the job row
-decides which simulator the queue starts.
+**Decision (2026-09-01, with Keith).** This bank is not driven by a CLI and a JSON file. Work
+arrives from the existing webapp, is queued on a **NAS**, and runs on **two rigs**. Four processes,
+and it matters which are ours:
 
-This supersedes "Phase 7 — optional, build only if asked". Phase 7 is the deliverable, and it is now
-an orchestrator rather than a wrapper. It also supersedes the state-vector policy boundary: see
+```
+  frontend
+     |  put()
+     v
+  +---------------------------- NAS ------------------------------+
+  |  wfqueue        multi-topic SQLite queue: lease / ack / nack   |
+  |     |           at-least-once, priority then FIFO              |
+  |     +-- lease -->  CARLA orchestrator      (Tyrone's)          |
+  |     +-- lease -->  MetaDrive orchestrator  (OURS)              |
+  |                      reads the options, picks a rig and a GPU, |
+  |                      calls the runner, saves what comes back   |
+  +---------------------------+------------------+----------------+
+                      call    |                  |    call
+                              v                  v
+                      +--- rig A ----+   +--- rig B ----+
+                      |  md-runner   |   |  md-runner   |   (OURS)
+                      |  container   |   |  container   |
+                      |  GPU lock <--+---+--> CARLA takes these cards too
+                      +--------------+   +--------------+
+```
+
+**Ours:** the MetaDrive orchestrator on the NAS, the runner on each rig, and the container that
+simulates. **Not ours:** the queue, the frontend, and the CARLA orchestrator.
+
+This supersedes "Phase 7 — optional, build only if asked" and the shared-`jobs`-table design that
+replaced it. Phase 7 is the deliverable. It also supersedes the state-vector policy boundary: see
 **No lidar** and **Phase 4**.
 
-```
-  React frontend
-  ┌───────────────┬───────────────┐
-  │ CARLA section │  MD section   │      two forms, two POST endpoints
-  └───────┬───────┴───────┬───────┘
-          │               │
-      POST /jobs      POST /metadrive/jobs
-          └───────┬───────┘
-                  ▼
-        ┌───────────────────────┐
-        │  jobs  (one table)    │   backend = 'carla' | 'metadrive'
-        │  FIFO: priority,      │   params_json, backend-interpreted
-        │        queued_at      │
-        └──────────┬────────────┘
-                   ▼
-            one worker, one slot
-                   │
-              ┌────┴────┐  reads job["backend"]
-              ▼         ▼
-        JobRunner   MetaDriveJobRunner
-              └────┬────┘
-                   ▼
-        ~/simulation/.wing-sim.gpu.lock   ◄── still the authority;
-                   │                          run_local.sh and free_gpu.sh
-                   ▼                          are outside the queue
-              one GPU, one run
+**Out of scope, decided the same day:** getting the model checkpoint onto the rigs. It arrives by
+some other route -- most likely a cronjob. The runner takes a local path and never fetches.
 
-  separate per backend: data root, archive, staging, compose project,
-                        images, results tables
-```
+### The words, because two projects use one of them differently
+
+wing-sim calls its **rig-side** service "the orchestrator" (`orchestrator/README.md`: *"Owns the
+rig: one queue, one lock, one archive, one database"*). Here the orchestrator is on the NAS. Every
+sentence in Phase 7 uses these four words in exactly this sense:
+
+| word | means |
+|---|---|
+| **queue** | `wfqueue` on the NAS. Not ours. `docs/queue-docs/`. |
+| **orchestrator** | our MetaDrive dispatcher on the NAS. Leases, plans, calls, saves. |
+| **runner** | our HTTP service on each rig. Owns that rig's locks and its containers. |
+| **container** | the image that actually simulates. Calls `run_bank()`. |
 
 ### R1 — the independence rule (hard constraint)
 
 **Tyrone's code is a reference, never a dependency.** No module of his is imported by anything here.
 Read it to avoid rediscovering failures he already paid for; write our own.
 
-This resolves cleanly because **the dependency arrow points the other way**: his `QueueWorker`
-imports our `MetaDriveJobRunner`, not the reverse. He depends on us — the correct direction, since
-we own MetaDrive.
+Under this topology R1 costs almost nothing, because **neither side imports the other**. Two
+orchestrators lease from one queue and call their own runners; there is no seam between the two
+codebases at all. What is shared is a queue and a lock *path*, and neither violates R1, because **a
+schema is data and a path is not a library**:
 
-Two things are shared and neither violates R1, because **a schema is data and a path is not a
-library**:
-
-- the `jobs` table — our own SQL against a documented schema
-- `~/simulation/.wing-sim.gpu.lock` — a file path opened with `flock`, not an import of `rig/lock.py`
+- the queue -- HTTP against a documented API, using the stdlib client the server itself serves
+- `~/simulation/.wing-sim.gpu*.lock` -- files opened with `flock`, not an import of `rig/lock.py`
 
 | Was going to reuse | Write our own instead | Cost |
 |---|---|---|
-| `rig/lock.py` | flock helper against the same path | ~150 lines |
-| `api/auth.py` `CurrentUser` | verify bearer token vs `api_tokens` (sha256) | ~20 lines |
+| `rig/lock.py` | flock helper against the same paths | ~150 lines |
 | `staging.py` / `archive.py` | our own staging + archive | ~250 lines |
 | `rig/session.py` | our own session | ~300 lines (his is preset/CARLA-coupled anyway) |
-| `ingest/harvest.py` | our own ingest | small — our schema, no mapping |
+| `ingest/harvest.py` | our own ingest | small -- our schema, no mapping |
 
 **R1 also removes a blocker.** `orchestrator/src/staging.py` and `archive.py` do not exist in his
-checkout — not gitignored, on no branch, while `runner/job_runner.py:11,25`, `api/uploads.py:14` and
-`validation.py:37` import them. Under R1 that is his problem for starting his service, not a
+checkout -- not gitignored, on no branch, while `runner/job_runner.py:11,25`, `api/uploads.py:14`
+and `validation.py:37` import them. Under R1 that is his problem for starting his service, not a
 prerequisite for anything here.
 
-### Why one queue, when the flock already exists
+### Why a queue on the NAS, when each rig has a lock
 
-The GPU argument is the weakest justification. The flock is advisory and kernel-released on holder
+The GPU argument is the weakest justification. A flock is advisory and kernel-released on holder
 death, and his `001_initial.sql` says outright that the `gpu_lease` table is "Observability only,
-NOT the authority." Two independent queues on that lock already cannot double-book the card.
+NOT the authority." Two orchestrators polling one rig's lock already cannot double-book that card.
 
-What one queue fixes is what the lock cannot express:
+What the queue fixes is what a lock cannot express:
 
-- **Ordering.** Two queues polling one lock means whoever polls first wins — no FIFO across
-  backends, no priority, possible starvation. His `db/jobs.py` defends FIFO precisely because "a
-  queue whose order cannot be predicted by looking at it is one people stop trusting."
-- **Honest waits.** `api/queue.py:197` does `eta_seconds = estimate.seconds * position` — one
-  estimate scaled by queue position. Wrong in both directions the moment backends mix. See
-  **Phase 7, Step 7**.
+- **Ordering across two machines.** A lock says busy or free; it cannot say *whose turn*. `wfqueue`
+  leases by priority then FIFO by id, so the order is a property of the queue rather than of who
+  polled first.
+- **Work that outlives its worker.** A lease expires and the message returns to `ready` on its own.
+  An orchestrator that dies mid-dispatch loses nothing, which is not true of a lock plus a list.
+- **A place for jobs that are wrong.** `nack` past `max_attempts` dead-letters, and dead is
+  inspectable and requeueable. A wedged job stops being a mystery.
 - **One screen**, not two tabs where a user guesses why their job is not moving.
 
-### Deferred, deliberately: where the loop lives
+### What is still open
 
-Either his `QueueWorker` gains a runner registry, or a new jointly-owned dispatcher owns the queue
-and his loop retires into it. Both are one process, one loop; they differ only in whose file the
-loop lives in, and every step of Phase 7 is identical under either. Ruled out: a separate scheduler
-process calling each orchestrator over HTTP — it adds a network hop and a failure nobody has an
-answer for (callee dies mid-run, scheduler still holding the lock).
+- **One lock file per machine, or per GPU.** wing-sim's is per machine (`.wing-sim.gpu.lock`,
+  `rig/lock.py:39-40`), which was right when a rig had one card. With two cards a machine-wide lock
+  serialises the whole rig and "which GPU is free" cannot be expressed. Phase 7 names it per device
+  and records the incompatibility as a question for Tyrone rather than assuming an answer.
+- **Where the frontend reads results from.** Ours are saved on the NAS by our orchestrator; whether
+  the webapp reads them from us or the queue carries them is not decided.
 
 ---
 
@@ -143,7 +149,10 @@ section rather than in a phase because the temptation recurs — someone will re
 | Look for MetaDrive's left-hand-traffic option | **There is none**, and the negative is exhaustive rather than a keyword grep: all 249 keys of `BASE_DEFAULT_CONFIG`, `METADRIVE_DEFAULT_CONFIG` and `SCENARIO_ENV_CONFIG` dumped and filtered — nothing; OpenDRIVE carries drive side as `rule="RHT"/"LHT"` and MetaDrive never parses it (`utils/opendrive/parser.py:509-535` has no such field, upstream `main` still reads `# Rules` / `# TODO implementation`); SUMO's `lefthand="true"` is dropped too; ScenarioNet's `coordinate` means coordinate *frame*, not traffic side. Every "handed" word in the package is coordinate chirality. **And there is nothing to upgrade to** — upstream `main`'s `version.py` still reads `0.4.3`. A geometry reflection is the only route: `handedness.py`. *Enforced in:* Phase 1 build, Phase 0 `doctor`, and Phase 2 `generate`, which **measures** the drive side off the built map. |
 | Reach for `need_inverse_traffic=True` to put traffic on the other side | It does not do that. It only lets the traffic manager *also* spawn NPCs on the opposing carriageway (`traffic_manager.py:246-247`, `:381-382`), and only for block IDs `S C r R` — so `X`, `T` and `O` are unaffected, silently, exactly like `accident_prob` above. Which side anyone **keeps** is geometry, not this flag. It is still worth turning on for the Traffic axis, because without it a two-way map has no oncoming traffic at all — but that is a **Scenario options** item, not a handedness switch. |
 | Assume a fixed road means a fixed scenario | `X` builds **one identical road** at all five seeds (`StdInterSection` has a fixed radius, the map pins `lane_num=3`/`lane_width=3.5`), which invites the conclusion that its five seeds are one run repeated. They are not: `random_spawn_lane_index` defaults to `True` (`metadrive_env.py:61`) — the only `random_*` key that does — and `agent_manager.py:111-119` draws `randint(lane_num)` per reset, giving lanes `0, 1, 0, 1, 1`. **`route_length` will not show you**, because `navigation.total_length` is measured on a reference lane and reads `111.70` at all five. Kept on deliberately and recorded per scenario. *Enforced in:* `config.base_config` names the key; `sockets.measure_route` records the draw; `test_sockets.py` asserts it is invariant under the option axes. |
-| Read `SocketReading.angle_deg` as how far the ego turns | It is the **final heading**, `wrap_to_pi`'d (`sockets.py:80`). Correct for choosing an exit — which is all `ExitRule` needs — and wrong for describing one. `curve` seed 0 sweeps **+239.5°** and this field reads **−120.5°**: half the rotation, and the opposite direction. `X`/`T`/`O` never pass 180° so they are unaffected, which is what let it sit unnoticed. Use `RouteMeasurement.net_rotation_deg`, integrated along the driven route. *Enforced in:* `destinations.md` reports both and says which is which; `test_sockets.py` pins the disagreement. |
+| Read `SocketReading.angle_deg` as how far the ego turns | It is the **final heading**, `wrap_to_pi`'d (`sockets.py:102`). Correct for choosing an exit — which is all `ExitRule` needs — and wrong for describing one. `curve` seed 0 sweeps **+239.5°** and this field reads **−120.5°**: half the rotation, and the opposite direction. `X`/`T`/`O` never pass 180° so they are unaffected, which is what let it sit unnoticed. Use `RouteMeasurement.net_rotation_deg`, integrated along the driven route. *Enforced in:* `destinations.md` reports both and says which is which; `test_sockets.py` pins the disagreement. |
+| Count road variety by hashing the geometry | `lane_geometry_digest` is an **equality test**. It answers *is this the same road* and was read as answering *is this a different scenario*, which it cannot. It reported `CC` as 5/5 distinct when seeds 0 and 4 are **7% apart** — near enough that their thumbnails are the same picture — and `O` as 5/5 distinct when seeds 0 and 4 are **not measurably apart at all**. Only `CC` has real spread available (median pair gap 40% over seeds 0–25, against 12% for `O` and under 14% for every `rS` pair). *Enforced in:* `fingerprint.shape_gap` is the similarity measure; `destinations.md` prints the closest pair per sequence beside the distinct count; `scenariobank seeds` ranks what a candidate seed would add. |
+| Read a `C` block as a pure arc | A MetaDrive `Curve` block is an arc **and a trailing straight**. `create_bend_straight` returns `(curve, straight)` and `pgblock/curve.py` builds both — part 1 the arc, part 2 a straight of `Parameter.length`. So `CC` is a road of straight → arc → straight → arc → straight, and the straights are not extra blocks. `turn_pairs` reports one letter per *arc*, which is the useful reading but not a whole block. *Enforced in:* `categories.py`'s `curve` description and the generated `destinations.md` both say so. |
+| Read a turn direction off a map picture | A map alone does not say which end the ego starts at, and read from the wrong end every turn in it reverses. The ego always spawns heading **due east** — rightward in any figure — but where that lands in the frame moves with the seed: `curve` seeds 2 and 3 start at the *top* and bend down, 0, 1 and 4 start at the bottom and bend up. A map-only thumbnail was shipped and immediately misread as "no right turns in the bank", when seed 2 turns right twice. *Enforced in:* thumbnails draw the route, a spawn arrow and a destination star (`figures.render_route`); `net_rotation_deg` and `turn_pairs` are recorded per scenario; `test_bank.py` asserts two categories on one road cannot produce the same picture. |
 | Defend seed identity by hashing config keys, or by fingerprinting the built map | Both rejected, for different reasons. The config-key audit cannot be proven complete — `curriculum_level`, which silently rewrites the seed you asked for, was missing from the first draft. Fingerprinting the output *would* have worked, but **cross-batch identity is not a goal**: a bank is regenerated per batch and a road that comes out different is simply a different batch. `map_id` and `config_hash` are both cut (2026-08-31); the container's pinned commit is the whole guarantee. |
 
 One more that is not a trap but is easy to over-build: **`crash_human` termination is already wired
@@ -395,7 +404,7 @@ full of it collides." That matters for Phase 4b.
 ## Decisions locked
 
 - **Repo**: new standalone git repo in `metadrive-PG/`. Conventions copied from the converter repo (uv, Typer, `src/` layout, `[project.scripts]`), no shared code.
-- **Frontend**: the wing-sim webapp, via a `/metadrive` section posting into the shared queue. The CLI stays, and `run_bank(...)` stays importable and CLI-free, so the CLI and the orchestrator are two callers of one core. *(Amended 2026-08-30 — was "CLI + `results.json`", with Phase 7 optional.)*
+- **Frontend**: the wing-sim webapp, via a `/metadrive` section posting into the NAS queue. The CLI stays, and `run_bank(...)` stays importable and CLI-free, so the CLI and the container are two callers of one core. *(Amended 2026-08-30 — was "CLI + `results.json`", with Phase 7 optional. Amended 2026-09-01 — the queue moved to the NAS and there are now two rigs and two orchestrators; see **How this ships**.)*
 - **Categories**: the seven as drafted.
 - **Seeds**: fixed at 0, 1, 2, 3, 4 for every category. 35 maps.
 - **Options**: six axes, stored normalized, applied at run time.
@@ -416,14 +425,18 @@ metadrive-PG/
   pyproject.toml            # uv, requires-python >=3.10,<3.11, [project.scripts] scenariobank=...
   uv.lock
   src/scenariobank/
-    cli.py                  # Typer app: doctor categories sockets inspect destinations generate
+    cli.py                  # Typer app: doctor categories sockets inspect destinations
+                            #            generate seeds replace commands studio
                             #            calibrate run selftest schema validate
     categories.py           # CATEGORIES dict: block_seq, destination, max_steps, description
     options.py              # LEVELS, TIERS, resolve_options() -> expanded dict
     config.py               # base config builder
-    fingerprint.py          # sha256_hex, lane_geometry_digest (road fingerprint, tests + docs)
-    manifest.py             # pydantic models: Manifest, Category, Scenario  (schema_version)
-    generate.py             # build the 35 maps + thumbnails
+    fingerprint.py          # sha256_hex, lane_geometry_digest (is it the same road?)
+                            #            road_shape, shape_gap  (how different is it?)
+    variety.py              # scan(): rank candidate seeds; closest_pair(): the least
+                            #         distinct pair a sequence already has
+    bank.py                 # generate(): the maps + thumbnails, and the pydantic Manifest
+                            #             models that describe what it wrote
     obstacles.py            # ObstacleManager  — cones, barriers
     actors.py               # VRUManager       — pedestrians, cyclists
     lights.py               # PGTrafficLightManager  (Phase 8)
@@ -435,16 +448,24 @@ metadrive-PG/
       camera_rig.py         #   load_rig(), CameraRig.sensors/mount/read
       av3_model.py          #   AV3Model.observe/predict_with_navigation, FrameHistory, preprocess
       openpilot_policy.py   #   BridgeConnection, OpenpilotDriver, to_metadrive_action
-    orchestrator/           # Phase 7 — our own; imports nothing of wing-sim's (R1)
-      router.py             #   /api/v1/metadrive/... jobs, submissions, options, banks, runs, SSE
-      auth.py               #   bearer token -> api_tokens by sha256 (~20 lines)
-      lock.py               #   flock on ~/simulation/.wing-sim.gpu.lock, holder file kept separate
+    web/                    # Phase 2c — the local authoring studio. Shells out to this CLI;
+      api.py                #   never imports MetaDrive, because the engine is a per-process
+      jobs.py               #   singleton. One job at a time; state read back off its log.
+      static/index.html     #   the whole frontend, one file, no build step
+    nas/                    # Phase 7, NAS side — our MetaDrive orchestrator (R1: imports
+      orchestrator.py       #   nothing of wing-sim's). The lease loop: consume, plan, call,
+                            #   extend, save, ack. Busy is a nack, never a failure.
+      rigs.py               #   the rig client + the GPU plan. The plan may be stale; the
+                            #   rig's lock is the truth.
+      results.py            #   our SQLite + results tree. Per-scenario rows; idempotent ingest.
+      options.py            #   GET /options: the six axes as data, for the frontend's form
+      queue_client.py       #   vendored verbatim from docs/queue-docs/. Do not reimplement.
+    rig/                    # Phase 7, rig side — the service the orchestrator calls
+      service.py            #   POST/GET/DELETE /runs, GET /health. Idempotent on job_id.
+      lock.py               #   flock per GPU, holder file kept separate, /proc/locks check
       session.py            #   take lock, launch sibling container, supervise, tear down
-      job_runner.py         #   MetaDriveJobRunner: run / resume / cancel
-      staging.py            #   upload -> staged tree -> data root
+      supervise.py          #   log file + exit-code file. No state held anywhere.
       archive.py            #   evidence, written before the run touches anything
-      ingest.py             #   results.json -> our tables
-      db.py                 #   our tables + the shared `jobs` row
   rigs/av3.txt              # the six AV3 cameras, ported from the converter
   docker/Dockerfile         # adapted from converter-scenarionet-stage2-redesign/docker/Dockerfile
   compose.yaml
@@ -455,6 +476,7 @@ metadrive-PG/
     level-calibration.md    # the Phase 4b sweep
   CONTRACT.md
   banks/pg-bank-2026-08/
+  .studio/                  # Phase 2c job logs and scratch figures. Gitignored, disposable.
 ```
 
 ---
@@ -599,17 +621,36 @@ command are cut. They existed to prove cross-batch identity, which is not a goal
 phases of work, deleted rather than corrected.)*
 
 **Build**
-- `base_config` built once and stored **in full** in the manifest, so a run is self-describing. It
-  sets `curriculum_level=1`, `random_traffic=False`, `random_spawn_lane_index=True`,
-  `random_lane_num=False`, `random_lane_width=False`, `accident_prob=0.0`, `store_map=True`, the
-  whole lidar/detector block, `agent_observation` and `navigation_module`.
+- `base_config` built once and stored **in full** in the manifest, so a run is self-describing:
+  `use_render`, `agent_observation`, the whole lidar/detector block, `traffic_density`,
+  `random_traffic`, `accident_prob`, `random_spawn_lane_index`, `horizon`, `log_level`. Types are
+  stored as dotted paths (`agent_observation` → `metadrive.obs.state_obs.StateObservation`), so it
+  is a *record* of the config and not a config to load back. `map`, `start_seed` and
+  `num_scenarios` are stripped: they vary per block sequence and are already recorded per category
+  and per scenario, so leaving them in would put two answers in one file.
   *(Amended 2026-08-31 — `random_spawn_lane_index` was `False`. Reversed after measuring that it is
   the only thing distinguishing the five `X` seeds, which build one identical road.)*
+  *(Amended 2026-08-31 — this bullet used to list `curriculum_level=1`, `random_lane_num=False`,
+  `random_lane_width=False`, `store_map=True` and `navigation_module`. `base_config` sets none of
+  them; the list was a draft's wish, not a reading of the code. Corrected against what the
+  manifest actually contains.)*
 - Record the resolved MetaDrive dist version, git SHA and `asset_version()` **as information**. They
   explain a result months later; nothing refuses on them.
 - Per scenario record `destination` and `spawn_lane_index`, so the runner can set
   `vehicle_config["destination"]` and bypass `auto_assign_task` entirely.
-- Assert all five fixed seeds build for every category. Map generation is a **backtracking search**
+  **`destination` is per scenario and cannot be per category** — Phase 1's check 2 above
+  anticipated this and it came true: `StdTInterSection` exposes a different arm depending on the
+  seed, so `t_junction` resolves to `1T0_1_` on seeds 0, 1 and 4 and `1T2_1_` on 2 and 3. The
+  category level carries the `exit_rule` the node was resolved *from*; the node itself is a row.
+- **Seeds are a default, not a constant.** `--seeds` overrides them, per category if wanted
+  (`--seeds curve=0,1,2,3,22`), and `scenariobank replace` swaps one scenario's seed in a bank
+  that already exists — the bank keeps its size, its ids and its numbering. This matters because
+  **seed 4 is a poor draw for two categories**: 7% from seed 0 for `curve`, not measurably apart
+  for `roundabout`. `SEEDS` stays `(0,1,2,3,4)` because that is the set every figure in this repo
+  was measured at; `scenariobank seeds` ranks the alternatives on demand.
+  *(Amended 2026-09-01 — was a fixed constant. Changed after the near-duplicate was found by
+  looking at two thumbnails, not by any check here.)*
+- Assert every requested seed builds for every category. Map generation is a **backtracking search**
   (`BIG.py:91-103`), so a requested block sequence can simply fail to plug in for a given seed. With
   seeds fixed at 0–4 that is a hard failure, not a scan: **fail loudly** and record the substitute
   seed explicitly in the manifest rather than shifting silently.
@@ -618,10 +659,26 @@ phases of work, deleted rather than corrected.)*
   reproducibility check: if the mirror fails to install, every map builds right-side, every manifest
   field stays correct, every thumbnail still looks like a road, and the only symptom is that a
   right-hand-drive model fails everything for reasons no result explains.
-- Thumbnails: `draw_top_down_map(env.current_map, resolution=(512,512))` → `cv2.imwrite` into
-  `thumbs/`. Note RGB→BGR for cv2. Map-only by construction.
+- Thumbnails: `figures.render_route` into `thumbs/`, one **per scenario** — the road in grey,
+  the driven route in red, a blue arrow at the spawn and a green star at the destination,
+  titled with the category, seed, rule, node, rotation and length.
+  *(Amended 2026-09-01 — was `draw_top_down_map` → `cv2.imwrite`, map-only and therefore one
+  image per **map**. Two failures, both found by looking at the output: the three `X` categories
+  at one seed wrote three byte-identical files, and a map with no spawn marker cannot say which
+  way it turns — the `curve` thumbnails were read from the wrong end and reported as having no
+  right turns, when seed 2 turns right twice. Reusing Phase 1's route figure fixed both and is
+  cheaper per image; the cost is the filled road-surface look.)*
 - Write `manifest.json` **last and atomically** (temp file + `os.replace`).
-- `scenario_id` is the stable public key; format `{category}_{index:04d}`.
+- `scenario_id` is the stable public key; format `{category}_{index:04d}`. `index` is the position
+  within the category, not the seed — they coincide at seeds 0–4 and stop coinciding for any
+  other seed list.
+- **One env per block sequence, one reset per seed, and the destination pinned *after* the reset**
+  with `navigation.set_route` rather than through `vehicle_config["destination"]` at construction.
+  That is what lets the three `X` categories share a single reset instead of paying for three:
+  they are one junction driven three ways. `auto_assign_task` draws its throwaway destination
+  from `get_np_random(random_seed)` — a *fresh* generator, not a manager's stream
+  (`node_network_navigation.py:72-91`) — so leaving it to run and overriding it afterwards
+  perturbs nothing. Measured: the full 35-scenario bank builds in **4.1 s**.
 
 **Cost — this is on the critical path now.** With no durable bank, generation runs before every
 batch. Measured on this machine: env *construction* is free (~0.00 s), all the cost is in `reset()`,
@@ -642,43 +699,67 @@ simulated. So `generate` **reuses one env per block sequence** and resets per se
 multi-minute command is not acceptable at that scale. (All 20 seeds built for every sequence above;
 longer sequences are viable, they are just slower.)
 
-**Manifest schema (v1.0)**
+**Manifest schema (v1.0)** — pydantic models in `bank.py`, every one `extra="forbid"`, so a field
+a writer added and a reader does not know about is a failure rather than a silently ignored key.
+
 ```json
 {
   "schema_version": "1.0",
   "bank_id": "pg-bank-2026-08",
-  "created_utc": "2026-08-27T10:00:00Z",
+  "created_utc": "2026-08-31T13:40:22Z",
   "metadrive": {
     "edition": "MetaDrive v0.4.3",
     "dist_version": "0.4.3",
-    "commit": "85e5dadc...",
+    "commit": "85e5dadc6c7436d324348f6e3d8f8e680c06b4db",
     "asset_version": "0.4.3"
   },
-  "base_config": { "...full env config dict..." },
+  "base_config": { "...env config, types as dotted paths..." },
+  "drive_side": "left",
   "categories": {
-    "intersection_left": {
-      "description": "Unprotected left turn at a 4-way intersection",
-      "block_seq": "X",
-      "destination": "1X0_1_",
-      "max_steps": 500,
+    "t_junction": {
+      "description": "Three-way junction, taking whichever turn the seed offers. ...",
+      "block_seq": "T",
+      "exit_rule": "sharpest",
+      "max_steps": 320,
       "scenarios": [
-        {"scenario_id": "intersection_left_0000", "seed": 0,
-         "spawn_lane_index": 1,
-         "thumbnail": "thumbs/intersection_left_0000.png"}
+        {"scenario_id": "t_junction_0000", "seed": 0,
+         "destination": "1T0_1_",
+         "spawn_lane_index": 0,
+         "route_length_m": 111.7,
+         "net_rotation_deg": 90.0,
+         "turn_pairs": "",
+         "thumbnail": "thumbs/t_junction_0000.png"}
       ]
     }
   }
 }
 ```
 
+*(Amended 2026-08-31, three fields, all while building it.* `destination` **moved from the category
+to the scenario** — see the bullet above; the category keeps `exit_rule`, the intent it was resolved
+from. `drive_side` **is recorded**, so the guarantee the drive-side assert enforces is a stated fact
+in the file rather than an assumption a reader has to make. `route_length_m` **is recorded per
+scenario**, because it is measured for free by the `set_route` that already had to happen and
+nothing else in the bank says how long a route is — `max_steps` is a category-level cap.*)
+
+*(Amended 2026-09-01 — `net_rotation_deg` and `turn_pairs` added, on the same 1.0 schema since
+nothing consumes a manifest yet. **Nothing in the bank said which way a scenario turned.** Both
+come off the reset that already happens, via `sockets.route_rotation`. `net_rotation_deg` is
+rotation along the driven route, unwrapped — not `SocketReading.angle_deg`, which is the
+`wrap_to_pi`'d final heading and reads −120.5° for a route that sweeps +239.5°. `turn_pairs`
+carries what a single number cannot: a gentle left and a left-then-right both read low.)*
+
 **How you test it**
 ```bash
-uv run scenariobank generate \
-  --categories intersection_left intersection_right intersection_straight \
-               t_junction roundabout curve ramp_merge \
-  --count 5 --out ./banks/pg-bank-2026-08 --bank-id pg-bank-2026-08
+uv run scenariobank generate --out ./banks/pg-bank-2026-08 --bank-id pg-bank-2026-08
 ```
-- **Expect:** exit 0; `manifest.json` + 35 PNGs; progress on stderr as it goes.
+`--category/-c` is repeatable and defaults to every category; `--seeds` takes a comma-separated
+list and defaults to `0,1,2,3,4`; `--no-thumbnails` skips the PNGs.
+*(Amended 2026-08-31 — the draft's `--categories a b c --count 5` is gone. `--count` had no meaning
+once the seeds became a fixed, named list rather than a number of them to draw.)*
+
+- **Expect:** exit 0; `manifest.json` + 35 PNGs; progress on stderr as it goes, one line per
+  scenario naming the destination, spawn lane and route length. The whole bank takes ~4 s.
 - Structural check:
   `jq '.categories | to_entries[] | {k:.key, n:(.value.scenarios|length)}' manifest.json`
   → every count is 5.
@@ -686,13 +767,28 @@ uv run scenariobank generate \
   `jq -r '[.categories[].scenarios[].seed] | unique' manifest.json` → `[0,1,2,3,4]`.
 - Every thumbnail exists and is non-trivial:
   `jq -r '.categories[].scenarios[].thumbnail' manifest.json | while read f; do test -s "$f" || echo "MISSING $f"; done`
-- **Open the thumbnails.** `eog banks/pg-bank-2026-08/thumbs/` — an intersection thumbnail should
-  look like an intersection. Remember they show the map only — never traffic, objects, lights,
-  the ego or its route — and that each is zoomed to fit, so a curve and a roundabout both fill
-  their frame despite being very different sizes.
+- **Open the thumbnails.** `eog banks/pg-bank-2026-08/thumbs/` — the blue arrow is the spawn and
+  its heading, red is the driven route, the green star is the destination. Check the route turns
+  the way the title claims: `curve` seeds 2 and 3 must bend **away** from the arrow's left.
+  They show no traffic, objects or lights — those are Phase 4's option axes and are not built at
+  generation — and each is zoomed to fit, so a curve and a roundabout both fill their frame
+  despite being very different sizes.
 
 **Done when:** 35 rows and 35 thumbnails, every category count is 5, the seed list is `[0,1,2,3,4]`,
 the drive-side assert passes, and the thumbnails match their labels.
+
+**Built 2026-08-31.** All of the above checked on this machine: 35 rows, 35 thumbnails, counts of 5,
+seeds `[0,1,2,3,4]`, `drive_side` `left`, thumbnails opened and matching their labels. Every
+destination and spawn lane agrees with `docs/reference/destinations.md`, which was measured through
+an entirely different path (two envs per scenario, destination pinned at construction) — so the
+cheaper single-reset path in `bank.generate` is not just faster, it lands on the same answers.
+`tests/unit/test_bank.py` covers it: 15 tests, 6 of them `needs_sim`.
+
+*(Amended 2026-09-01 — the thumbnails were wrong on first delivery and it took someone looking
+at them to find it. See the two Traps rows added the same day. Generation is now **~5 s** for the
+full bank rather than 4.1 s: the route figure is cheaper per image than the map render, but there
+are 35 of them instead of 25 and matplotlib costs about a second to import. The first run after
+an install reads 6.2 s — that one also builds matplotlib's font cache.)*
 
 ---
 
@@ -719,6 +815,188 @@ So it becomes two tests in `tests/unit/test_invariance.py`, which **never run du
 
 Their real job is guarding `ObstacleManager` and `VRUManager` — code *we* write, and the code that
 could plausibly get the RNG wiring wrong. Green today; it stays green or someone broke it.
+
+---
+
+# Phase 2c — Bank Studio: the authoring loop, in a browser
+
+**Goal:** the correction loop of Phase 2 — spot a bad draw, rank alternatives, look at one, swap it
+— done in one page instead of seven context switches.
+
+**Why (2026-09-01, Keith).** Phase 2 works and the loop it enables is the problem. Finding that
+`curve` seed 4 was a near-duplicate of seed 0 took `generate`, then `eog` on a directory of PNGs,
+then a guess, then `seeds -c curve --keep 0,1,2,3 --scan 0-30`, then `inspect -b CC -s 22 --rule
+only -o /tmp/x.png`, then a second image viewer, then `replace`. The commands are right; the surface
+is wrong. **The thing being judged is a picture, and pictures do not belong in a terminal.**
+
+**This is not Phase 7.** Phase 7 runs a *submitted model* against a finished bank: an orchestrator
+on the NAS, a runner on each rig, a queue between them. This is for us, authoring the bank, on
+localhost, with no queue, no rig and no container. Nothing here is designed around Phase 7 and
+nothing here blocks on it. The read endpoints live in their own router so a later decision *can*
+mount them elsewhere; that is the entire extent of the coupling.
+
+---
+
+## Three decisions that shape everything
+
+**1. The API shells out to the CLI. It never imports MetaDrive.**
+
+`BaseEngine.singleton` (`engine/engine_utils.py:36-59`) is one engine per *process*. A web server
+that builds an env holds that singleton for its lifetime, cannot serve two requests that each need
+one, and dies with it — a panda3d/bullet fault is a segfault, not an exception. So every
+simulator-touching command runs as `uv run scenariobank ...` in a subprocess:
+
+- a crash kills a job, not the studio;
+- no engine contention, and no thread-safety question to get wrong;
+- **the CLI stays the single source of truth.** The studio is a second front door, not a second
+  implementation, so `docs/reference/commands.md` keeps describing what actually runs.
+
+Cost: ~1–2 s of MetaDrive + matplotlib import per job. Accepted. A warm persistent worker is a real
+optimisation and is deliberately **not** built here.
+
+**2. One job at a time, and progress is derived.**
+
+A global slot, for the same reason the rig has one: two `generate`s into one bank directory is a
+corrupt manifest. Job state is rebuilt by reading two files on disk — `.studio/jobs/<id>/log` and
+`.studio/jobs/<id>/exit` — and never kept in a variable, which is what makes a page reload, or a
+studio restart, show a running job rather than lose it. Same property Phase 7's runner turns on, for
+the same reason.
+
+**3. Localhost only, and it says so.**
+
+These endpoints run subprocesses that write into the repo. Bind `127.0.0.1`; refuse a `--host` that
+is not loopback, with an error naming why. No auth, because there is no network. Bank names resolve
+against `--banks-root` and anything escaping it is a 400 — the thumbnail route serves files off disk
+by name.
+
+---
+
+## Steps — one command per step, each testable alone
+
+Stop after any step and what exists still works.
+
+### Step 1 — the shell: `scenariobank studio`
+
+New dependency group, so `uv sync` stays fast for anything that does not serve a page:
+
+```toml
+[dependency-groups]
+web = ["fastapi>=0.115,<1", "uvicorn>=0.30,<1"]
+```
+
+| file | what |
+|---|---|
+| `src/scenariobank/web/api.py` | `create_app(banks_root, state_dir) -> FastAPI` |
+| `src/scenariobank/web/static/index.html` | the whole frontend: one file, vanilla JS, no build step |
+| `src/scenariobank/cli.py` | `studio`: `--banks-root ./banks`, `--port 8770`, `--host 127.0.0.1` |
+
+`create_app` takes its roots as arguments rather than reading globals, so tests drive it with
+`fastapi.testclient.TestClient` against a temp directory — no server, no simulator.
+
+One endpoint: `GET /api/doctor` -> `doctor.collect(probe=False)`, already a pydantic model, returned
+as is. `probe=False` because a probe builds an env and Decision 1 says this process never does.
+
+**Test:** `uv run --group web scenariobank studio`, open `http://127.0.0.1:8770/`, see the commit
+prefix `85e5dadc` in the header. `curl -s localhost:8770/api/doctor | jq -r .commit` agrees.
+
+### Step 2 — `categories` and `commands`: the reference tab
+
+No simulator, no subprocess. `GET /api/categories` serves `CATEGORIES`; `GET /api/commands` serves
+`docs.render_commands()` — the page you already generate, one click from the buttons that use those
+flags instead of in a file nobody opens.
+
+**Test:** seven categories listed; the `--rule` row lists all five rules.
+
+### Step 3 — the bank browser
+
+The step that replaces `eog`.
+
+- `GET /api/banks` — directories under `--banks-root` holding a `manifest.json`
+- `GET /api/banks/{bank}` — `bank.read_manifest()`, returned as is
+- `GET /api/banks/{bank}/thumbs/{name}.png` — the file, after resolving inside the bank dir
+
+One row per category, one card per scenario: thumbnail, `scenario_id`, seed, destination,
+`net_rotation_deg`, `turn_pairs`, `route_length_m`.
+
+**Test:** generate a bank, open the studio — 7 rows, 35 cards, every thumbnail loads, and the two
+`curve` `LL` seeds are visibly the same picture, which is the whole reason this phase exists.
+`curl -s 'localhost:8770/api/banks/b/thumbs/../../../etc/passwd'` -> 400, not a file.
+
+### Step 4 — the job engine, proven on `inspect`
+
+The machinery arrives with the cheapest simulator command, so it is debugged on a job that draws one
+picture rather than one that builds thirty-five. `src/scenariobank/web/jobs.py`:
+
+- `submit(argv) -> job_id`, 409 if the slot is taken, naming what holds it
+- one subprocess, stderr merged into stdout, appended line by line to `.studio/jobs/<id>/log`
+- the exit code written to `.studio/jobs/<id>/exit` **when it ends** — its presence is what
+  "finished" means, so status survives a restart
+- `GET /api/jobs/{id}` reads state off those two files; `GET /api/jobs/{id}/log` tails it as SSE;
+  `DELETE /api/jobs/{id}` terminates the process group
+
+Wired to `POST /api/inspect {block_seq | category, seed, rule}`, writing into `.studio/figures/`.
+
+**Test:** click a card, watch the log fill, see the figure. Submit two at once — the second is
+refused with what is running. Reload mid-job — the log is still there.
+
+### Step 5 — `seeds`: ranked alternatives in the page
+
+The one command that needs a new flag, because it prints an aligned table and the studio needs rows:
+**`scenariobank seeds --json`**, emitting `SeedReading` in the same order, matching the `--json`
+that `doctor` and `sockets` already have. Regenerate `docs/reference/commands.md`, and test that the
+JSON and the text table report the same seeds in the same order.
+
+`POST /api/seeds {category, keep, scan}` runs it as a job. The page shows a sortable table with the
+gap column, near-duplicates flagged, and per row a **Look** button (Step 4) and a **Use this seed**
+button (Step 6, inert until then).
+
+**Test:** scan `curve` keeping `0,1,2,3` over `0-30`: seed 22 top at ~30%, seeds 6 and 11 flagged.
+Identical to the terminal's numbers.
+
+### Step 6 — `replace`: the write path
+
+`POST /api/banks/{bank}/replace {scenario_id, seed, thumbnails}` as a job; on completion the studio
+re-reads the manifest and the card redraws. Nothing new is invented — `bank.replace_scenario`
+already refuses a seed already used in the category, keeps the id and position, and deletes a
+thumbnail it did not redraw. The studio's job is to **show the refusal**, not to reimplement it.
+
+**Test:** swap `curve_0004` to seed 22 from the Step 5 table; the card changes and
+`jq '.categories.curve.scenarios[4]'` agrees. Then try seed 0 — refused, reason readable in the page.
+
+### Step 7 — `generate`: build a bank from the browser
+
+`POST /api/banks {bank_id, out, categories, seeds, per_category_seeds, thumbnails}` as a job. The
+form is the flags: category checkboxes, a shared seed list, an optional per-category override (the
+`--seeds curve=0,1,2,3,22` form), a thumbnails toggle. The studio knows how many scenarios it asked
+for, so the bar counts the CLI's existing per-scenario stderr lines against that total — **no new
+progress protocol.** Structured JSON-line progress belongs to Phase 7, Step 1, and is not brought
+forward.
+
+**Test:** build a two-category bank from the page; it appears in the list and opens in the browser
+with the count the form asked for. `--no-thumbnails` gives cards with no image and no broken-image
+icon.
+
+### Step 8 — `sockets` and `destinations`
+
+Both thin over Step 4's engine. `POST /api/sockets` renders the exits table with a turn word per
+exit; `POST /api/destinations` regenerates `docs/reference/destinations.md` and shows it beside the
+command reference.
+
+**Test:** `sockets` on `X` seed 0 shows one exit near +90, one near −90, one near 0, and the entry
+marked. `destinations` leaves `git diff docs/reference/destinations.md` empty.
+
+---
+
+**Reused rather than rewritten:** `bank.read_manifest` / `Manifest`, `doctor.collect`,
+`categories.CATEGORIES`, `docs.render_commands`, `variety.SeedReading`. The API is thin on purpose —
+a route doing arithmetic belongs in a module the CLI shares, or the two front doors will disagree.
+
+**Done when** the `curve` seed-4 correction can be made entirely in the browser: spot it in the
+grid, rank alternatives, look at seed 22, swap it, see the card change — no terminal, no image
+viewer.
+
+**Not doing:** anything in `wing-sim`; a React build; a warm persistent MetaDrive worker;
+JSON-line progress from `generate`; auth or any non-loopback bind.
 
 ---
 
@@ -779,7 +1057,7 @@ renumbered.
 
   The camera rig is selected as a **path, not a registry entry**: `--camera-rig rigs/av3.txt`.
 
-  Cost, and it drives the ETA model in Phase 7 Step 7: **the AV3 forward pass is ~1 s**, about 20x a
+  Cost, and it drives the ETA model in Phase 7 Step 8: **the AV3 forward pass is ~1 s**, about 20x a
   50 ms decision. Price a 35-scenario bank before quoting anyone a runtime.
 
 - **The submitted `model_dev.yml` is not the converter's.** Both repos have a file by that name with
@@ -1020,110 +1298,131 @@ inside the container must fail.
 
 ---
 
-# Phase 7 — The orchestrator  ⟵ *the deliverable, no longer optional*
+# Phase 7 — The orchestrator and the rig runner  ⟵ *the deliverable*
 
-**Goal:** MetaDrive jobs submitted from the webapp, ordered in the shared queue, run on the rig, and
-read back — with nothing of Tyrone's imported (R1).
+**Goal:** a MetaDrive job put on the NAS queue is leased by our orchestrator, dispatched to a free
+GPU on one of two rigs, run in a container, and its results saved back on the NAS — with nothing of
+Tyrone's imported (R1).
 
-Superseded: "optional, build only if asked" and the wrapper sketch that used to sit here. The queue,
-the ordering and the single-slot discipline are **not** rebuilt; they are the shared queue. What is
-built here is a runner, a session, a router, and the storage behind them.
+Superseded: the wrapper sketch that used to sit here, and the shared-`jobs`-table design that
+replaced it. **The queue is not a table we write SQL against.** It is `wfqueue`, an HTTP service on
+the NAS with lease/ack/nack semantics, documented in `docs/queue-docs/queue-doc-v0.json`, with a
+392-line stdlib-only Python client at `docs/queue-docs/queue-client-v0.py`. **Use that client. Do
+not reimplement the HTTP calls** — it already handles leasing, ack/nack, retry backoff and
+long-polling, and every one of those is a thing to get subtly wrong.
+
+Read **How this ships** first for the topology and, in particular, for what the four words mean.
 
 ---
 
-## How an orchestrator and a runner actually work
+## Three properties of the queue, and what each one forces
 
-Read this before writing any of it. "Orchestrator" is the whole service; "runner" is one component
-inside it. `wing-sim/orchestrator/src/` is the reference — read it, import nothing.
+These are not background. Each dictates a specific piece of code, and each is a silent failure if
+missed.
 
-Think of a kitchen with **one oven**:
+**1. Delivery is at-least-once.** The queue doc says it outright: *"Leasing is at-least-once: make
+handlers idempotent, or use `dedupe_key` upstream."* If our orchestrator dies mid-run, the lease
+expires, the message returns to `ready`, and it is leased again — **while a rig is still running
+it.**
 
-- **The API is the front desk.** It takes orders and writes tickets. It never touches the oven.
-- **The `jobs` table is the ticket rail.** Tickets in order: priority first, then oldest first.
-- **The queue worker is the head chef** (`runner/queue.py`, ~180 lines, doing almost nothing on
-  purpose): take the next ticket, read `job["backend"]`, hand it to that runner, wait, repeat.
-- **The runner is the cook** (`runner/job_runner.py`, 644 lines) — one order, start to finish.
+> **Forces:** `POST /runs` on the rig is **keyed by job id and idempotent**. A job already in
+> flight returns its existing run, `200`, rather than starting a second one. That single rule is
+> what makes redelivery harmless instead of a double-booked GPU, and it is why the orchestrator can
+> be restarted at any moment without a reconciliation dance.
 
-**The runner does not itself simulate.** It launches a *container* that simulates, and supervises
-it. `MetaDriveJobRunner` never imports MetaDrive; the code calling `run_bank()` lives inside the
-image.
+**2. A lease is a clock, and our work is longer than it.** `visibility_timeout` defaults to 30 s
+(`POST /topics/{topic}/lease`); a 35-scenario bank is minutes, and a 1,000-scenario one is far
+longer.
 
-The sequence, and every step is ordered by a failure it prevents:
+> **Forces:** the orchestrator calls `msg.extend()` on a timer for the whole run, and stops the
+> instant the run ends. A missed extend does not lose the job — it *duplicates* it, which is worse,
+> and property 1 is the only thing standing between that and two runs on one card.
 
-1. **Is the oven taken?** Read the lock. If anything holds it — a hand-run `run_local.sh`, a
-   leftover pipeline — return `waiting` and stop. **Never tear it down and never signal it.**
-2. **Archive before you touch anything.** Copy the upload into the archive *first*, then promote it
-   into the data root, so evidence exists before anything can go wrong.
-3. **Write the receipt before cooking.** Mint the output folder names *now*, in the database. This
-   is the one design choice worth stealing outright: because the name is decided in advance,
-   attributing a result is reading a path. The version it replaced diffed `out/` before and after,
-   which is how results get attached to the wrong submission.
-4. **Book the oven and start.** Take the flock, launch a sibling container, record its pgid. Lock
-   refused → requeue.
-5. **Watch.** Poll ~1 s: re-read the log, look for the exit-code file. That is all.
-6. **Plate it** — ingest results. 7. **File it** — archive. 8. **Wipe the counter** in a `finally:`,
-   whatever happened, so one team's checkpoint is never on disk when the next team's job starts.
+**3. `nack` is not the same as failure.** A rig that is busy, or whose lock is held by CARLA, has
+not failed. Dead-lettering after `max_attempts` is for jobs that are **wrong**, not jobs that were
+**unlucky**.
 
-**The load-bearing property: the runner holds no state of its own.** Supervision rebuilds everything
-from the log file and the exit-code file. That is the entire reason a run which outlived a service
-restart can simply be watched again — same code path, no special case. **A runner that keeps
-progress in a variable breaks restart recovery silently.** Same reason `rig/progress.py` has no
-table: progress is derived, never stored.
+> **Forces:** busy → `msg.nack(retry_after=...)`, so the job returns to `ready` and is tried again,
+> on this rig or the other. Only a job that cannot ever run — a bad options file, a missing
+> checkpoint, a validation failure — is allowed near the dead-letter pile.
+>
+> This is the same distinction the previous draft called `waiting`, and it remains **the single
+> most likely wrong behaviour in this whole phase.**
 
-### The interface to satisfy
+---
 
-His worker calls exactly three things, so these three are the whole contract:
+## The lock is rig-local, and CARLA shares the cards
 
-```python
-class MetaDriveJobRunner:
-    async def run(self, job: dict) -> JobResult: ...      # normal path
-    async def resume(self, job: dict) -> JobResult: ...    # adopt a run already in flight
-    async def cancel(self) -> bool: ...
-```
+Confirmed 2026-09-01: CARLA jobs run on these same two rigs. So the flock stays the authority, for
+the reason it always was — things outside *both* queues take a card: `deployment/run_local.sh`,
+hand-run scripts, and `free_gpu.sh --free`, which his attempt script runs as **root** with
+`--pid=host`. Inside that container `id -un` is root, so its "spare a python3 if it is mine" rule
+does not apply: **it will terminate a MetaDrive run holding the card.**
 
-`JobResult.state` ∈ `waiting` | `completed` | `failed`.
+The split that follows, and it is the design:
 
-**`waiting` is not a failure.** It means nothing ran and the job goes back on the rail. Recording it
-as a failure is the single most likely wrong behaviour in this whole phase.
+- **The orchestrator's GPU map is a plan.** It is allowed to be stale, and it usually is.
+- **The rig's lock is the truth.** Checked *on the rig*, because it cannot be checked anywhere
+  else: `rig/lock.py:43,73-123` excludes by **inode** and reads liveness out of local `/proc/locks`
+  plus `/proc/<pid>/stat` starttime. Host-local by construction. On an NFS mount it would not mean
+  the same thing, and from the NAS it cannot be seen at all.
+- **A rig that cannot take the lock answers `busy`**, and the orchestrator re-plans. It does not
+  fail the job, it does not tear anything down, and it never signals a holder it did not start.
+
+---
+
+## Why the rig half is a service rather than an SSH command
+
+The orchestrator *calls* the runner, so something must be listening. Three properties are worth
+having and all three come from the same choice — **the runner holds no state of its own**:
+
+- Every answer it gives is read back off disk: the log file, the exit-code file, and the
+  per-scenario record directory. `rig/session.py:458-521` is the reference for this and is worth
+  reading before writing it.
+- So a runner restarted mid-run still describes that run correctly, and adoption after a restart is
+  **the same code path** as a normal poll rather than a special case.
+- And a run is owned by the Docker daemon, not by the service: `start_new_session` escapes a
+  process group but not a PID namespace or a cgroup, so a 25-minute run must not be a child of
+  anything that can be restarted. `rig/session.py:236-258` paid for that lesson.
+
+**A runner that keeps progress in a variable breaks restart recovery silently.** Same reason
+`rig/progress.py` has no table: progress is derived, never stored.
 
 ---
 
 ## Steps
 
-Each is buildable and verifiable on its own. **Steps 1–5, 7 and 8 need nothing from Tyrone**; only
-Step 6's routing does.
+Each is buildable and verifiable on its own, and the order is deliberate: **the rig half first**,
+because it can be driven by hand with `curl` long before a queue is involved.
 
-### Step 1 — the runner image and entrypoint
+### Step 1 — the container image and entrypoint
 
 Extends Phase 5. The container reads an options file plus a scenario list, calls `run_bank()`,
-writes `results.json`, exits 0. Four additions, all so the supervisor never has to parse prose:
+writes `results.json`, exits 0. Four additions, all so a supervisor never has to parse prose:
 
 - **Structured JSON lines on stdout.** One object per event. No regexes — his `rig/progress.py`
-  scrapes four prose patterns out of CARLA's log because it has no choice; we do.
+  scrapes four prose patterns out of CARLA's log because it has no choice; we do not.
 - **A per-scenario record directory and its exit-code file**, written when each scenario starts and
   ends. These two files are the progress signal, so a bar moves without anything reading the log.
-- **Teardown inside the launched script**, not the supervisor — a dead orchestrator must still bring
-  the stack down and still record exit codes.
+- **Teardown inside the launched script**, not the supervisor — a dead runner must still bring the
+  stack down and still record exit codes.
 - **Never let `KeyboardInterrupt` raise into `env.close()`.** It unwinds panda3d's GL context and
   bullet's world; that segfaulted and wedged the GPU until a reboot. `tools/drive.py` is the
   precedent — it keeps its exit handler armed until teardown returns. A cancelled run that still
   writes its results is a scored partial run; one that does not is a lost one, so budget the stop
-  timeout rather than taking a 10 s default. Under one queue this is sharper than it was: a wedged
-  GPU now blocks **both** queues.
+  timeout rather than taking a 10 s default. A wedged GPU blocks CARLA too.
 
 **Verify alone:** `docker run` it by hand with a one-scenario options file; get a `results.json`.
 
-### Step 2 — the lock helper (R1: our own, same path)
+### Step 2 — the lock helper (R1: our own, same paths)
 
-`~/simulation/.wing-sim.gpu.lock`, advisory `flock`, **exclusion by inode**. ~150 lines.
+Advisory `flock`, **exclusion by inode**, one lock file per GPU. ~150 lines.
 
+- **Name it per device** — `.wing-sim.gpu<N>.lock` — and record in `CONTRACT.md` that wing-sim's
+  single `.wing-sim.gpu.lock` serialises a whole rig. *Open question for Tyrone; do not assume he
+  will change it.* Until he does, a two-GPU rig behaves as a one-GPU rig whenever CARLA is running.
 - **Publish holder identity as a separate file.** Atomic replacement is a rename, and a rename gives
   the path a new inode, voiding every outstanding lock — so never write into the lock file itself.
-- **The flock stays the authority even under one queue**, because things outside the queue take the
-  card: `deployment/run_local.sh`, hand-run scripts, and `free_gpu.sh --free` — which his attempt
-  script runs as **root** with `--pid=host` on every attempt. Inside that container `id -un` is
-  root, so its "spare a python3 if it is mine" rule does not apply: **it will terminate a MetaDrive
-  run holding the card without the lock.**
 - Confirm acquisition by finding the launched process in `/proc/locks`, rather than trusting a
   return value.
 
@@ -1136,163 +1435,131 @@ Takes the lock, launches the run as a sibling container, supervises, tears down.
 `rig/session.py` is the reference, but it takes `presets=` and emits CARLA compose commands, so this
 is a sibling rather than a reuse.
 
-- **Sibling container, not a detached child.** `start_new_session` escapes a process group but not a
-  PID namespace or a cgroup. A 25-minute run must not die because the service reloaded.
+- **Sibling container, not a detached child** — see above.
 - **Never inherit the environment wholesale.** His `rig/compose.py::child_environment` returns only
   `HOME/PATH/HEADLESS/QUALITY/COMPOSE_MENU`, and the reason is that a developer's exported setting
   otherwise silently changes what a model is scored on.
 - **Own compose project name, container prefix and labels**, so a stray-container sweep on either
-  side can never reach the other.
-- Supervision holds **no state** — re-read the log, look for the exit-code file — so adoption after
-  a restart is the same code path as a normal run.
-- The zapeta bridge listens on 5558 in both stacks and both use host networking. Under one queue
-  they never run together, but **pick a different port anyway**, so a mistake is an error rather
-  than a wrong number.
+  side can never reach the other. Label with the job id and the attempt, as he does — that is what
+  makes a sweep able to tell whose container it found.
+- The zapeta bridge listens on 5558 in both stacks and both use host networking. **Pick a different
+  port**, so a collision is an error rather than a wrong number — on a shared rig they *can* now
+  run at the same time on different cards.
 
-### Step 4 — `MetaDriveJobRunner`
+**Verify alone:** one scenario end to end, driven from a Python REPL. No HTTP anywhere yet.
 
-~400 lines satisfying `run` / `resume` / `cancel`, plus our own staging and archive (R1). The order
-is his, because each step prevents a specific failure:
+### Step 4 — `metadrive-runner`: the service on each rig
 
-1. Lock held by anything → `waiting`. Do not tear down, do not signal.
-2. Archive a copy of the upload **before** promoting it into the data root.
-3. **Mint the per-scenario output identities before launching.** For MetaDrive this is a
-   `job_scenarios` table — the analogue of his `job_presets`. A job legitimately ends with 30 of 35
-   scored, and *that* is a table, not columns on `jobs`: the rows start at `waiting`, and `skipped`
-   is a real outcome distinct from `failed`, because "never ran" and "ran and failed" lead to
-   different next actions.
-4. Launch via Step 3. Lock denied → requeue, **not** failure.
-5. Supervise, with a tracker task persisting each scenario as it finishes, plus a **backstop pass**
-   afterwards that re-runs the same idempotent step for anything the tracker missed — the last
-   scenario, which can finish in the instant the tracker is cancelled, and every scenario of an
-   adopted run.
-6. Ingest `results.json` into our tables. **No shape mapping** — the schema is ours.
-7. Archive.
-8. `finally:` wipe the data root, **unconditionally**.
-
-**Separate data root: `~/simulation-md/`**, with its own `data/`, `staging/`, `archive/`, `banks/`
-and database. Not negotiable: his `runner/job_runner.py` calls `wipe_run_owned(paths.data_root)` in
-a `finally` at the end of every job, so a shared tree means his cleanup deletes a staged MetaDrive
-checkpoint mid-run. Mirror his archive validator's two rules — the archive root must be **absolute**,
-must **not** be inside the repo checkout (or a `git add -A` sweeps up a colleague's weights), and
-must not be inside anything a round wipes.
-
-### Step 5 — the FastAPI section
-
-Own router, own auth (R1: verify the bearer token against the `api_tokens` table by sha256, ~20
-lines, rather than importing his `CurrentUser`). Mounted with one `include_router` call in his
-`create_app()` — the only line of his that this phase touches.
+The thing the orchestrator calls. Small, and stateless by construction.
 
 ```
-POST /api/v1/metadrive/submissions          open an upload, reserve the job id
-PUT  /api/v1/metadrive/submissions/{id}/chunks   resumable; HEAD for the offset
-POST /api/v1/metadrive/jobs                 -> jobs row, backend='metadrive'
-GET  /api/v1/metadrive/options              the six axes, LEVELS and TIERS, as data
-GET  /api/v1/metadrive/banks/{id}/manifest
-GET  /api/v1/metadrive/banks/{id}/thumbs/{scenario_id}.png
-GET  /api/v1/metadrive/runs, /runs/{id}
-GET  /api/v1/metadrive/runs/{id}/log        SSE
+POST   /runs                    {job_id, gpu, bank, scenarios[], options, checkpoint_path}
+GET    /runs/{job_id}           state, per-scenario progress, exit code
+GET    /runs/{job_id}/results   results.json once it exists
+DELETE /runs/{job_id}           cancel: stop the container, keep what was scored
+GET    /health                  per-GPU lock state, disk, image tag, runner version
 ```
 
-- **A job is `(scenarios[], options)`, never a preset integer.** It goes in `jobs.params_json`, and
-  the queue never reads either backend's params.
-- **Resumable chunked upload** for ~1.3 GB checkpoints: `HEAD` returns the offset, `PUT` demands a
-  strict offset match, and the atomic `.part` → final rename is the commit point.
-- **Structural validation before the job can take the rig**: `model_dev.yml` parses, `model.type` is
-  known, exactly one checkpoint whose suffix matches the backend, and `modifiers.py` **parsed to AST
-  and never imported** — it is a file an authenticated stranger uploaded.
-- **`GET /options` serves the six axes as data**, so the frontend renders the form from the schema
-  instead of hard-coding it. This is what keeps the picker in step when an axis is recalibrated in
-  Phase 4b.
-- Queue reads stay on his existing `/api/v1/queue`, which now returns both backends.
+- **`POST /runs` is idempotent on `job_id`** — property 1. In flight → return the existing run.
+  Already finished → return its result. Never a second container for one id.
+- **Structural validation before the job can take a card**: the options file parses, the bank
+  manifest is readable, exactly one checkpoint at the given path with a suffix that matches, and
+  `modifiers.py` **parsed to AST and never imported** — it is a file an authenticated stranger
+  uploaded.
+- **Lock held by anything → `409 busy`**, naming which GPU and whether the holder is ours. Do not
+  tear down, do not signal.
+- Every `GET` answer is read off disk, so the service can restart under a running job.
+- Own auth: a bearer token per rig, checked against a hashed value (~20 lines). Not because the
+  network is hostile, but because "the orchestrator" and "someone's laptop" must not be the same
+  caller.
 
-### Step 6 — thin round-trip end to end  ⟵ *gate*
+**Verify alone:** `curl` a two-scenario job; poll it; cancel one; **restart the service mid-run and
+confirm the next `GET` describes the same run.** That last one is the whole design in one test.
+
+### Step 5 — the orchestrator: the lease loop
+
+On the NAS. `QueueClient` from `docs/queue-docs/`, one topic, long-polled.
+
+1. **Before leasing anything, ask every rig what it is running.** That is the recovery path, and it
+   is the same code path as a normal poll — no special case, no reconciliation table.
+2. `consume(topic, wait=...)`, one message at a time.
+3. Read the options; choose a rig and a GPU from the plan; `POST /runs`.
+4. `409 busy` → `nack(retry_after=...)` and move on. **Not a failure.**
+5. Extend the lease on a timer while polling `GET /runs/{job_id}`; stop extending the moment it ends.
+6. Fetch results, save them (Step 6), `ack`.
+7. A run that failed *for a reason that will recur* → `nack(dead=True)`. Everything else retries.
+
+**Verify alone:** `put()` a job by hand and watch it land on a rig, with both rigs' runners up.
+
+### Step 6 — results storage on the NAS
+
+Our own SQLite plus a results tree. Not his schema, and no mapping — the shape is ours.
+
+- **Per-scenario rows, not columns on a job.** A job legitimately ends with 30 of 35 scored, and
+  `skipped` is a real outcome distinct from `failed`, because "never ran" and "ran and failed" lead
+  to different next actions.
+- **Mint the per-scenario identities before dispatch.** This is the one design choice worth stealing
+  outright from him: because the name is decided in advance, attributing a result is reading a path.
+  The version it replaced diffed `out/` before and after, which is how results get attached to the
+  wrong submission.
+- **Ingest is idempotent** (`REPLACE` on the scenario id), because property 1 means the same result
+  can arrive twice.
+- **Archive before you overwrite anything**, so evidence exists before anything can go wrong. The
+  archive root must be **absolute**, must **not** be inside the repo checkout (or a `git add -A`
+  sweeps up a colleague's weights), and must not be inside anything a round wipes.
+
+**Verify alone:** ingest the same `results.json` twice; the row count does not move.
+
+### Step 7 — thin round-trip end to end  ⟵ *gate*
 
 Before the bank is correct, prove the whole path with a stub:
 
 1. The Step 1 image, taking one scenario and writing a `results.json`.
-2. A `backend='metadrive'` row routed by the shared queue, taking the lock, launching, ingesting.
-3. One frontend route showing it in the **same** queue as CARLA jobs.
+2. A real message on the real queue, leased by the real orchestrator.
+3. Dispatched to one real rig, results saved on the NAS, message acked.
 
-Then wire the real bank behind it. A green round-trip against a stub is worth more than a correct
-bank nothing can run — and here it also proves the routing before either side is finished.
+Then wire the real bank behind it. **A green round-trip against a stub is worth more than a correct
+bank nothing can run**, and here it also proves the routing before either side is finished.
 
-**This is the only step blocked on Tyrone** (see below).
+### Step 8 — `GET /options` and the ETA
 
-### Step 7 — the ETA model
-
-Under one queue a bad MetaDrive estimate corrupts the wait shown to every CARLA job behind it, so
-this is load-bearing rather than cosmetic. His model keys on actor count and `run_cost_samples.
-actor_count` is `NOT NULL`; a PG bank has no such axis, so it needs a nullable column or a
-per-backend keying.
-
-Bootstrap from measured per-category wall time — **Phase 4b's calibration runs produce it for
-free** — keyed on `(category, tier)`, then replace it with a **median** of the last N real runs as
-they arrive. Median, not mean: one degraded run is a 5x outlier that poisons a mean for weeks. With
-a ~1 s AV3 forward pass a 35-scenario run is long enough that an absent estimate is a visible gap.
-
-### Step 8 — the frontend section
-
-New React routes under `/metadrive`: the six-axis options form rendered from `GET /options`, the
-scenario picker, and run results. Reuse his `useStream` SSE hook and shadcn components; do not reuse
-his Submit page.
-
----
-
-## What Tyrone must do (four small changes)
-
-Only Step 6 waits on these.
-
-1. **Migration `008_backend.sql`:**
-   ```sql
-   ALTER TABLE jobs ADD COLUMN backend TEXT NOT NULL DEFAULT 'carla'
-       CHECK (backend IN ('carla', 'metadrive'));
-   ALTER TABLE jobs ADD COLUMN params_json TEXT;  -- backend-interpreted, opaque to the queue
-   ```
-   `DEFAULT 'carla'` backfills every existing row with no data migration, and the `jobs_queue` index
-   (`state, priority, queued_at`) is unchanged — routing reorders nothing, so the ordering rule
-   people already trust does not move.
-2. **A runner registry** in `runner/queue.py`: `{"carla": JobRunner(...), "metadrive":
-   MetaDriveJobRunner(...)}`, selected on `job["backend"]` in `run_forever`, `_resume` and `cancel`.
-   The import points at our package — this is the dependency arrow, and it points from him to us.
-3. **ETA becomes a sum** over the jobs actually ahead, not `estimate.seconds * position`
-   (`api/queue.py:197`). A correctness fix for his own queue either way.
-4. **`recover()` sweeps both compose projects.** It is currently scoped to one, so a crashed
-   MetaDrive stack would survive a restart invisibly and then fight the next job for the card.
-
-Whether the loop ends up in his `QueueWorker` or in a new jointly-owned dispatcher is deliberately
-undecided; every step above is identical either way.
+- **The six axes served as data**, so the frontend renders the form from the schema instead of
+  hard-coding it. This is what keeps the picker in step when an axis is recalibrated in Phase 4b.
+- **The ETA.** Bootstrap from measured per-category wall time — Phase 4b's calibration runs produce
+  it for free — keyed on `(category, tier)`, then replace it with a **median** of the last N real
+  runs. Median, not mean: one degraded run is a 5x outlier that poisons a mean for weeks. With a
+  ~1 s AV3 forward pass a 35-scenario run is long enough that an absent estimate is a visible gap.
+  Two rigs means the estimate is per rig, or it is wrong on the slower one.
 
 ---
 
 ## How you test it
 
-**Routing, and that ordering survives it** — the point of the whole design, so prove the
-interleaving rather than assume it:
+Four failures that are all **silent**, which is why each gets an explicit test rather than a hope.
+
+**A double-lease must not double-run** — property 1, and the one that costs a GPU:
 ```bash
-# queue CARLA, MetaDrive, CARLA in that order; expect them to run in that order
-curl -s localhost:8080/api/v1/queue | jq '.jobs[] | {position, backend, state}'
+# lease with a short visibility_timeout and then do nothing; let it expire mid-run
+python3 -c "from client import QueueClient; QueueClient(NAS).lease('metadrive', visibility_timeout=5)"
+curl -s rig-a:9000/runs | jq 'length'      # expect 1, still 1 after redelivery
 ```
 
-**The lock is still the authority** — this failure is silent, so prove it against something the
-queue does not know about:
+**A busy rig must not fail a job** — hold the card from outside both queues:
 ```bash
-bash wing-sim/deployment/with_rig_lock.sh sleep 60 &   # not a queued job
-curl -s localhost:8080/api/v1/queue | jq '.rig'        # expect held, foreign
-stat -c '%i %n' ~/simulation/.wing-sim.gpu.lock        # same inode from both sides
+bash wing-sim/deployment/with_rig_lock.sh sleep 120 &      # on rig A, not a queued job
+curl -s nas:8080/topics/metadrive/stats | jq '.dead'       # expect 0 throughout
+curl -s rig-b:9000/runs | jq '.[].job_id'                  # it went to the other rig
 ```
 
-**The data roots do not collide** — run a CARLA job to completion while a MetaDrive submission sits
-staged; the staged tree must survive his `wipe_run_owned`:
-```bash
-ls ~/simulation-md/staging/<job_id>/
-```
+**The two orchestrators must not interfere** — queue a CARLA job and a MetaDrive job together; each
+is leased by its own orchestrator only, and the rig lock serialises them on a shared card.
 
-**Restart recovery** — kill the orchestrator mid-MetaDrive-run, restart it, and confirm the run is
-adopted rather than orphaned, and that a crashed stack is swept.
+**Restart recovery, on both halves** — kill the orchestrator mid-run and restart it; separately kill
+a rig runner mid-run and restart it. Both must adopt the run rather than orphan it, and no second
+container may appear.
 
-**Parity with the CLI** — `POST` a two-scenario job and assert the stored result is identical to the
-`results.json` the CLI produces for the same inputs. Both are callers of `run_bank()`; if they
+**Parity with the CLI** — `put()` a two-scenario job and assert the stored result is identical to
+the `results.json` the CLI produces for the same inputs. Both are callers of `run_bank()`; if they
 disagree, one of them is configuring the env differently.
 
 ---
@@ -1459,12 +1726,13 @@ colleague moving between the two should not have to relearn anything.
   - `rig/compose.py::child_environment` — why a child never inherits the environment wholesale.
   - `rig/progress.py` — progress as derived state with no persistence (keep the property, drop the
     prose regexes).
-  - `db/migrations/001_initial.sql` — the schema this plan shares a `jobs` table with, and the
-    comment stating the GPU lease row is observability, not authority.
-  - `db/jobs.py` — the FIFO ordering rule and why it is not cleverer than that.
+  - `db/migrations/001_initial.sql` — the comment stating the GPU lease row is observability,
+    not authority. We share no table with him now, but the reasoning still applies to ours.
+  - `db/jobs.py` — the FIFO ordering rule, and `claim_next` (`:104-106`): a bare `SELECT ...
+    LIMIT 1` with no transaction and no lease. Read it to see what one in-process loop was
+    carrying, and why a NAS queue with two rigs needs `wfqueue`'s lease instead.
   - `db/job_presets.py`, `db/migrations/005_job_presets.sql` — the model for our `job_scenarios`
     table: identity minted before launch, `skipped` distinct from `failed`.
-  - `api/queue.py:197` — the ETA bug that one queue forces us to fix.
 - `converter-scenarionet-stage2-redesign/tools/signal_control.py` — the phase model Phase 8 ports,
   including the timestep and per-group-offset traps already paid for there.
 - `converter-scenarionet-stage2-redesign/docker/Dockerfile` — the base for Phase 5.

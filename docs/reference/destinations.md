@@ -74,6 +74,12 @@ One letter per `Curve` block on the route, in order. The two blocks of `CC` draw
 direction independently (`pg_space.py:284-289`), so the pair -- not the net angle -- is
 what says whether the seeds cover the manoeuvre.
 
+**A letter describes an arc, not a whole block.** A MetaDrive `Curve` block is an arc
+*and* a trailing straight of drawn length: `create_bend_straight` returns both and
+`pgblock/curve.py` builds them as its part 1 and part 2. So a `CC` road is straight,
+arc, straight, arc, straight -- the straights between and after the bends are part of
+the same two blocks, not extra ones.
+
 | category | seed 0 | seed 1 | seed 2 | seed 3 | seed 4 | combinations |
 |---|---|---|---|---|---|---|
 | `curve` | `LL` | `LR` | `RR` | `RL` | `LL` | 4/4 |
@@ -81,6 +87,13 @@ what says whether the seeds cover the manoeuvre.
 `L` is a left-turning block, `R` a right-turning one, measured from the built geometry
 rather than from `Parameter.dir` -- the map is mirrored (`handedness.py`), and a
 parameter reading would label every turn backwards.
+
+Read the letters, not the picture. The ego always spawns heading **due east**, so it
+drives rightward in every figure -- but where that spawn lands in the frame moves with
+the seed, and `curve` seeds 2 and 3 start at the *top* and bend downward while 0, 1 and
+4 start at the bottom and bend up. A map read from the wrong end reverses every turn in
+it. `scenariobank inspect` and the bank's thumbnails draw the spawn arrow for exactly
+this reason.
 
 ## Distinct roads per block sequence
 
@@ -96,7 +109,30 @@ carries `map_config.seed` and would make every road look unique.
 | `X` | 1/5  **<** | `fcc8a2d982` | `fcc8a2d982` | `fcc8a2d982` | `fcc8a2d982` | `fcc8a2d982` |
 | `rS` | 5/5 | `2df423ebfd` | `28cc31a83f` | `46be5471c7` | `384bce0f1f` | `fd55db7b64` |
 
-**18 distinct roads across the 35 scenarios.**
+**18 distinct roads across the 35 scenarios --
+and that number flatters the bank.** It counts roads that are not *identical*. Two
+seeds can draw roads a few percent apart, near enough that their thumbnails are the
+same picture, and a digest calls them two roads. The next table is the honest one.
+
+### How alike are the closest two?
+
+Measured by `fingerprint.shape_gap`: the worst relative difference in total lane length
+and in map extent. Coarse on purpose -- it catches near-twins, which is what the digest
+above cannot do.
+
+| block_seq | closest pair | gap | |
+|---|---|---|---|
+| `CC` | seeds 0 and 4 | 7% | **near-duplicate** |
+| `O` | seeds 0 and 4 | 0% | **near-duplicate** |
+| `T` | seeds 0 and 1 | 0% | **near-duplicate** |
+| `X` | seeds 0 and 1 | 0% | **near-duplicate** |
+| `rS` | seeds 0 and 4 | 2% | **near-duplicate** |
+
+A gap under 10% means those two seeds are the same drive
+however different their hashes are. `scenariobank seeds --category <name>` ranks
+other seeds by how much they would actually add, and `generate --seeds` and
+`replace` are how you act on it. The seeds are a choice, not a constant.
+
 `X` has no seeded degree of freedom left: `StdInterSection` fixes its radius and the
 map pins `lane_num=3` and `lane_width=3.5`. Accepted deliberately -- the five seeds
 of an intersection category vary the scene, not the road. Phase 2 must therefore not

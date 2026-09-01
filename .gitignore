@@ -4,3 +4,11 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 dist/
+
+# Banks are disposable, per-batch artifacts -- regenerate rather than commit. See README,
+# "What gets generated, and where".
+banks/
+
+# The studio's job logs and scratch figures (Phase 2c). Derived from runs that already
+# happened; a job is re-runnable, so none of this is worth keeping.
+.studio/

@@ -1,0 +1,266 @@
+{
+  "service": "wfqueue",
+  "version": "1.0",
+  "base_url": "http://localhost:8080",
+  "client": {
+    "language": "python",
+    "url": "http://localhost:8080/source/client.py",
+    "download": "curl -O http://localhost:8080/source/client.py",
+    "requirements": "Python 3.10+. One file, standard library only, no install step.",
+    "usage": "from client import QueueClient\n\nq = QueueClient(\"http://localhost:8080\")\nq.put(\"my-topic\", {\"any\": \"json\"})          # produce\nfor msg in q.consume(\"my-topic\"):            # consume; polls once a minute\n    with msg:                                # acks on success, nacks on error\n        handle(msg.payload)",
+    "note": "This is the recommended way to talk to this queue. It handles leasing, ack/nack, retries and polling for you. Download it and import it -- do not reimplement the HTTP calls unless you must."
+  },
+  "overview": "A multi-topic job queue backed by SQLite. Producers POST messages to a topic; consumers LEASE messages (which hides them from other consumers for a visibility timeout), do the work, then ACK on success or NACK on failure. A NACKed message is retried with exponential backoff until max_attempts is reached, after which it moves to the 'dead' state where it can be inspected and requeued. Nothing is ever silently lost: if a consumer crashes without acking, its lease expires and the message returns to 'ready' automatically.",
+  "auth": "None. The server was started without a token.",
+  "concepts": {
+    "topic": "A named queue. Created implicitly on first enqueue. Name must match [A-Za-z0-9][A-Za-z0-9._-]{0,127}.",
+    "message": "A JSON payload plus delivery metadata. Identified by an integer id.",
+    "state": {
+      "ready": "Waiting to be leased. Only visible once available_at <= now.",
+      "leased": "Claimed by a consumer; hidden until lease_expires_at.",
+      "done": "Acked successfully. Retained until swept.",
+      "dead": "Failed max_attempts times, or explicitly killed. Inspect and requeue."
+    },
+    "lease_id": "Opaque token returned with a leased message. Pass it to ack/nack/extend to prove you still hold the lease; a stale lease_id is rejected with 409.",
+    "priority": "Higher integers are leased first. Ties break FIFO by id. Default 0.",
+    "delay": "Seconds to hold a message invisible after enqueue (scheduled delivery).",
+    "dedupe_key": "Optional per-topic unique key. Re-enqueueing the same key returns the existing message with duplicate=true instead of creating another."
+  },
+  "workflows": {
+    "produce": [
+      "POST /topics/{topic}/messages with {\"payload\": <any JSON>}",
+      "Optional: priority, delay, max_attempts, dedupe_key",
+      "Batch: {\"messages\": [{...}, {...}]}"
+    ],
+    "consume": [
+      "POST /topics/{topic}/lease with {\"count\": 1, \"visibility_timeout\": 30, \"wait\": 20}",
+      "'wait' long-polls up to N seconds instead of returning an empty list immediately.",
+      "For each message returned: do the work.",
+      "On success: POST /messages/{id}/ack with {\"lease_id\": \"...\"}",
+      "On failure: POST /messages/{id}/nack with {\"lease_id\": \"...\", \"error\": \"...\"}",
+      "If the work runs long: POST /messages/{id}/extend before the lease expires."
+    ],
+    "inspect": [
+      "GET /topics -- every topic with per-state counts",
+      "GET /topics/{topic}/stats -- depth, backlog age, next scheduled delivery",
+      "GET /topics/{topic}/messages?state=ready&limit=50 -- non-destructive peek"
+    ],
+    "recover": [
+      "GET /topics/{topic}/messages?state=dead -- see what failed and why (last_error)",
+      "POST /topics/{topic}/requeue with {\"state\": \"dead\"} -- send them back to ready"
+    ]
+  },
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/",
+      "summary": "This document. Add ?format=text for a Markdown rendering."
+    },
+    {
+      "method": "GET",
+      "path": "/health",
+      "summary": "Liveness probe and server stats."
+    },
+    {
+      "method": "GET",
+      "path": "/source/client.py",
+      "summary": "The Python client for this server, as source. One self-contained stdlib-only file: save it and import it, nothing to install.",
+      "example": "curl -O http://localhost:8080/source/client.py"
+    },
+    {
+      "method": "GET",
+      "path": "/topics",
+      "summary": "List all topics with per-state message counts."
+    },
+    {
+      "method": "POST",
+      "path": "/topics",
+      "summary": "Create a topic explicitly.",
+      "body": {
+        "name": "string (required)",
+        "config": "object (optional, free-form)"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/topics/{topic}/stats",
+      "summary": "Counts, visible depth, oldest backlog age, next scheduled delivery."
+    },
+    {
+      "method": "DELETE",
+      "path": "/topics/{topic}",
+      "summary": "Delete a topic and its messages.",
+      "query": {
+        "purge": "true to delete even when messages are pending (else 409)"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/topics/{topic}/messages",
+      "summary": "Enqueue one message, or a batch via {\"messages\": [...]}.",
+      "body": {
+        "payload": "any JSON value (required)",
+        "priority": "int, higher first (default 0)",
+        "delay": "float seconds before it becomes visible (default 0)",
+        "max_attempts": "int, deliveries before dead-lettering (default 5)",
+        "dedupe_key": "string, unique per topic (optional)"
+      },
+      "example": {
+        "payload": {
+          "url": "https://example.com"
+        },
+        "priority": 5
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/topics/{topic}/messages",
+      "summary": "List messages without consuming them.",
+      "query": {
+        "state": "ready | leased | done | dead",
+        "limit": "1-1000 (default 50)",
+        "offset": "int (default 0)",
+        "order": "asc | desc by id (default asc)",
+        "payload": "false to omit payloads"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/topics/{topic}/lease",
+      "summary": "Atomically claim ready messages. This is how you receive work.",
+      "body": {
+        "count": "int 1-1000 (default 1)",
+        "visibility_timeout": "float seconds to hold the lease (default 30)",
+        "consumer": "string label recorded on the message (optional)",
+        "wait": "float seconds to long-poll for work (default 0)"
+      },
+      "returns": "{\"messages\": [{id, payload, lease_id, attempts, ...}]}"
+    },
+    {
+      "method": "POST",
+      "path": "/topics/{topic}/purge",
+      "summary": "Bulk delete messages in a topic.",
+      "body": {
+        "state": "optional state filter",
+        "older_than": "optional age in seconds"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/topics/{topic}/requeue",
+      "summary": "Return messages (default the dead-letter pile) to ready.",
+      "body": {
+        "state": "state to requeue from (default 'dead')",
+        "limit": "int"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/messages/{id}",
+      "summary": "Fetch a single message by id."
+    },
+    {
+      "method": "DELETE",
+      "path": "/messages/{id}",
+      "summary": "Delete a message outright, in any state."
+    },
+    {
+      "method": "POST",
+      "path": "/messages/{id}/ack",
+      "summary": "Mark work complete. Requires the lease_id.",
+      "body": {
+        "lease_id": "string from the lease response"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/messages/{id}/nack",
+      "summary": "Report failure. Retries with backoff, or dead-letters when exhausted.",
+      "body": {
+        "lease_id": "string",
+        "error": "string recorded as last_error (optional)",
+        "retry_after": "float seconds, overriding the backoff (optional)",
+        "dead": "true to dead-letter immediately without retrying"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/messages/{id}/extend",
+      "summary": "Extend a lease you still hold, for long-running work.",
+      "body": {
+        "lease_id": "string",
+        "visibility_timeout": "float seconds"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/admin",
+      "summary": "HTML console: the job list, and access keys for named servers. Password-protected (HTTP Basic); for humans, not for code.",
+      "query": {
+        "topic": "restrict to one topic",
+        "state": "ready | leased | done | dead",
+        "limit": "rows to show (default 100, max 1000)"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/admin/delete",
+      "summary": "Delete one job from the console (form post, admin only).",
+      "body": {
+        "id": "message id"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/admin/compact",
+      "summary": "Rebuild the database file, returning space freed by swept jobs to the disk. Locks the database briefly (admin only)."
+    },
+    {
+      "method": "POST",
+      "path": "/admin/keys",
+      "summary": "Generate an access key for a named server (form post, admin only). The key is shown once and stored only as a hash.",
+      "body": {
+        "name": "server name"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/admin/keys/revoke",
+      "summary": "Revoke a key, or forget an already-revoked one (admin only).",
+      "body": {
+        "name": "key name",
+        "forget": "1 to delete the record entirely"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/admin/list",
+      "summary": "Alias for /admin, kept for existing links.",
+      "query": {
+        "topic": "restrict to one topic",
+        "state": "ready | leased | done | dead",
+        "limit": "rows to show (default 100, max 1000)"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/admin/reap",
+      "summary": "Force an expired-lease sweep (also runs automatically)."
+    }
+  ],
+  "errors": {
+    "400": "Malformed request: bad JSON, bad topic name, unknown state.",
+    "401": "Missing or wrong bearer token, or wrong /admin password.",
+    "403": "Cross-origin form post to an /admin endpoint.",
+    "404": "Unknown topic or message id.",
+    "409": "Lease conflict: wrong or expired lease_id, message not leased, or topic not empty.",
+    "413": "Request body exceeded the configured limit."
+  },
+  "notes": [
+    "All request and response bodies are JSON; send Content-Type: application/json.",
+    "Errors return {\"error\": \"...\", \"status\": <int>}.",
+    "Timestamps are float Unix epoch seconds.",
+    "A ready-made Python client is downloadable from this server -- see the 'client' key above. Prefer it over hand-rolling HTTP calls.",
+    "Leasing is at-least-once: make handlers idempotent, or use dedupe_key upstream."
+  ]
+}

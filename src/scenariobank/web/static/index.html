@@ -1,0 +1,143 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>scenariobank studio</title>
+
+<style>
+:root {
+  color-scheme: light dark;
+  --ground:  #edf0f5;
+  --surface: #fbfcfd;
+  --inset:   #f2f5f9;
+  --ink:     #0f1621;
+  --ink-2:   #4c5768;
+  --muted:   #78829a;
+  --hair:    #dbe1ea;
+  --accent:  #2c62d6;
+  --good:    #1b7f4c;
+  --bad:     #b3261e;
+  --mono: ui-monospace, "SF Mono", "IBM Plex Mono", Menlo, Consolas, monospace;
+  --sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground:  #12161c;
+    --surface: #181d25;
+    --inset:   #1e242e;
+    --ink:     #e6eaf1;
+    --ink-2:   #aeb8c8;
+    --muted:   #7d8798;
+    --hair:    #2a323e;
+    --accent:  #7aa2f7;
+    --good:    #5fd39b;
+    --bad:     #f2827b;
+  }
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font: 14px/1.55 var(--sans);
+}
+
+header.top {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; align-items: baseline; gap: 1.25rem; flex-wrap: wrap;
+  padding: 0.85rem 1.5rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--hair);
+}
+header.top h1 {
+  margin: 0; font-size: 15px; font-weight: 650; letter-spacing: -0.01em;
+}
+header.top h1 span { color: var(--muted); font-weight: 500; }
+
+#sim {
+  display: flex; gap: 1.1rem; flex-wrap: wrap;
+  margin-left: auto;
+  font-family: var(--mono); font-size: 12px; color: var(--ink-2);
+}
+#sim .k { color: var(--muted); }
+#sim .bad { color: var(--bad); }
+
+main { padding: 1.5rem; max-width: 1400px; margin: 0 auto; }
+
+.empty {
+  padding: 2.5rem;
+  background: var(--surface);
+  border: 1px solid var(--hair);
+  border-radius: 10px;
+  color: var(--ink-2);
+}
+.empty h2 { margin: 0 0 0.6rem; font-size: 15px; color: var(--ink); }
+.empty code {
+  font-family: var(--mono); font-size: 12.5px;
+  background: var(--inset); padding: 0.1rem 0.35rem; border-radius: 4px;
+}
+.empty ol { margin: 0.9rem 0 0; padding-left: 1.3rem; }
+.empty li { margin: 0.25rem 0; }
+.empty li.done { color: var(--muted); text-decoration: line-through; }
+</style>
+
+<header class="top">
+  <h1>scenariobank <span>studio</span></h1>
+  <div id="sim"><span class="k">simulator…</span></div>
+</header>
+
+<main>
+  <div class="empty">
+    <h2>Nothing here yet — this is Step 1.</h2>
+    <p>
+      The shell runs and knows which simulator its subprocesses will be. Everything else arrives one
+      command at a time, so each step can be tested on its own.
+    </p>
+    <ol>
+      <li class="done">the shell, and <code>doctor</code> in the header</li>
+      <li><code>categories</code> and <code>commands</code> — the reference tab</li>
+      <li><code>generate</code>’s output — the thumbnail grid</li>
+      <li><code>inspect</code> — and the job engine behind it</li>
+      <li><code>seeds</code> — ranked alternatives</li>
+      <li><code>replace</code> — swap one seed in place</li>
+      <li><code>generate</code> — build a bank from here</li>
+      <li><code>sockets</code> and <code>destinations</code></li>
+    </ol>
+  </div>
+</main>
+
+<script>
+// One helper, because every later step talks to the same API the same way.
+async function api(path, options) {
+  const response = await fetch(path, options);
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error((body && (body.detail || body.error)) || `${response.status} ${path}`);
+  }
+  return body;
+}
+
+function field(key, value, bad) {
+  const span = document.createElement("span");
+  span.innerHTML = `<span class="k">${key}</span> `;
+  const held = document.createElement("b");
+  held.textContent = value ?? "—";
+  held.style.fontWeight = "500";
+  if (bad) held.className = "bad";
+  span.appendChild(held);
+  return span;
+}
+
+api("/api/doctor").then((report) => {
+  const sim = document.getElementById("sim");
+  sim.replaceChildren(
+    field("metadrive", report.edition || "not installed", !report.edition),
+    field("commit", report.commit ? report.commit.slice(0, 8) : null, !report.commit),
+    field("assets", report.asset_version),
+    field("python", report.python_version),
+  );
+}).catch((error) => {
+  document.getElementById("sim").innerHTML =
+    `<span class="bad">doctor failed: ${error.message}</span>`;
+});
+</script>

@@ -3,8 +3,16 @@
 This is a discovery tool that became a generation-time dependency. The draft classified turns
 after the fact -- reset, measure the angle between spawn heading and final-lane heading, keep the
 seeds that came out above +30 degrees. That is gone. Here the angle is measured for every socket
-*before* anything drives, the category's rule picks one, and the chosen node is written into
-`vehicle_config["destination"]` so `auto_assign_task` never runs.
+*before* anything drives, the category's rule picks one, and the chosen node is pinned so that
+`auto_assign_task` never chooses the route.
+
+Pinned two ways, for the same effect. `measure_route` and `figures.draw_route` set
+`vehicle_config["destination"]` at construction, which is the honest thing for a command that
+builds one env to answer one question. `bank.generate` instead resets first and calls
+`navigation.set_route` afterwards, because it resets once per seed and shares that reset across
+every category on the same road -- and `auto_assign_task` draws its throwaway destination from a
+*fresh* generator (`get_np_random(random_seed)`), not from a manager's stream, so letting it run
+and overriding it afterwards perturbs nothing.
 """
 
 from __future__ import annotations
@@ -64,38 +72,53 @@ def read_sockets(block_seq: str, seed: int) -> list[SocketReading]:
     """
     validate_block_seq(block_seq)
 
-    import numpy as np
     from metadrive.envs.metadrive_env import MetaDriveEnv
-    from metadrive.utils.math import wrap_to_pi
 
     from scenariobank.config import base_config
 
     env = MetaDriveEnv(base_config(map=block_seq, start_seed=seed, num_scenarios=1))
     try:
         env.reset(seed=seed)
-        road_map = env.engine.current_map
-        spawn_heading = env.agent.heading_theta
-        spawn_node = env.agent.navigation.current_road.start_node
-
-        readings = []
-        for socket in road_map.blocks[-1].get_socket_list():
-            road = socket.positive_road
-            lanes = road.get_lanes(road_map.road_network)
-            lane = lanes[-1]
-            angle = np.degrees(wrap_to_pi(lane.heading_theta_at(lane.length) - spawn_heading))
-            readings.append(
-                SocketReading(
-                    index=str(socket.index),
-                    node=road.end_node,
-                    start_node=road.start_node,
-                    lane_count=len(lanes),
-                    angle_deg=round(float(angle), 2),
-                    is_entry=socket.is_socket_node(spawn_node),
-                )
-            )
-        return readings
+        return read_sockets_from_env(env)
     finally:
         env.close()
+
+
+def read_sockets_from_env(env) -> list[SocketReading]:
+    """Measure the exits of the map an env has **already** been reset into.
+
+    Split out of `read_sockets` for `bank.generate`, which resets once per scenario and cannot
+    afford a second env per category. The measurement is identical; only the ownership of the
+    env differs.
+
+    Safe to call after `navigation.set_route` has been pointed somewhere else: `set_route`
+    rebuilds `current_road` from `checkpoints[0]`, which is always the spawn node, so `is_entry`
+    reads the same before and after.
+    """
+    import numpy as np
+    from metadrive.utils.math import wrap_to_pi
+
+    road_map = env.engine.current_map
+    spawn_heading = env.agent.heading_theta
+    spawn_node = env.agent.navigation.current_road.start_node
+
+    readings = []
+    for socket in road_map.blocks[-1].get_socket_list():
+        road = socket.positive_road
+        lanes = road.get_lanes(road_map.road_network)
+        lane = lanes[-1]
+        angle = np.degrees(wrap_to_pi(lane.heading_theta_at(lane.length) - spawn_heading))
+        readings.append(
+            SocketReading(
+                index=str(socket.index),
+                node=road.end_node,
+                start_node=road.start_node,
+                lane_count=len(lanes),
+                angle_deg=round(float(angle), 2),
+                is_entry=socket.is_socket_node(spawn_node),
+            )
+        )
+    return readings
 
 
 def select_exit(readings: list[SocketReading], rule: ExitRule) -> SocketReading:
@@ -275,6 +298,7 @@ __all__ = [
     "SocketReading",
     "measure_route",
     "read_sockets",
+    "read_sockets_from_env",
     "route_rotation",
     "resolve_destination",
     "route_length",
