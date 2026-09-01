@@ -89,10 +89,10 @@ def test_a_command_without_examples_is_an_error_not_a_gap():
     from scenariobank.cli import app
 
     registered = typer.main.get_command(app).commands
-    # Render a real command under a name EXAMPLES does not know: that is what adding a command to
+    # Gather a real command under a name EXAMPLES does not know: that is what adding a command to
     # cli.py and forgetting its examples looks like, and it must stop the page being written.
     with pytest.raises(ValueError, match="no examples"):
-        docs._command_section("not_a_command", registered["doctor"], {})
+        docs._command_entry("not_a_command", registered["doctor"], {})
     assert sorted(EXAMPLES) == sorted(registered)
 
 

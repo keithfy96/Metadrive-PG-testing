@@ -44,66 +44,127 @@ body {
 
 header.top {
   position: sticky; top: 0; z-index: 10;
-  display: flex; align-items: baseline; gap: 1.25rem; flex-wrap: wrap;
-  padding: 0.85rem 1.5rem;
+  display: flex; align-items: center; gap: 1.25rem; flex-wrap: wrap;
+  padding: 0.7rem 1.5rem 0;
   background: var(--surface);
   border-bottom: 1px solid var(--hair);
 }
 header.top h1 {
-  margin: 0; font-size: 15px; font-weight: 650; letter-spacing: -0.01em;
+  margin: 0 0 0.6rem; font-size: 15px; font-weight: 650; letter-spacing: -0.01em;
 }
 header.top h1 span { color: var(--muted); font-weight: 500; }
 
+nav.tabs { display: flex; gap: 0.25rem; margin-bottom: -1px; }
+nav.tabs button {
+  font: inherit; font-weight: 550;
+  color: var(--muted); background: none;
+  border: 1px solid transparent; border-bottom: none;
+  border-radius: 7px 7px 0 0;
+  padding: 0.4rem 0.9rem 0.5rem; cursor: pointer;
+}
+nav.tabs button:hover { color: var(--ink); }
+nav.tabs button[aria-selected="true"] {
+  color: var(--ink); background: var(--ground);
+  border-color: var(--hair);
+}
+
 #sim {
   display: flex; gap: 1.1rem; flex-wrap: wrap;
-  margin-left: auto;
+  margin: 0 0 0.6rem auto;
   font-family: var(--mono); font-size: 12px; color: var(--ink-2);
 }
 #sim .k { color: var(--muted); }
 #sim .bad { color: var(--bad); }
 
-main { padding: 1.5rem; max-width: 1400px; margin: 0 auto; }
+main { padding: 1.5rem; max-width: 1180px; margin: 0 auto; }
 
-.empty {
-  padding: 2.5rem;
+.card {
+  padding: 1.4rem 1.6rem;
+  margin-bottom: 1.1rem;
   background: var(--surface);
   border: 1px solid var(--hair);
   border-radius: 10px;
-  color: var(--ink-2);
 }
-.empty h2 { margin: 0 0 0.6rem; font-size: 15px; color: var(--ink); }
-.empty code {
-  font-family: var(--mono); font-size: 12.5px;
-  background: var(--inset); padding: 0.1rem 0.35rem; border-radius: 4px;
+.card > :first-child { margin-top: 0; }
+.card > :last-child { margin-bottom: 0; }
+
+h2 { font-size: 15px; margin: 0 0 0.35rem; letter-spacing: -0.01em; }
+h3 {
+  font-size: 14px; margin: 1.6rem 0 0.4rem;
+  font-family: var(--mono); font-weight: 600; color: var(--accent);
 }
-.empty ol { margin: 0.9rem 0 0; padding-left: 1.3rem; }
+h3:first-child { margin-top: 0; }
+.blurb { color: var(--ink-2); margin: 0 0 1rem; }
+p { margin: 0.55rem 0; }
+
+code {
+  font-family: var(--mono); font-size: 0.88em;
+  background: var(--inset); padding: 0.08rem 0.32rem; border-radius: 4px;
+}
+pre {
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.6;
+  background: var(--inset); color: var(--ink-2);
+  padding: 0.8rem 1rem; border-radius: 7px;
+  overflow-x: auto; margin: 0.7rem 0 0;
+}
+pre code { background: none; padding: 0; font-size: inherit; }
+
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td {
+  text-align: left; vertical-align: top;
+  padding: 0.42rem 0.7rem 0.42rem 0;
+  border-bottom: 1px solid var(--hair);
+}
+th { color: var(--muted); font-weight: 550; white-space: nowrap; }
+tbody tr:last-child td { border-bottom: none; }
+td.nowrap, th.nowrap { white-space: nowrap; }
+td.num { text-align: right; font-family: var(--mono); }
+
+a { color: var(--accent); }
+a.jump { text-decoration: none; font-family: var(--mono); }
+a.jump:hover { text-decoration: underline; }
+
+.empty ol { margin: 0.9rem 0 0; padding-left: 1.3rem; color: var(--ink-2); }
 .empty li { margin: 0.25rem 0; }
 .empty li.done { color: var(--muted); text-decoration: line-through; }
+.loading, .failed { color: var(--muted); }
+.failed { color: var(--bad); }
 </style>
 
 <header class="top">
   <h1>scenariobank <span>studio</span></h1>
+  <nav class="tabs" id="tabs">
+    <button data-view="bank" aria-selected="true">Bank</button>
+    <button data-view="reference" aria-selected="false">Reference</button>
+  </nav>
   <div id="sim"><span class="k">simulator…</span></div>
 </header>
 
 <main>
-  <div class="empty">
-    <h2>Nothing here yet — this is Step 1.</h2>
-    <p>
-      The shell runs and knows which simulator its subprocesses will be. Everything else arrives one
-      command at a time, so each step can be tested on its own.
-    </p>
-    <ol>
-      <li class="done">the shell, and <code>doctor</code> in the header</li>
-      <li><code>categories</code> and <code>commands</code> — the reference tab</li>
-      <li><code>generate</code>’s output — the thumbnail grid</li>
-      <li><code>inspect</code> — and the job engine behind it</li>
-      <li><code>seeds</code> — ranked alternatives</li>
-      <li><code>replace</code> — swap one seed in place</li>
-      <li><code>generate</code> — build a bank from here</li>
-      <li><code>sockets</code> and <code>destinations</code></li>
-    </ol>
-  </div>
+  <section id="view-bank">
+    <div class="card empty">
+      <h2>Nothing here yet — the bank browser is Step 3.</h2>
+      <p>
+        Everything arrives one command at a time, so each step can be tested on its own.
+        The <b>Reference</b> tab is live.
+      </p>
+      <ol>
+        <li class="done">the shell, and <code>doctor</code> in the header</li>
+        <li class="done"><code>categories</code> and <code>commands</code> — the reference tab</li>
+        <li><code>generate</code>’s output — the thumbnail grid</li>
+        <li><code>inspect</code> — and the job engine behind it</li>
+        <li><code>seeds</code> — ranked alternatives</li>
+        <li><code>replace</code> — swap one seed in place</li>
+        <li><code>generate</code> — build a bank from here</li>
+        <li><code>sockets</code> and <code>destinations</code></li>
+      </ol>
+    </div>
+  </section>
+
+  <section id="view-reference" hidden>
+    <div class="card loading" id="reference">loading the reference…</div>
+  </section>
 </main>
 
 <script>
@@ -117,6 +178,132 @@ async function api(path, options) {
   return body;
 }
 
+// ---------------------------------------------------------------- tiny helpers
+
+function escape(text) {
+  return String(text).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+}
+
+// Inline markdown only: backticks, bold, and links. NOT a markdown parser -- the reference
+// arrives as structured data and only the leaf strings carry any markup at all.
+function inline(text) {
+  return escape(text ?? "")
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/\[([^\]]+)\]\(#([\w.-]+)\)/g, '<a class="jump" href="#cmd-$2">$1</a>');
+}
+
+function el(tag, attrs, children) {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(attrs || {})) {
+    if (key === "html") node.innerHTML = value;
+    else if (key === "text") node.textContent = value;
+    else if (value !== null && value !== undefined) node.setAttribute(key, value);
+  }
+  for (const child of children || []) node.appendChild(child);
+  return node;
+}
+
+function table(headers, rows) {
+  const head = el("tr", {}, headers.map((h) =>
+    el("th", { class: h.nowrap ? "nowrap" : null, text: h.label ?? h })));
+  const body = rows.map((cells) => el("tr", {}, cells.map((cell) =>
+    el("td", { class: cell.class || null, html: inline(cell.html ?? cell) }))));
+  return el("div", { class: "scroll" }, [
+    el("table", {}, [el("thead", {}, [head]), el("tbody", {}, body)]),
+  ]);
+}
+
+function card(children) { return el("div", { class: "card" }, children); }
+
+// ------------------------------------------------------------------- the tabs
+
+const tabs = document.getElementById("tabs");
+tabs.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-view]");
+  if (!button) return;
+  for (const other of tabs.querySelectorAll("button")) {
+    const chosen = other === button;
+    other.setAttribute("aria-selected", String(chosen));
+    document.getElementById(`view-${other.dataset.view}`).hidden = !chosen;
+  }
+});
+
+// -------------------------------------------------------------- the reference
+
+function optionsTable(rows) {
+  if (!rows.length) return el("p", { class: "blurb", text: "Takes no options." });
+  return table(
+    [{ label: "flag", nowrap: true }, "", "repeats", "meaning"],
+    rows.map((row) => [
+      { html: row.flag, class: "nowrap" }, row.need, row.repeats, row.meaning,
+    ]),
+  );
+}
+
+function commandSection(entry) {
+  const parts = [el("h3", { id: `cmd-${entry.name}`, text: entry.name })];
+  for (const paragraph of (entry.help || "").split("\n\n")) {
+    if (paragraph.trim()) parts.push(el("p", { html: inline(paragraph.trim()) }));
+  }
+  parts.push(optionsTable(entry.options));
+  parts.push(el("pre", {}, [el("code", { text: entry.examples.join("\n") })]));
+  return parts;
+}
+
+function renderReference(data, categories) {
+  const cards = [];
+
+  cards.push(card([
+    el("h2", { text: "How do I…" }),
+    table(["I want to", ""], data.index.map((row) => [
+      row.want, { html: `[\`${row.command}\`](#${row.command})`, class: "nowrap" },
+    ])),
+  ]));
+
+  cards.push(card([
+    el("h2", { text: "The seven categories" }),
+    el("p", { class: "blurb", html: inline(
+      "What `--category` selects, beyond the name. `block_seq` is the road, the rule fixes which " +
+      "exit the route drives to, and `max_steps` is the cap on an episode.") }),
+    table(
+      ["name", "road", "rule", { label: "max_steps", nowrap: true }, ""],
+      categories.map((row) => [
+        { html: `\`${row.name}\``, class: "nowrap" },
+        { html: `\`${row.block_seq}\``, class: "nowrap" },
+        { html: `\`${row.exit_rule}\``, class: "nowrap" },
+        { html: String(row.max_steps), class: "num" },
+        row.summary,
+      ]),
+    ),
+    el("p", { class: "blurb", html: inline("The exit rules, which `--rule` also takes:") }),
+    table(["rule", "picks"], data.rules.map((row) => [
+      { html: `\`${row.rule}\``, class: "nowrap" }, row.picks,
+    ])),
+  ]));
+
+  cards.push(card([
+    el("h2", { text: "Global options" }),
+    el("p", { class: "blurb", html: inline(
+      "Given before the command: `uv run scenariobank -v doctor`.") }),
+    optionsTable(data.global_options),
+  ]));
+
+  for (const group of data.groups) {
+    const parts = [
+      el("h2", { text: group.title }),
+      el("p", { class: "blurb", html: inline(group.blurb) }),
+    ];
+    for (const entry of group.commands) parts.push(...commandSection(entry));
+    cards.push(card(parts));
+  }
+
+  const target = document.getElementById("reference");
+  target.replaceWith(...cards);
+}
+
+// ------------------------------------------------------------------ start-up
+
 function field(key, value, bad) {
   const span = document.createElement("span");
   span.innerHTML = `<span class="k">${key}</span> `;
@@ -129,8 +316,7 @@ function field(key, value, bad) {
 }
 
 api("/api/doctor").then((report) => {
-  const sim = document.getElementById("sim");
-  sim.replaceChildren(
+  document.getElementById("sim").replaceChildren(
     field("metadrive", report.edition || "not installed", !report.edition),
     field("commit", report.commit ? report.commit.slice(0, 8) : null, !report.commit),
     field("assets", report.asset_version),
@@ -138,6 +324,14 @@ api("/api/doctor").then((report) => {
   );
 }).catch((error) => {
   document.getElementById("sim").innerHTML =
-    `<span class="bad">doctor failed: ${error.message}</span>`;
+    `<span class="bad">doctor failed: ${escape(error.message)}</span>`;
 });
+
+Promise.all([api("/api/commands"), api("/api/categories")])
+  .then(([data, categories]) => renderReference(data, categories))
+  .catch((error) => {
+    const target = document.getElementById("reference");
+    target.className = "card failed";
+    target.textContent = `the reference failed to load: ${error.message}`;
+  });
 </script>

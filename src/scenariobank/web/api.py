@@ -50,6 +50,25 @@ def create_app(*, banks_root: Path, state_dir: Path) -> FastAPI:
 
         return collect(probe=False).model_dump()
 
+    @app.get("/api/categories")
+    def categories() -> list[dict]:
+        """The seven categories: what `--category` selects, beyond the name.
+
+        Served separately from `/api/commands` because the forms in later steps need the list of
+        categories without the whole reference behind it.
+        """
+        from scenariobank.docs import category_rows
+
+        return category_rows()
+
+    @app.get("/api/commands")
+    def commands() -> dict:
+        """The command reference as data -- the same dict `docs/reference/commands.md` is built
+        from, so the page and the file cannot list different flags."""
+        from scenariobank.docs import reference
+
+        return reference()
+
     @app.get("/")
     def index() -> FileResponse:
         return FileResponse(_STATIC / "index.html")

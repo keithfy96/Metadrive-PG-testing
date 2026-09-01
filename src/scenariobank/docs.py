@@ -182,8 +182,13 @@ def _value_notes() -> dict[str, str]:
     }
 
 
-def _rows(command: Any, notes: dict[str, str]) -> list[tuple[str, str, str, str]]:
-    """One row per flag: what to type, whether you must, whether it repeats, what it takes."""
+def _rows(command: Any, notes: dict[str, str]) -> list[dict[str, str]]:
+    """One row per flag: what to type, whether you must, whether it repeats, what it takes.
+
+    Dicts rather than tuples because two things render these: the markdown table below, and the
+    studio's reference tab, which builds real HTML from the same rows. One source, two renderers,
+    and neither can list a flag the other does not.
+    """
     rows = []
     for param in command.params:
         flags = list(param.opts) + list(param.secondary_opts or [])
@@ -204,61 +209,99 @@ def _rows(command: Any, notes: dict[str, str]) -> list[tuple[str, str, str, str]
         long = next((flag for flag in param.opts if flag.startswith("--")), None)
         meaning = " ".join(filter(None, [(param.help or "").strip(), notes.get(long, "")]))
         rows.append(
-            (
-                f"`{shown}`",
-                need,
-                "yes" if getattr(param, "multiple", False) else "",
-                meaning,
-            )
+            {
+                "flag": f"`{shown}`",
+                "need": need,
+                "repeats": "yes" if getattr(param, "multiple", False) else "",
+                "meaning": meaning,
+            }
         )
     return rows
 
 
-def _table(rows: list[tuple[str, str, str, str]]) -> list[str]:
+def _table(rows: list[dict[str, str]]) -> list[str]:
     return [
         "| flag | | repeats | meaning |",
         "|---|---|---|---|",
-        *(f"| {flag} | {need} | {repeats} | {meaning} |" for flag, need, repeats, meaning in rows),
+        *(
+            f"| {row['flag']} | {row['need']} | {row['repeats']} | {row['meaning']} |"
+            for row in rows
+        ),
         "",
     ]
 
 
-def _command_section(name: str, command: Any, notes: dict[str, str]) -> list[str]:
-    """One command: prose, then its flags, then its examples -- in that order, in one place."""
-    lines = [f"### `{name}`", ""]
-    if command.help:
-        lines += [line.rstrip() for line in command.help.strip().splitlines()]
-        lines.append("")
-    rows = _rows(command, notes)
-    lines += _table(rows) if rows else ["Takes no options.", ""]
+def _example_lines(name: str) -> list[str]:
+    """A command's examples, comments aligned on a common column.
 
+    Aligned once, here, rather than by each renderer: the markdown fence and the studio's `<pre>`
+    show the same block, and a block that lines up in one and not the other would read as two
+    different sets of examples.
+    """
     examples = EXAMPLES.get(name)
     if not examples:
         raise ValueError(
             f"command {name!r} has no examples in docs.EXAMPLES; its section would be flags only"
         )
-    lines.append("```bash")
-    # Comments line up on a common column, so the block scans as two columns rather than as
-    # ragged prose. A wrapped command carries its comment on its last line.
+    # A wrapped command carries its comment on its last line, so measure that line.
     width = max(
         (len(line.splitlines()[-1]) for line, comment in examples if comment),
         default=0,
     )
+    lines = []
     for command_line, comment in examples:
         if not comment:
             lines.append(command_line)
             continue
         head, newline, tail = command_line.rpartition("\n")
         lines.append(f"{head}{newline}{tail.ljust(width)}  # {comment}")
-    lines += ["```", ""]
     return lines
+
+
+def _command_entry(name: str, command: Any, notes: dict[str, str]) -> dict[str, Any]:
+    """One command as data: its prose, its flags and its examples. Raises if it has no examples."""
+    return {
+        "name": name,
+        "help": command.help.strip() if command.help else None,
+        "options": _rows(command, notes),
+        "examples": _example_lines(name),
+    }
+
+
+def _command_section(entry: dict[str, Any]) -> list[str]:
+    """One command: prose, then its flags, then its examples -- in that order, in one place."""
+    lines = [f"### `{entry['name']}`", ""]
+    if entry["help"]:
+        lines += [line.rstrip() for line in entry["help"].splitlines()]
+        lines.append("")
+    lines += _table(entry["options"]) if entry["options"] else ["Takes no options.", ""]
+    lines += ["```bash", *entry["examples"], "```", ""]
+    return lines
+
+
+def category_rows() -> list[dict[str, Any]]:
+    """The seven categories as data. The one description of a category in this package.
+
+    `summary` is the first sentence of `description`; the tables want a line, not a paragraph.
+    """
+    from scenariobank.categories import CATEGORIES
+
+    return [
+        {
+            "name": name,
+            "block_seq": category.block_seq,
+            "exit_rule": category.exit_rule.value,
+            "max_steps": category.max_steps,
+            "summary": category.description.split(".")[0],
+            "description": category.description,
+        }
+        for name, category in CATEGORIES.items()
+    ]
 
 
 def _categories_section() -> list[str]:
     """The seven categories in full. The inline `--category` list gives the names; this gives
     the road, the rule and the budget that come with each."""
-    from scenariobank.categories import CATEGORIES
-
     lines = [
         "## The seven categories",
         "",
@@ -268,11 +311,10 @@ def _categories_section() -> list[str]:
         "| name | block_seq | exit rule | max_steps | |",
         "|---|---|---|---|---|",
     ]
-    for name, category in CATEGORIES.items():
-        summary = category.description.split(".")[0]
+    for row in category_rows():
         lines.append(
-            f"| `{name}` | `{category.block_seq}` | `{category.exit_rule.value}` "
-            f"| {category.max_steps} | {summary} |"
+            f"| `{row['name']}` | `{row['block_seq']}` | `{row['exit_rule']}` "
+            f"| {row['max_steps']} | {row['summary']} |"
         )
     meanings = _rule_meanings()
     lines += [
@@ -311,8 +353,17 @@ def _index_section() -> list[str]:
     ]
 
 
-def render_commands() -> str:
-    """Render the whole CLI as the reference document."""
+def reference() -> dict[str, Any]:
+    """The whole reference as data, read off the Typer app and `categories.py`.
+
+    Two things render this and neither may invent anything: `render_commands` writes
+    `docs/reference/commands.md`, and the studio's reference tab builds HTML from the same dict.
+    Gathering it once is what stops the page and the file from listing different flags -- the
+    failure this module was written to prevent, reappearing one layer up.
+
+    Raises rather than returning a gap: a command in no group, a command in two, and a command
+    with no examples are all errors here.
+    """
     import typer
 
     from scenariobank.cli import app
@@ -331,16 +382,40 @@ def render_commands() -> str:
         raise ValueError("docs.GROUPS lists a command in more than one group")
 
     notes = _value_notes()
+    return {
+        "index": [{"want": want, "command": command} for want, command in INDEX],
+        "global_options": _rows(group, notes),
+        "groups": [
+            {
+                "title": title,
+                "blurb": blurb,
+                "commands": [
+                    _command_entry(name, group.commands[name], notes) for name in names
+                ],
+            }
+            for title, blurb, names in GROUPS
+        ],
+        "categories": category_rows(),
+        "rules": [
+            {"rule": rule.value, "picks": picks} for rule, picks in _rule_meanings().items()
+        ],
+    }
+
+
+def render_commands() -> str:
+    """Render the whole CLI as the reference document."""
+    data = reference()
+
     lines = [HEADER, ""]
     lines += _index_section()
     lines += ["## Global options", ""]
-    lines += _table(_rows(group, notes))
+    lines += _table(data["global_options"])
     lines += ["Given before the command: `uv run scenariobank -v doctor`.", ""]
 
-    for title, blurb, names in GROUPS:
-        lines += [f"## {title}", "", blurb, ""]
-        for name in names:
-            lines += _command_section(name, group.commands[name], notes)
+    for group in data["groups"]:
+        lines += [f"## {group['title']}", "", group["blurb"], ""]
+        for entry in group["commands"]:
+            lines += _command_section(entry)
 
     lines += _categories_section()
     return "\n".join(lines).rstrip() + "\n"
@@ -353,4 +428,12 @@ def write(path: Path) -> Path:
     return path
 
 
-__all__ = ["EXAMPLES", "GROUPS", "INDEX", "render_commands", "write"]
+__all__ = [
+    "EXAMPLES",
+    "GROUPS",
+    "INDEX",
+    "category_rows",
+    "reference",
+    "render_commands",
+    "write",
+]
