@@ -133,6 +133,31 @@ What the queue fixes is what a lock cannot express:
 
 ---
 
+## What a person actually uses
+
+Stated outright because the rest of this document is written in commands, and a reader would
+otherwise conclude the command line is the product. It is not.
+
+| surface | for | whose |
+|---|---|---|
+| **the studio** (Phase 2c) | authoring a bank: pick a scenario type, build it, look at every scenario, swap a poor seed — and later, submit a run onto the queue | ours |
+| **the wing-sim webapp** | the other producer onto the same queue | Tyrone's |
+| ~~the CLI~~ | **not a surface.** The studio's worker process, the container's entrypoint, and a maintenance tool for the generated references | ours |
+
+**Exactly one command is user-facing: `scenariobank studio`, which starts the web page.** Everything
+else in this document that looks like a command is run by a machine — the studio spawning a job, the
+container's entrypoint, or CI.
+
+**Why a CLI at all, given that.** `BaseEngine.singleton` (`engine/engine_utils.py:36-59`) is one
+engine per *process*: a FastAPI server that built an env would hold that singleton for its lifetime,
+could serve exactly one simulator request, and would die with it — a panda3d fault is a segfault,
+not an exception a handler can catch. So a subprocess is not a style choice, and the CLI is simply
+what that subprocess is. Keeping it a real CLI rather than a private protocol also means the
+studio's forms and its server-side job validation are both generated from the CLI's own flags
+(`docs.reference()`), so the page cannot come to offer a flag the program does not accept.
+
+---
+
 ## Traps — verified, do not re-propose
 
 Each of these is *the obvious thing you would reach for*, and why it does not work. They were
@@ -404,7 +429,8 @@ full of it collides." That matters for Phase 4b.
 ## Decisions locked
 
 - **Repo**: new standalone git repo in `metadrive-PG/`. Conventions copied from the converter repo (uv, Typer, `src/` layout, `[project.scripts]`), no shared code.
-- **Frontend**: the wing-sim webapp, via a `/metadrive` section posting into the NAS queue. The CLI stays, and `run_bank(...)` stays importable and CLI-free, so the CLI and the container are two callers of one core. *(Amended 2026-08-30 — was "CLI + `results.json`", with Phase 7 optional. Amended 2026-09-01 — the queue moved to the NAS and there are now two rigs and two orchestrators; see **How this ships**.)*
+- **Frontend**: **two producers onto one queue** — the wing-sim webapp via a `/metadrive` section, and our own studio (Phase 2c, Step 12). `run_bank(...)` stays importable and CLI-free, so the container and the studio's worker are two callers of one core. *(Amended 2026-08-30 — was "CLI + `results.json`", with Phase 7 optional. Amended 2026-09-01 — the queue moved to the NAS and there are now two rigs and two orchestrators; see **How this ships**. Amended 2026-09-02 — the studio submits runs too, so the webapp is no longer the only way onto the queue.)*
+- **The GUI is the surface; the CLI is the engine.** No authoring workflow requires a terminal. The CLI is not deleted because a subprocess is forced by `BaseEngine.singleton` — see **What a person actually uses** for the reasoning, so this is not reopened as a matter of preference. *(Decided 2026-09-02, Keith.)*
 - **Categories**: the seven as drafted.
 - **Seeds**: fixed at 0, 1, 2, 3, 4 for every category. 35 maps.
 - **Options**: six axes, stored normalized, applied at run time.
@@ -412,7 +438,7 @@ full of it collides." That matters for Phase 4b.
 - **Policy**: the AV3 camera adapter is the contract from Phase 0, not adapted in later. *(Amended
   2026-08-30 — was "build against the state-vector callable now". Reversed because a state-vector
   policy cannot perceive five of the six option axes, so it could never have been the thing scored.)*
-  `ConstantPolicy` and `ExpertPolicy` survive as CLI-only diagnostics.
+  `ConstantPolicy` and `ExpertPolicy` survive as internal diagnostics, never a product surface.
 - **Independence (R1)**: no module of Tyrone's `wing-sim` is ever imported. Shared: the `jobs` table
   (a schema) and the GPU lock path (a path). See **How this ships**.
 
@@ -425,9 +451,11 @@ metadrive-PG/
   pyproject.toml            # uv, requires-python >=3.10,<3.11, [project.scripts] scenariobank=...
   uv.lock
   src/scenariobank/
-    cli.py                  # Typer app: doctor categories sockets inspect destinations
-                            #            generate seeds replace commands studio
-                            #            calibrate run selftest schema validate
+    __main__.py             # `python -m scenariobank` — how the studio and the container spawn a job
+    cli.py                  # the worker's entry point, not the product's front door. One Typer app:
+                            #   doctor categories sockets inspect destinations examples
+                            #   generate seeds replace commands studio
+                            #   calibrate run selftest schema validate
     categories.py           # CATEGORIES dict: block_seq, destination, max_steps, description
     options.py              # LEVELS, TIERS, resolve_options() -> expanded dict
     config.py               # base config builder
@@ -448,9 +476,11 @@ metadrive-PG/
       camera_rig.py         #   load_rig(), CameraRig.sensors/mount/read
       av3_model.py          #   AV3Model.observe/predict_with_navigation, FrameHistory, preprocess
       openpilot_policy.py   #   BridgeConnection, OpenpilotDriver, to_metadrive_action
-    web/                    # Phase 2c — the local authoring studio. Shells out to this CLI;
-      api.py                #   never imports MetaDrive, because the engine is a per-process
-      jobs.py               #   singleton. One job at a time; state read back off its log.
+    web/                    # Phase 2c — the studio: THE product surface. Never imports MetaDrive,
+      api.py                #   because the engine is a per-process singleton, so every simulation
+      jobs.py               #   is a subprocess. One job at a time; state read back off its log.
+      invoke.py             #   builds a job's argv and validates it against the CLI's own flags,
+                            #   so the page cannot offer a flag the program does not accept
       static/index.html     #   the whole frontend, one file, no build step
     nas/                    # Phase 7, NAS side — our MetaDrive orchestrator (R1: imports
       orchestrator.py       #   nothing of wing-sim's). The lease loop: consume, plan, call,
@@ -481,7 +511,29 @@ metadrive-PG/
 
 ---
 
-# Phase 0 — Skeleton and environment truth
+## Reading the markers
+
+Every phase heading carries one, and so does every step inside Phase 2c and Phase 7:
+
+| marker | means |
+|---|---|
+| ✅ | built, tested, and on `main` |
+| 🔨 | started — the phase's **Status** line says what is left |
+| ⬜ | not started |
+
+The headings are the only record of progress in this document. There is deliberately no summary
+table up here: a second copy of the status is a second thing to forget to update, and this plan
+exists to stop two descriptions of one system drifting apart. The board, whenever you want it:
+
+```bash
+grep -n '^# Phase\|^### Step' IMPLEMENTATION_PLAN.md
+```
+
+A marker moves to ✅ when the phase's **Done when** is met — not when the code is written.
+
+---
+
+# Phase 0 — Skeleton and environment truth ✅
 
 **Goal:** a package that installs, a CLI that runs, and one command that tells you exactly which
 simulator you are on. Nothing scenario-specific yet.
@@ -502,7 +554,8 @@ simulator you are on. Nothing scenario-specific yet.
   (`base_env.py:674-678`). So `doctor` and the runner test one shape, which is the point of having
   `doctor` at all. See **No lidar**.
 
-**How you test it**
+**How you test it** *(recorded as it was done, before the studio existed. The same question is now
+answered by the commit prefix in the studio's header — Phase 2c, Step 1.)*
 ```bash
 cd metadrive-PG && uv sync --group sim
 uv run scenariobank doctor
@@ -519,7 +572,7 @@ identical commit + asset_version.
 
 ---
 
-# Phase 1 — Categories and forced destinations
+# Phase 1 — Categories and forced destinations ✅
 
 **Goal:** decide, once and permanently, which exit each category drives to — then never let
 MetaDrive choose again.
@@ -579,7 +632,8 @@ into a stored fact and makes the same five seeds reusable across every category.
 - The three intersection categories deliberately share the same five maps and differ only in route —
   the same junction driven three ways.
 
-**How you test it**
+**How you test it** *(recorded as it was done. The same questions are now answered by the
+gallery's example figures — Phase 2c, Step 4 — and the utility tab, Step 11.)*
 ```bash
 # 1. Discover the sockets (once per block type)
 uv run scenariobank sockets --block-seq X --seed 0
@@ -608,7 +662,7 @@ categories, and the three intersection variants visibly turn the right way on se
 
 ---
 
-# Phase 2 — Generate: scenarios on disk
+# Phase 2 — Generate: scenarios on disk ✅
 
 **Goal:** one command turns the categories into scenarios a runner can consume.
 
@@ -749,7 +803,8 @@ rotation along the driven route, unwrapped — not `SocketReading.angle_deg`, wh
 `wrap_to_pi`'d final heading and reads −120.5° for a route that sweeps +239.5°. `turn_pairs`
 carries what a single number cannot: a gentle left and a left-then-right both read low.)*
 
-**How you test it**
+**How you test it** *(recorded as it was done. Building a bank is now the Build tab — Phase 2c,
+Step 5 — and reading it back is Steps 6 and 7.)*
 ```bash
 uv run scenariobank generate --out ./banks/pg-bank-2026-08 --bank-id pg-bank-2026-08
 ```
@@ -792,7 +847,10 @@ an install reads 6.2 s — that one also builds matplotlib's font cache.)*
 
 ---
 
-# Phase 2b — *(folded into a unit test)*
+# Phase 2b — *(folded into a unit test)* ⬜
+
+**Status:** neither test is written. Everything below is a decision that already holds;
+the two tests in `tests/unit/test_invariance.py` are the entire remaining deliverable.
 
 The storage design assumes changing traffic, cones, actors or lights leaves the map and the route
 untouched. That still matters: comparing a score at `traffic=none` against `traffic=high` only means
@@ -818,10 +876,37 @@ could plausibly get the RNG wiring wrong. Green today; it stays green or someone
 
 ---
 
-# Phase 2c — Bank Studio: the authoring loop, in a browser
+# Phase 2c — Bank Studio: the authoring loop, in a browser 🔨
+
+**Status:** Steps 1-3 are built. Step 4, the gallery, is next.
+The studio's own Bank tab lists these same twelve steps and strikes through what is done
+(`src/scenariobank/web/static/index.html`) — when a marker moves here, move it there too.
 
 **Goal:** the correction loop of Phase 2 — spot a bad draw, rank alternatives, look at one, swap it
 — done in one page instead of seven context switches.
+
+## What the page is for (2026-09-02, Keith)
+
+Four things, and the steps below are organised around them rather than around commands:
+
+| | |
+|---|---|
+| **1** | pick a scenario type from a list of options, with an example picture for the one selected |
+| **2** | see the PNGs of every scenario of that type in the dataset, to judge whether a seed needs changing |
+| **3** | select one of those images and have it replaced |
+| **4** | open the dataset, look at the images, and see what generated each one |
+
+**Why this replaced the previous ordering.** Steps 4-9 used to be one CLI command each, which
+produced a page you operate by typing flags into a generated form: *"this idea of using the cli
+before the web feels very counter intuitive, it creates a web interface that's barely useable and
+not much better."* Correct, and the fault was the organising principle. The subprocess engine below
+is unaffected — the objection was to the interface, not to how a job runs.
+
+Every field these four screens need already exists. `ScenarioRow` records the seed, destination,
+spawn lane, route length, net rotation and turn pairs of each scenario; `generate` already writes a
+thumbnail per scenario and records its path; `bank.replace_scenario` already swaps one row in
+place. **Nothing below needs new simulation work.** It needs the pictures put on a page and made
+clickable.
 
 **Why (2026-09-01, Keith).** Phase 2 works and the loop it enables is the problem. Finding that
 `curve` seed 4 was a near-duplicate of seed 0 took `generate`, then `eog` on a directory of PNGs,
@@ -839,17 +924,20 @@ mount them elsewhere; that is the entire extent of the coupling.
 
 ## Three decisions that shape everything
 
-**1. The API shells out to the CLI. It never imports MetaDrive.**
+**1. Every simulation runs in a subprocess, and the CLI is that subprocess.**
 
-`BaseEngine.singleton` (`engine/engine_utils.py:36-59`) is one engine per *process*. A web server
-that builds an env holds that singleton for its lifetime, cannot serve two requests that each need
-one, and dies with it — a panda3d/bullet fault is a segfault, not an exception. So every
-simulator-touching command runs as `uv run scenariobank ...` in a subprocess:
+Not a wrapper around a command-line product — the page **is** the product, and this is how it
+executes. `BaseEngine.singleton` (`engine/engine_utils.py:36-59`) is one engine per *process*: a
+web server that builds an env holds that singleton for its lifetime, cannot serve two requests that
+each need one, and dies with it — a panda3d/bullet fault is a segfault, not an exception. So a
+subprocess is forced, and `python -m scenariobank ...` is simply what it is:
 
 - a crash kills a job, not the studio;
 - no engine contention, and no thread-safety question to get wrong;
-- **the CLI stays the single source of truth.** The studio is a second front door, not a second
-  implementation, so `docs/reference/commands.md` keeps describing what actually runs.
+- **one implementation, generated two ways.** The studio's forms and its server-side job validation
+  both come from `docs.reference()` — the CLI's own parameters — so the page cannot offer a flag
+  the program does not accept. A private worker protocol would mean hand-writing that schema, which
+  is the drift `docs.py` exists to prevent, one layer up.
 
 Cost: ~1–2 s of MetaDrive + matplotlib import per job. Accepted. A warm persistent worker is a real
 optimisation and is deliberately **not** built here.
@@ -871,11 +959,13 @@ by name.
 
 ---
 
-## Steps — one command per step, each testable alone
+## Steps — each one testable in the page, alone
 
-Stop after any step and what exists still works.
+Stop after any step and what exists still works. Every **Test** below is phrased as clicks, because
+a step whose only proof is a `curl` line is a step that was not delivered to the person asking for
+it.
 
-### Step 1 — the shell: `scenariobank studio`
+### Step 1 — the shell: `scenariobank studio` ✅
 
 New dependency group, so `uv sync` stays fast for anything that does not serve a page:
 
@@ -899,7 +989,7 @@ as is. `probe=False` because a probe builds an env and Decision 1 says this proc
 **Test:** `uv run --group web scenariobank studio`, open `http://127.0.0.1:8770/`, see the commit
 prefix `85e5dadc` in the header. `curl -s localhost:8770/api/doctor | jq -r .commit` agrees.
 
-### Step 2 — `categories` and `commands`: the reference tab
+### Step 2 — `categories` and `commands`: the reference tab ✅
 
 No simulator, no subprocess. `GET /api/categories` serves `CATEGORIES`; `GET /api/commands` serves
 `docs.render_commands()` — the page you already generate, one click from the buttons that use those
@@ -907,96 +997,218 @@ flags instead of in a file nobody opens.
 
 **Test:** seven categories listed; the `--rule` row lists all five rules.
 
-### Step 3 — the bank browser
+### Step 3 — the job engine, and the Run tab ✅  *(the tab is scaffolding)*
 
-The step that replaces `eog`.
+*(Reordered 2026-09-01 — Keith: "i should be able to test different stages, as you add the commands
+in so i can gaurantee it works". The old order put this at Step 4, which made Steps 1-3 all
+read-only: three deliveries in a row that could only be checked with `curl`. The engine comes
+first now, and every step after it lands a button.)*
+
+`src/scenariobank/web/jobs.py`:
+
+- `submit(argv) -> job_id`, 409 if the slot is taken, naming what holds it
+- one subprocess, `shell=False`, stderr merged into stdout, appended to `.studio/jobs/<id>/log`
+- the exit code written to `.studio/jobs/<id>/exit` **when it ends** — its presence is what
+  "finished" means, so status survives a reload and a restart
+- `GET /api/jobs/{id}?since=<offset>` reads state off those two files and returns the new log
+  bytes; `DELETE /api/jobs/{id}` terminates the process group
+
+Polled with a byte offset rather than streamed: a reload resumes for free and there is no
+reconnect logic to get wrong.
+
+**`src/scenariobank/web/invoke.py` builds the argv, and nothing in it lists a flag.**
+`docs.reference()` gained `params` — the same Typer parameters `options` renders, unrendered — so
+the page generates its form from them and the API validates a submission against them. A flag the
+page offers, a flag the reference documents and a flag the CLI accepts are one flag by
+construction. Refusals are sentences about one flag (`--category does not accept 'banana'`), not a
+Typer traceback fished out of a log afterwards. A path option that resolves outside the directory
+the studio was started in is a 400, and `studio` itself is not runnable.
+
+**The Run tab is provisional and is deleted at Step 8.** It exists only because the purpose-built
+screens do not yet, and a generated form over the CLI's flags is the fastest possible way to make
+every command reachable while they are being built. It is the last CLI-shaped thing in the product
+and it goes when the screens that replace it exist. The job engine underneath is permanent — that
+is what those screens run on.
+
+**Test in the page:** pick `categories`, click **Run** — seven rows in the output pane inside a
+second, and the pill goes green with `exit 0`. No simulator involved, so a failure here is the job
+plumbing and nothing else. Pick `doctor`, tick `--json`, Run: the checkbox came from the CLI's own
+flags. Run twice quickly — the second is refused, naming the job that holds the slot. Reload
+mid-job — the log is still there and still filling. **Cancel** — red, with the signal's exit code.
+
+### Step 4 — the gallery: pick what to build ⬜  ⟵ *feature 1*
+
+*(Reordered 2026-09-02 — Keith: "this idea of using the cli before the web feels very counter
+intuitive, it creates a web interface that's barely useable and not much better". The steps below
+were organised around **commands**; they are now organised around the job. The Run tab keeps
+working and moves to the last tab, an escape hatch rather than the front door.)*
+
+A new CLI command, **`scenariobank examples`**, draws one figure per category into
+`docs/reference/examples/<category>.png`, and those PNGs are **checked in**. Generated rather than
+hand-drawn for the same reason `destinations.md` is: a picture nobody regenerates goes stale, and
+the failure is silent. Needs `docs.GROUPS` and `docs.EXAMPLES` entries or the reference refuses to
+render, which is the existing rule doing its job.
+
+Checked in rather than drawn on demand, because this is the screen you meet **before** you have a
+bank, a simulator, or any patience: it has to be instant and it has to work on a machine with only
+the `web` group installed.
+
+- `GET /api/examples/{category}.png`, resolved inside the examples directory
+- the **Build** tab becomes the landing view: one card per category — the example picture, the
+  description, the road, the exit rule, the step budget. Click to select; select several.
+
+**Test in the page:** open the studio with no bank generated and nothing typed, and see seven
+pictures. Tick `curve` and `roundabout`.
+
+### Step 5 — generate what you picked ⬜  ⟵ *bridges 1 to 2*
+
+The selection becomes a `generate` job through the existing `invoke.build_argv`, so the page gains
+no second way of calling the CLI. Banks are auto-named `bank-YYYY-MM-DD-hhmm` and renameable —
+naming a directory is not a decision worth interrupting someone for.
+
+The studio knows how many scenarios the selection asked for, so the bar counts the CLI's existing
+per-scenario stderr lines against that total. **No new progress protocol**: structured JSON-line
+progress belongs to Phase 7, Step 1, and is not brought forward.
+
+**Test in the page:** two types ticked, Generate, watch the count climb to 10, and land in the
+browser with the new bank open.
+
+### Step 6 — the dataset: every picture of the type you picked ⬜  ⟵ *feature 2*
+
+The step that replaces `eog`, and it has a bank to show because Step 5 made one.
 
 - `GET /api/banks` — directories under `--banks-root` holding a `manifest.json`
 - `GET /api/banks/{bank}` — `bank.read_manifest()`, returned as is
 - `GET /api/banks/{bank}/thumbs/{name}.png` — the file, after resolving inside the bank dir
 
-One row per category, one card per scenario: thumbnail, `scenario_id`, seed, destination,
-`net_rotation_deg`, `turn_pairs`, `route_length_m`.
+One row per category, one card per scenario, and **the picture is the unit** — not a table with a
+thumbnail column. What is being judged is an image.
 
-**Test:** generate a bank, open the studio — 7 rows, 35 cards, every thumbnail loads, and the two
-`curve` `LL` seeds are visibly the same picture, which is the whole reason this phase exists.
+**Test in the page:** 35 cards, every thumbnail loads, and the two near-duplicate `curve` seeds are
+visibly the same picture — which is the whole reason this phase exists.
 `curl -s 'localhost:8770/api/banks/b/thumbs/../../../etc/passwd'` -> 400, not a file.
 
-### Step 4 — the job engine, proven on `inspect`
+### Step 7 — what generated this picture ⬜  ⟵ *feature 4*
 
-The machinery arrives with the cheapest simulator command, so it is debugged on a job that draws one
-picture rather than one that builds thirty-five. `src/scenariobank/web/jobs.py`:
+Click a card and read the row: seed, destination node, spawn lane, route length, net rotation, turn
+pairs, step budget, road, exit rule, and the MetaDrive commit the bank was built on.
 
-- `submit(argv) -> job_id`, 409 if the slot is taken, naming what holds it
-- one subprocess, stderr merged into stdout, appended line by line to `.studio/jobs/<id>/log`
-- the exit code written to `.studio/jobs/<id>/exit` **when it ends** — its presence is what
-  "finished" means, so status survives a restart
-- `GET /api/jobs/{id}` reads state off those two files; `GET /api/jobs/{id}/log` tails it as SSE;
-  `DELETE /api/jobs/{id}` terminates the process group
+**Nothing here is computed.** Every field is already in `ScenarioRow` and `CategoryEntry`, because
+the manifest was designed to explain itself — "declare the intent, store the fact". This step is
+the first thing that reads it back to a person.
 
-Wired to `POST /api/inspect {block_seq | category, seed, rule}`, writing into `.studio/figures/`.
+**Test in the page:** click `curve_0004` and read seed 4 and its `turn_pairs` off the panel.
 
-**Test:** click a card, watch the log fill, see the figure. Submit two at once — the second is
-refused with what is running. Reload mid-job — the log is still there.
+### Step 8 — replace the seed behind an image ⬜  ⟵ *feature 3*
 
-### Step 5 — `seeds`: ranked alternatives in the page
+From that panel, **Find a better seed** runs `seeds` and shows the ranked alternatives: the gap
+column, near-duplicates flagged, and per row a **Look** button (draws that seed) and a **Use this
+seed** button (replaces it).
 
-The one command that needs a new flag, because it prints an aligned table and the studio needs rows:
-**`scenariobank seeds --json`**, emitting `SeedReading` in the same order, matching the `--json`
-that `doctor` and `sockets` already have. Regenerate `docs/reference/commands.md`, and test that the
-JSON and the text table report the same seeds in the same order.
+Needs **`scenariobank seeds --json`**, matching the `--json` that `doctor` and `sockets` already
+have, plus a test that the JSON and the aligned table report the same seeds in the same order.
 
-`POST /api/seeds {category, keep, scan}` runs it as a job. The page shows a sortable table with the
-gap column, near-duplicates flagged, and per row a **Look** button (Step 4) and a **Use this seed**
-button (Step 6, inert until then).
+`bank.replace_scenario` already refuses a seed the category is using, keeps the id and the
+position, and deletes a thumbnail it did not redraw. The studio's job is to **show the refusal**,
+not to reimplement it.
 
-**Test:** scan `curve` keeping `0,1,2,3` over `0-30`: seed 22 top at ~30%, seeds 6 and 11 flagged.
-Identical to the terminal's numbers.
+**And delete the Run tab.** With pick, build, look and swap all on their own screens, the generated
+flag form is the last CLI-shaped thing in the product, and keeping it would leave two ways to do the
+same job — one of them worse. `web/jobs.py` and `web/invoke.py` stay; only the tab goes.
 
-### Step 6 — `replace`: the write path
+**Test in the page:** swap `curve_0004` to seed 22; the card redraws and
+`jq '.categories.curve.scenarios[4]'` agrees. Then try seed 0 — refused, and the reason is readable
+on the page. There is no Run tab left to fall back to.
 
-`POST /api/banks/{bank}/replace {scenario_id, seed, thumbnails}` as a job; on completion the studio
-re-reads the manifest and the card redraws. Nothing new is invented — `bank.replace_scenario`
-already refuses a seed already used in the category, keeps the id and position, and deletes a
-thumbnail it did not redraw. The studio's job is to **show the refusal**, not to reimplement it.
+### Step 9 — four new scenario types ⬜
 
-**Test:** swap `curve_0004` to seed 22 from the Step 5 table; the card changes and
-`jq '.categories.curve.scenarios[4]'` agrees. Then try seed 0 — refused, reason readable in the page.
+Measured 2026-09-02 against the installed MetaDrive, because "which blocks could be categories" is
+a question with an answer rather than an opinion:
 
-### Step 7 — `generate`: build a bank from the browser
+| candidate | sequence | result |
+|---|---|---|
+| off-ramp | `RS` | builds, one exit — rule `only` |
+| lane merge | `yS` | builds, one exit — rule `only` |
+| lane split | `YS` | builds, one exit — rule `only` |
+| tollgate | `$S` | builds, one exit — rule `only` |
+| U-turn junction | `U` | builds, but its exits are +90 / 0 / −90 — the same shape as `X`. The U-turn arm is **not** a destination socket, so it cannot be a category distinct from the three intersections |
+| in-fork, out-fork | `f`, `F` | MetaDrive refuses: `ValueError: Bug exists in this block, Recommend to use Ramp` |
+| parking lot | `P` | refuses: `Lane number of previous block must be 1 in each direction`, and `base_config` pins `lane_num=3` |
+| `B` | `BS` | builds, but `B` is the abstract `PGBlock` base class, not a block |
 
-`POST /api/banks {bank_id, out, categories, seeds, per_category_seeds, thumbnails}` as a job. The
-form is the flags: category checkboxes, a shared seed list, an optional per-category override (the
-`--seeds curve=0,1,2,3,22` form), a thumbnails toggle. The studio knows how many scenarios it asked
-for, so the bar counts the CLI's existing per-scenario stderr lines against that total — **no new
-progress protocol.** Structured JSON-line progress belongs to Phase 7, Step 1, and is not brought
-forward.
+So: **`off_ramp_hold` (`RS`), `lane_merge` (`yS`), `lane_split` (`YS`), `tollgate` (`$S`)**, all
+rule `only`. Eleven candidates, four survivors — recorded here with the errors so nobody re-tries
+the other seven.
 
-**Test:** build a two-category bank from the page; it appears in the list and opens in the browser
-with the count the form asked for. `--no-thumbnails` gives cards with no image and no broken-image
-icon.
+`off_ramp_hold` is named for what it is. `R` exposes a single socket on the through lane, exactly
+as `r` does for the on-ramp, so the category is *"hold the through lane while a lane leaves"* and
+**not** *"take the exit"* — a route down the ramp is not expressible as a destination socket.
 
-### Step 8 — `sockets` and `destinations`
+Each needs its destination resolved across seeds, `max_steps` from a **measured** route length
+(the house rule: re-measure a figure, never quote one), `destinations.md` regenerated and an
+example drawn. They appear in the gallery automatically, because the gallery is generated from
+`CATEGORIES`.
 
-Both thin over Step 4's engine. `POST /api/sockets` renders the exits table with a turn word per
-exit; `POST /api/destinations` regenerates `docs/reference/destinations.md` and shows it beside the
-command reference.
+**Test in the page:** eleven cards in the gallery; generate `lane_merge` and look at it.
 
-**Test:** `sockets` on `X` seed 0 shows one exit near +90, one near −90, one near 0, and the entry
-marked. `destinations` leaves `git diff docs/reference/destinations.md` empty.
+### Step 10 — the road builder ⬜
+
+Compose a sequence from the fifteen block ids, pick an exit rule, pick a seed, and draw it.
+
+**Preview only.** An ad-hoc road is not a bank row: a row needs a category name and a manifest
+entry, and inventing names for one-offs is how a bank stops meaning anything. This is the escape
+hatch for everything Step 9 excluded — look at a fork or a parking lot here and watch it fail
+honestly, rather than having a category invented to accommodate it.
+
+**Test in the page:** build `CCX`, rule `left`, seed 0, and see the road. Build `fS` and see
+MetaDrive's own refusal quoted back rather than a spinner.
+
+### Step 11 — the road utilities ⬜
+
+A utility tab: which exits does this road offer, and where does each category's route end. Both
+answer questions *about a road* rather than doing the job, which is why they are last rather than
+first. `sockets` and `destinations` are what run behind them.
+
+**Test in the page:** ask for `X` at seed 0 and see one exit near +90, one near −90, one near 0, and
+the entry marked. Re-measure the destinations reference and `git diff docs/reference/destinations.md`
+is empty.
+
+### Step 12 — pick a model, submit a run ⬜  ⟵ *blocked on Phase 7*
+
+*(2026-09-02, Keith: "eventually the ui needs to handle selecting a model and running it against a
+bank, but the output is essentially merely adding it to the queue".)*
+
+Choose a bank, choose a model, choose the six option axes, and press submit. **The action is
+`queue.put(...)` onto the NAS topic and nothing else** — nothing runs on this machine, and no
+results come back to this page. The studio becomes the second producer onto the queue, alongside
+the wing-sim webapp.
+
+The form is rendered from Phase 7's `GET /options`, for the same reason every other form here is
+generated: a hand-written copy of the six axes is a second declaration of them.
+
+**Blocked on Phase 7** for the payload schema and the topic name. Recorded here rather than in
+Phase 7 because the screen is ours and the queue is not.
+
+**Test in the page:** submit a run and see it appear in the queue's own `/admin` console, with the
+bank, the model and the options in the payload.
 
 ---
 
-**Reused rather than rewritten:** `bank.read_manifest` / `Manifest`, `doctor.collect`,
-`categories.CATEGORIES`, `docs.render_commands`, `variety.SeedReading`. The API is thin on purpose —
-a route doing arithmetic belongs in a module the CLI shares, or the two front doors will disagree.
+**Reused rather than rewritten:** `bank.read_manifest` / `Manifest`, `bank.replace_scenario`,
+`bank.ScenarioRow`, `doctor.collect`, `categories.CATEGORIES`, `figures.render_route`,
+`docs.reference`, `variety.SeedReading`. The API is thin on purpose — a route doing arithmetic
+belongs in a module the CLI shares, or the two front doors will disagree.
 
-**Done when** the `curve` seed-4 correction can be made entirely in the browser: spot it in the
-grid, rank alternatives, look at seed 22, swap it, see the card change — no terminal, no image
-viewer.
+**Done when** all four are true **without a terminal at any point**: you can **pick** a scenario
+type from pictures, **build** it, **look** at every scenario of that type in the dataset, and
+**swap** a poor draw for a better seed after reading what generated it. The `curve` seed-4
+correction is the worked example: spot it in the grid, rank alternatives, look at seed 22, swap it,
+see the card change. And the Run tab is gone — while it is still there, the page has not replaced
+the command line, it has only wrapped it.
 
 **Not doing:** anything in `wing-sim`; a React build; a warm persistent MetaDrive worker;
-JSON-line progress from `generate`; auth or any non-loopback bind.
+JSON-line progress from `generate`; auth or any non-loopback bind; categories on the blocks Step 9
+measured as unusable; ad-hoc roads as bank rows.
 
 ---
 
@@ -1010,7 +1222,12 @@ renumbered.
 
 ---
 
-# Phase 4 — Runner, results schema, reference policies
+# Phase 4 — Runner, results schema, reference policies ⬜
+
+> **The commands in this phase are machine-run.** `run`, `calibrate`, `validate` and `selftest`
+> are executed by the container's entrypoint, by the orchestrator, and by CI — never typed by a
+> person, and **no studio screen is owed for them**. The command blocks below are developer
+> verification, and they stay in that form deliberately. See **What a person actually uses**.
 
 **Goal:** the piece the frontend calls.
 
@@ -1162,7 +1379,10 @@ placing anything — the same class of bug as floor equals ceiling.
 
 ---
 
-# Phase 4b — Calibrate the levels
+# Phase 4b — Calibrate the levels ⬜
+
+> **Machine-run.** `calibrate` is a measurement tool; its product is
+> `docs/reference/level-calibration.md`, not a screen. See **What a person actually uses**.
 
 **Goal:** replace the provisional numbers with measured ones. Requires the invariance tests green.
 
@@ -1193,7 +1413,11 @@ separated success rates, measured rather than guessed, and `options.py` matches 
 
 ---
 
-# Phase 5 — Container
+# Phase 5 — Container ⬜
+
+> **Machine-run.** The image's entrypoint calls `run_bank()` directly — the container is not a
+> person at a terminal, and it is not "running the CLI". `selftest` is an internal build check.
+> See **What a person actually uses**.
 
 **Goal:** the same numbers on your machine, in CI, and on the frontend's host.
 
@@ -1243,7 +1467,10 @@ inside the container must fail.
 
 ---
 
-# Phase 6 — `CONTRACT.md` and handoff
+# Phase 6 — `CONTRACT.md` and handoff ⬜
+
+> **Machine-run.** `validate` and `schema` are CI's, checking that the examples in `CONTRACT.md`
+> still parse. See **What a person actually uses**.
 
 **Goal:** your colleague can build the frontend without reading any of your Python.
 
@@ -1298,7 +1525,7 @@ inside the container must fail.
 
 ---
 
-# Phase 7 — The orchestrator and the rig runner  ⟵ *the deliverable*
+# Phase 7 — The orchestrator and the rig runner ⬜  ⟵ *the deliverable*
 
 **Goal:** a MetaDrive job put on the NAS queue is leased by our orchestrator, dispatched to a free
 GPU on one of two rigs, run in a container, and its results saved back on the NAS — with nothing of
@@ -1395,7 +1622,7 @@ having and all three come from the same choice — **the runner holds no state o
 Each is buildable and verifiable on its own, and the order is deliberate: **the rig half first**,
 because it can be driven by hand with `curl` long before a queue is involved.
 
-### Step 1 — the container image and entrypoint
+### Step 1 — the container image and entrypoint ⬜
 
 Extends Phase 5. The container reads an options file plus a scenario list, calls `run_bank()`,
 writes `results.json`, exits 0. Four additions, all so a supervisor never has to parse prose:
@@ -1414,7 +1641,7 @@ writes `results.json`, exits 0. Four additions, all so a supervisor never has to
 
 **Verify alone:** `docker run` it by hand with a one-scenario options file; get a `results.json`.
 
-### Step 2 — the lock helper (R1: our own, same paths)
+### Step 2 — the lock helper (R1: our own, same paths) ⬜
 
 Advisory `flock`, **exclusion by inode**, one lock file per GPU. ~150 lines.
 
@@ -1429,7 +1656,7 @@ Advisory `flock`, **exclusion by inode**, one lock file per GPU. ~150 lines.
 **Verify alone:** hold it from a shell (`bash wing-sim/deployment/with_rig_lock.sh sleep 60 &`),
 confirm the helper reports it foreign and refuses.
 
-### Step 3 — the rig session (R1: our own)
+### Step 3 — the rig session (R1: our own) ⬜
 
 Takes the lock, launches the run as a sibling container, supervises, tears down. ~300 lines. His
 `rig/session.py` is the reference, but it takes `presets=` and emits CARLA compose commands, so this
@@ -1448,7 +1675,7 @@ is a sibling rather than a reuse.
 
 **Verify alone:** one scenario end to end, driven from a Python REPL. No HTTP anywhere yet.
 
-### Step 4 — `metadrive-runner`: the service on each rig
+### Step 4 — `metadrive-runner`: the service on each rig ⬜
 
 The thing the orchestrator calls. Small, and stateless by construction.
 
@@ -1476,7 +1703,7 @@ GET    /health                  per-GPU lock state, disk, image tag, runner vers
 **Verify alone:** `curl` a two-scenario job; poll it; cancel one; **restart the service mid-run and
 confirm the next `GET` describes the same run.** That last one is the whole design in one test.
 
-### Step 5 — the orchestrator: the lease loop
+### Step 5 — the orchestrator: the lease loop ⬜
 
 On the NAS. `QueueClient` from `docs/queue-docs/`, one topic, long-polled.
 
@@ -1491,7 +1718,7 @@ On the NAS. `QueueClient` from `docs/queue-docs/`, one topic, long-polled.
 
 **Verify alone:** `put()` a job by hand and watch it land on a rig, with both rigs' runners up.
 
-### Step 6 — results storage on the NAS
+### Step 6 — results storage on the NAS ⬜
 
 Our own SQLite plus a results tree. Not his schema, and no mapping — the shape is ours.
 
@@ -1510,7 +1737,7 @@ Our own SQLite plus a results tree. Not his schema, and no mapping — the shape
 
 **Verify alone:** ingest the same `results.json` twice; the row count does not move.
 
-### Step 7 — thin round-trip end to end  ⟵ *gate*
+### Step 7 — thin round-trip end to end ⬜  ⟵ *gate*
 
 Before the bank is correct, prove the whole path with a stub:
 
@@ -1521,10 +1748,13 @@ Before the bank is correct, prove the whole path with a stub:
 Then wire the real bank behind it. **A green round-trip against a stub is worth more than a correct
 bank nothing can run**, and here it also proves the routing before either side is finished.
 
-### Step 8 — `GET /options` and the ETA
+### Step 8 — `GET /options` and the ETA ⬜
 
-- **The six axes served as data**, so the frontend renders the form from the schema instead of
+- **The six axes served as data**, so a frontend renders the form from the schema instead of
   hard-coding it. This is what keeps the picker in step when an axis is recalibrated in Phase 4b.
+  **Two consumers**, not one: the wing-sim webapp and our own studio's submit screen (Phase 2c,
+  Step 12). Two producers onto the queue, for the same reason — the webapp is no longer the only
+  way a run gets enqueued.
 - **The ETA.** Bootstrap from measured per-category wall time — Phase 4b's calibration runs produce
   it for free — keyed on `(category, tier)`, then replace it with a **median** of the last N real
   runs. Median, not mean: one degraded run is a 5x outlier that poisons a mean for weeks. With a
@@ -1564,7 +1794,10 @@ disagree, one of them is configuring the env differently.
 
 ---
 
-# Phase 8 — Traffic lights, camera-model scope  (~1 day)
+# Phase 8 — Traffic lights, camera-model scope  (~1 day) ⬜
+
+> **Machine-run.** The two command blocks below are developer verification of the lights work, not
+> a surface. See **What a person actually uses**.
 
 **Goal:** the Lights axis. Requires the invariance tests green.
 

@@ -15,8 +15,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
+
+from scenariobank.web.invoke import NOT_RUNNABLE, InvokeError, build_argv, catalog
+from scenariobank.web.jobs import JobBusy, JobNotFound, Jobs
 
 #: Where the studio keeps job logs and scratch figures. Gitignored: a job is re-runnable, so
 #: nothing here is worth keeping.
@@ -25,10 +29,29 @@ STATE_DIR_NAME = ".studio"
 _STATIC = Path(__file__).parent / "static"
 
 
-def create_app(*, banks_root: Path, state_dir: Path) -> FastAPI:
-    """Build the studio app rooted at `banks_root`, with scratch state under `state_dir`."""
+class JobRequest(BaseModel):
+    """One submitted job: a command name and the flags to give it.
+
+    Deliberately not one model per command. The flags are validated against `docs.reference()` --
+    the CLI's own parameters -- so a model here would be a second declaration of them, and the
+    first thing to fall out of step when a flag changes.
+    """
+
+    command: str
+    options: dict[str, object] = Field(default_factory=dict)
+    global_options: dict[str, object] = Field(default_factory=dict)
+
+
+def create_app(*, banks_root: Path, state_dir: Path, workdir: Path | None = None) -> FastAPI:
+    """Build the studio app rooted at `banks_root`, with scratch state under `state_dir`.
+
+    `workdir` is the directory jobs run in and the boundary they may write inside; it defaults to
+    the directory the studio was started in.
+    """
     banks_root = Path(banks_root)
     state_dir = Path(state_dir)
+    workdir = Path(workdir) if workdir is not None else Path.cwd()
+    jobs = Jobs(state_dir / "jobs", workdir=workdir)
 
     app = FastAPI(
         title="scenariobank studio",
@@ -38,6 +61,8 @@ def create_app(*, banks_root: Path, state_dir: Path) -> FastAPI:
     )
     app.state.banks_root = banks_root
     app.state.state_dir = state_dir
+    app.state.workdir = workdir
+    app.state.jobs = jobs
 
     @app.get("/api/doctor")
     def doctor() -> dict:
@@ -68,6 +93,65 @@ def create_app(*, banks_root: Path, state_dir: Path) -> FastAPI:
         from scenariobank.docs import reference
 
         return reference()
+
+    @app.get("/api/runnable")
+    def runnable() -> dict:
+        """Which commands the page may offer, and why the others are missing.
+
+        The page filters the reference by this rather than carrying its own list.
+        """
+        commands, global_params = catalog()
+        return {
+            "commands": sorted(commands),
+            "global_options": list(global_params.values()),
+            "not_runnable": NOT_RUNNABLE,
+        }
+
+    @app.post("/api/jobs", status_code=201)
+    def start_job(request: JobRequest) -> dict:
+        """Run one command as a subprocess of this same CLI.
+
+        A refusal here is a readable sentence about one flag, because the alternative -- letting it
+        through and reading a Typer traceback out of the log -- is how a page teaches you nothing.
+        """
+        try:
+            argv = build_argv(
+                request.command,
+                request.options,
+                request.global_options,
+                workdir=workdir,
+            )
+        except InvokeError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        try:
+            return jobs.submit(argv, command=request.command)
+        except JobBusy as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @app.get("/api/jobs")
+    def list_jobs() -> list[dict]:
+        """The last few jobs, newest first, without their logs."""
+        return jobs.recent()
+
+    @app.get("/api/jobs/{job_id}")
+    def job(job_id: str, since: int = 0) -> dict:
+        """One job's state, plus whatever it has logged since byte `since`.
+
+        Polled rather than streamed: the offset makes a reload cost nothing to resume from, and
+        there is no reconnect logic to get wrong.
+        """
+        try:
+            return jobs.status(job_id, since=since)
+        except JobNotFound as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.delete("/api/jobs/{job_id}")
+    def cancel_job(job_id: str) -> dict:
+        """Terminate a running job's process group."""
+        try:
+            return jobs.cancel(job_id)
+        except JobNotFound as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
 
     @app.get("/")
     def index() -> FileResponse:

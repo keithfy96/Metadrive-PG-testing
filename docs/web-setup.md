@@ -1,7 +1,10 @@
 # Setting up the studio
 
-The studio is the local web page in front of the bank commands — the thumbnail grid, the seed
-rankings, the swap. `docs/reference/commands.md` is the exhaustive flag reference and is generated;
+The studio is how you author a bank: the thumbnail grid, the seed rankings, the swap. It is the
+product, and the CLI underneath is how it executes — MetaDrive's engine is a per-process singleton,
+so every simulation runs as a subprocess.
+
+`docs/reference/commands.md` is the exhaustive flag reference for that worker and is generated;
 **this page is hand-written**, because how to install and run a thing is not something the CLI can
 be asked.
 
@@ -78,13 +81,37 @@ To reach it from another machine, forward the port over SSH rather than changing
 ssh -N -L 8770:127.0.0.1:8770 you@this-machine
 ```
 
+## Running a command from the page
+
+The **Run** tab is the landing view. Pick a command, fill in the flags, click **Run**, and watch
+the output arrive. Start with `categories`: it takes no flags, needs no simulator, and finishes in
+under a second, so it is the quickest way to confirm a fresh install works end to end.
+
+The form is **generated from the CLI's own flags** — the same data
+`docs/reference/commands.md` is written from. It cannot offer a flag the command does not take,
+`--category` and `--rule` are dropdowns filled from `categories.py`, and a submission the CLI would
+reject comes back as a sentence about one flag rather than a traceback in the log.
+
+Three things it will not do:
+
+- **One job at a time.** A second Run is refused, naming the job that holds the slot. Two
+  `generate`s into one bank directory is a corrupt manifest.
+- **No writing outside this checkout.** A path flag that resolves outside the directory the studio
+  was started in is refused.
+- **It will not run `studio`.** A studio inside a job would bind another port and serve this same
+  page.
+
+A job's state lives in two files — `.studio/jobs/<id>/log` and `.studio/jobs/<id>/exit` — and is
+read back off disk every time it is asked for. Reloading the page mid-job reattaches to it;
+restarting the studio does not orphan it.
+
 ## What it will and will not do to your files
 
 - **Reads** `--banks-root` for directories holding a `manifest.json`, and serves thumbnails from
   inside them.
-- **Writes** only under `.studio/` (job logs, scratch figures) and — from Step 6 onward, and only
-  when you ask — into a bank you name. `.studio/` is gitignored and disposable: a job is
-  re-runnable, so nothing in it is worth keeping.
+- **Writes** under `.studio/` (job logs, scratch figures), and into whatever a command you ran was
+  told to write — `generate -o ./banks/b` writes a bank, exactly as it would from a terminal.
+  `.studio/` is gitignored and disposable: a job is re-runnable, so nothing in it is worth keeping.
 - **Never** touches a bank you did not name, and never regenerates one you did not ask it to.
 
 ## How it works, in one paragraph
@@ -131,15 +158,20 @@ design is arranged to prevent. Existing examples of the pattern: `/api/doctor` r
 | `the studio needs FastAPI and uvicorn` | the `web` group is missing: `uv sync --group web` |
 | `Address already in use` | another studio is running; `pkill -f 'bin/scenariobank studio'` or use `--port` |
 | the reference tab says it failed to load | look at the terminal — a `ValueError` from `docs.reference()` means a CLI command was added without a group or without examples in `docs.py` |
+| a job says `lost` | its process ended without recording an exit code — the studio was killed while it ran |
 | the bank list is empty | no directory under `--banks-root` has a `manifest.json`; generate one with `scenariobank generate -o ./banks/b --bank-id b` |
 
 ## What exists today
 
-Built one command at a time; the page's first tab lists the same eight steps and strikes through
-what is done. Currently live:
+Built one step at a time; the Bank tab lists the same twelve steps and strikes through what is
+done. Currently live:
 
 1. the shell, and `doctor` in the header
 2. `categories` and `commands` — the reference tab
+3. the job engine — **every command is runnable from the Run tab**, which is scaffolding: it
+   is deleted once the purpose-built screens replace it
 
-Still to come: the thumbnail grid, the job engine behind `inspect`, `seeds`, `replace`, `generate`
-from the browser, then `sockets` and `destinations`. See **Phase 2c** in `IMPLEMENTATION_PLAN.md`.
+Still to come are the purpose-built surfaces that replace typing flags into a generated form: a
+gallery of scenario types with example pictures, generation from that gallery, the dataset of
+thumbnails, the panel saying what generated each one, and the swap. At that point the Run tab stops
+being the front door and becomes an escape hatch. See **Phase 2c** in `IMPLEMENTATION_PLAN.md`.

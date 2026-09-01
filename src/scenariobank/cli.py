@@ -506,6 +506,8 @@ def studio(
 
     from scenariobank.web.api import STATE_DIR_NAME, create_app
 
-    application = create_app(banks_root=banks_root, state_dir=Path(STATE_DIR_NAME))
+    application = create_app(
+        banks_root=banks_root, state_dir=Path(STATE_DIR_NAME), workdir=Path.cwd()
+    )
     typer.echo(f"studio on http://{host}:{port}/  (banks: {banks_root})")
     uvicorn.run(application, host=host, port=port, log_level="warning")

@@ -182,6 +182,56 @@ def _value_notes() -> dict[str, str]:
     }
 
 
+def _choices() -> dict[str, list[str]]:
+    """The flags whose values are a closed set, and what that set is.
+
+    The same lists `_value_notes` writes into the prose, as data: the studio turns these into
+    dropdowns, so a category cannot be mistyped in the page. Read from `categories.py` for the
+    reason everything else here is -- a hand-listed set goes stale the day a category is added.
+    """
+    from scenariobank.categories import CATEGORIES, ExitRule
+
+    return {
+        "--category": list(CATEGORIES),
+        "--rule": [rule.value for rule in ExitRule],
+    }
+
+
+def _params(command: Any, choices: dict[str, list[str]]) -> list[dict[str, Any]]:
+    """One entry per flag, unrendered: the machine-readable half of `_rows`.
+
+    `_rows` describes a flag to a reader; this describes it to a program. The studio builds its
+    form from these and the studio's API validates a submitted job against them, so a flag the
+    page offers and a flag the CLI accepts are the same flag by construction -- there is no second
+    list of flags anywhere to fall out of step.
+    """
+    params = []
+    for param in command.params:
+        flags = list(param.opts)
+        if not flags or any(flag in _SKIP for flag in flags):
+            continue
+        long = next((flag for flag in flags if flag.startswith("--")), flags[0])
+        default = param.default
+        if isinstance(default, Path):
+            default = str(default)
+        elif isinstance(default, (tuple, list)):
+            default = [str(value) for value in default]
+        params.append(
+            {
+                "flag": long,
+                "aliases": [flag for flag in flags if flag != long],
+                "off_flag": next(iter(param.secondary_opts or []), None),
+                "type": param.type.name,
+                "required": bool(param.required),
+                "multiple": bool(getattr(param, "multiple", False)),
+                "default": default,
+                "help": (param.help or "").strip(),
+                "choices": choices.get(long),
+            }
+        )
+    return params
+
+
 def _rows(command: Any, notes: dict[str, str]) -> list[dict[str, str]]:
     """One row per flag: what to type, whether you must, whether it repeats, what it takes.
 
@@ -258,12 +308,20 @@ def _example_lines(name: str) -> list[str]:
     return lines
 
 
-def _command_entry(name: str, command: Any, notes: dict[str, str]) -> dict[str, Any]:
-    """One command as data: its prose, its flags and its examples. Raises if it has no examples."""
+def _command_entry(
+    name: str, command: Any, notes: dict[str, str], choices: dict[str, list[str]]
+) -> dict[str, Any]:
+    """One command as data: its prose, its flags and its examples. Raises if it has no examples.
+
+    `options` is for reading and `params` is for running. Both are read off the same Typer command
+    in the same pass, which is the only reason the reference tab and the run form can be trusted to
+    describe one program.
+    """
     return {
         "name": name,
         "help": command.help.strip() if command.help else None,
         "options": _rows(command, notes),
+        "params": _params(command, choices),
         "examples": _example_lines(name),
     }
 
@@ -382,15 +440,18 @@ def reference() -> dict[str, Any]:
         raise ValueError("docs.GROUPS lists a command in more than one group")
 
     notes = _value_notes()
+    choices = _choices()
     return {
         "index": [{"want": want, "command": command} for want, command in INDEX],
         "global_options": _rows(group, notes),
+        "global_params": _params(group, choices),
         "groups": [
             {
                 "title": title,
                 "blurb": blurb,
                 "commands": [
-                    _command_entry(name, group.commands[name], notes) for name in names
+                    _command_entry(name, group.commands[name], notes, choices)
+                    for name in names
                 ],
             }
             for title, blurb, names in GROUPS

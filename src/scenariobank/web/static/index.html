@@ -125,6 +125,46 @@ a { color: var(--accent); }
 a.jump { text-decoration: none; font-family: var(--mono); }
 a.jump:hover { text-decoration: underline; }
 
+.form { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.5rem 1rem; }
+.form label {
+  font-family: var(--mono); font-size: 12.5px; color: var(--accent);
+  padding-top: 0.4rem; white-space: nowrap;
+}
+.form label .req { color: var(--bad); }
+.form .hint { grid-column: 2; margin: -0.25rem 0 0.35rem; color: var(--muted); font-size: 12px; }
+input[type="text"], input[type="number"], select, textarea {
+  font: inherit; width: 100%; padding: 0.32rem 0.5rem;
+  color: var(--ink); background: var(--ground);
+  border: 1px solid var(--hair); border-radius: 6px;
+}
+textarea { font-family: var(--mono); font-size: 12.5px; min-height: 3.4rem; resize: vertical; }
+input[type="checkbox"] { width: auto; margin: 0.55rem 0 0; }
+
+.row { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; margin-top: 1.2rem; }
+.row .spacer { flex: 1; }
+button.go {
+  font: inherit; font-weight: 600; color: #fff; background: var(--accent);
+  border: 0; border-radius: 7px; padding: 0.45rem 1.2rem; cursor: pointer;
+}
+button.go[disabled] { opacity: 0.4; cursor: default; }
+button.ghost {
+  font: inherit; color: var(--ink-2); background: none;
+  border: 1px solid var(--hair); border-radius: 7px; padding: 0.43rem 0.9rem; cursor: pointer;
+}
+button.ghost[hidden] { display: none; }
+
+.pill {
+  font-family: var(--mono); font-size: 12px; padding: 0.12rem 0.55rem;
+  border: 1px solid var(--hair); border-radius: 999px; color: var(--muted);
+}
+.pill.run { color: var(--accent); border-color: var(--accent); }
+.pill.ok  { color: var(--good); border-color: var(--good); }
+.pill.bad { color: var(--bad);  border-color: var(--bad); }
+
+.argv { font-family: var(--mono); font-size: 12px; color: var(--muted); word-break: break-all; }
+#log { max-height: 27rem; overflow-y: auto; white-space: pre-wrap; }
+#log:empty::before { content: "nothing has run yet."; color: var(--muted); }
+
 .empty ol { margin: 0.9rem 0 0; padding-left: 1.3rem; color: var(--ink-2); }
 .empty li { margin: 0.25rem 0; }
 .empty li.done { color: var(--muted); text-decoration: line-through; }
@@ -135,29 +175,62 @@ a.jump:hover { text-decoration: underline; }
 <header class="top">
   <h1>scenariobank <span>studio</span></h1>
   <nav class="tabs" id="tabs">
-    <button data-view="bank" aria-selected="true">Bank</button>
+    <button data-view="run" aria-selected="true">Run</button>
+    <button data-view="bank" aria-selected="false">Bank</button>
     <button data-view="reference" aria-selected="false">Reference</button>
   </nav>
   <div id="sim"><span class="k">simulator…</span></div>
 </header>
 
 <main>
-  <section id="view-bank">
+  <section id="view-run">
+    <div class="card">
+      <h2>Run a command</h2>
+      <p class="blurb" id="run-blurb">
+        Every command runs as a subprocess of this same CLI, one at a time. The form below is
+        built from the CLI’s own flags, so it cannot offer one the command does not take.
+      </p>
+      <div class="form" id="run-form"><span class="loading">loading the commands…</span></div>
+      <div class="row">
+        <button class="go" id="run" disabled>Run</button>
+        <button class="ghost" id="cancel" hidden>Cancel</button>
+        <label style="font-family: var(--sans); color: var(--ink-2); padding: 0">
+          <input type="checkbox" id="verbose" style="margin: 0 0.3rem 0 0; vertical-align: -1px">
+          verbose
+        </label>
+        <span class="spacer"></span>
+        <span class="pill" id="state">idle</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Output</h2>
+      <p class="argv" id="argv"></p>
+      <pre id="log"></pre>
+    </div>
+  </section>
+
+  <section id="view-bank" hidden>
     <div class="card empty">
-      <h2>Nothing here yet — the bank browser is Step 3.</h2>
+      <h2>Nothing here yet — the thumbnail grid is Step 6.</h2>
       <p>
-        Everything arrives one command at a time, so each step can be tested on its own.
-        The <b>Reference</b> tab is live.
+        Everything arrives one step at a time, so each can be tested on its own. The <b>Run</b>
+        tab is scaffolding — a generated form over the flags, so nothing is unreachable while the
+        real screens are built. It is deleted at step 8.
       </p>
       <ol>
         <li class="done">the shell, and <code>doctor</code> in the header</li>
         <li class="done"><code>categories</code> and <code>commands</code> — the reference tab</li>
-        <li><code>generate</code>’s output — the thumbnail grid</li>
-        <li><code>inspect</code> — and the job engine behind it</li>
-        <li><code>seeds</code> — ranked alternatives</li>
-        <li><code>replace</code> — swap one seed in place</li>
-        <li><code>generate</code> — build a bank from here</li>
-        <li><code>sockets</code> and <code>destinations</code></li>
+        <li class="done">the job engine — run any command from the page</li>
+        <li>the gallery — pick a scenario type from pictures</li>
+        <li>generate what you picked</li>
+        <li>the dataset — every picture in the bank</li>
+        <li>what generated this picture</li>
+        <li>replace the seed behind an image</li>
+        <li>four new scenario types</li>
+        <li>the road builder — compose a road by hand</li>
+        <li>the road utilities — exits, and the destinations reference</li>
+        <li>pick a model and submit a run to the queue</li>
       </ol>
     </div>
   </section>
@@ -302,6 +375,193 @@ function renderReference(data, categories) {
   target.replaceWith(...cards);
 }
 
+// ------------------------------------------------------------------ the run tab
+//
+// The form is generated from `/api/commands` -- the CLI's own parameters -- and the server
+// validates a submission against the same data. There is no list of flags in this file, which is
+// the only reason the page cannot come to offer a flag the command does not take.
+
+const run = { reference: null, byName: {}, runnable: [], entry: null, widgets: [], job: null,
+              offset: 0, timer: null };
+
+const $ = (id) => document.getElementById(id);
+
+function setState(kind, text) {
+  const pill = $("state");
+  pill.className = kind === "idle" ? "pill" : `pill ${kind}`;
+  pill.textContent = text;
+}
+
+function widgetFor(param) {
+  const id = `opt${param.flag}`;
+  let input;
+  if (param.type === "boolean") {
+    input = el("input", { type: "checkbox", id });
+    input.checked = Boolean(param.default);
+  } else if (param.multiple) {
+    input = el("textarea", { id, placeholder: "one per line" });
+  } else if (param.choices) {
+    input = el("select", { id });
+    if (!param.required) input.appendChild(el("option", { value: "", text: "—" }));
+    for (const choice of param.choices) {
+      input.appendChild(el("option", { value: choice, text: choice }));
+    }
+    if (param.default !== null && param.default !== undefined) input.value = String(param.default);
+  } else {
+    const numeric = ["int", "integer", "float"].includes(param.type);
+    const shown = param.default === null || param.default === undefined
+      ? (param.required ? "required" : "")
+      : String(param.default);
+    input = el("input", { type: numeric ? "number" : "text", id, placeholder: shown });
+  }
+  return {
+    param,
+    input,
+    // undefined means "do not send this flag at all", which is how a default stays the CLI's
+    // to decide rather than being restated here as an empty string.
+    read() {
+      if (param.type === "boolean") return input.checked;
+      const raw = input.value.trim();
+      if (!raw) return undefined;
+      if (param.multiple) {
+        const values = raw.split("\n").map((line) => line.trim()).filter(Boolean);
+        return values.length ? values : undefined;
+      }
+      return raw;
+    },
+  };
+}
+
+function commandPicker(selected) {
+  const picker = el("select", { id: "command" });
+  for (const group of run.reference.groups) {
+    const names = group.commands.map((c) => c.name).filter((n) => run.runnable.includes(n));
+    if (!names.length) continue;
+    const optgroup = el("optgroup", { label: group.title });
+    for (const name of names) optgroup.appendChild(el("option", { value: name, text: name }));
+    picker.appendChild(optgroup);
+  }
+  picker.value = selected;
+  picker.addEventListener("change", () => renderForm(picker.value));
+  return picker;
+}
+
+function renderForm(name) {
+  const entry = run.byName[name];
+  run.entry = entry;
+  run.widgets = [];
+
+  const parts = [el("label", { for: "command", text: "command" }), commandPicker(name)];
+  if (entry.help) {
+    parts.push(el("div", { class: "hint", html: inline(entry.help.split("\n\n")[0]) }));
+  }
+  for (const param of entry.params) {
+    const widget = widgetFor(param);
+    run.widgets.push(widget);
+    parts.push(el("label", {
+      for: widget.input.id,
+      html: escape(param.flag) + (param.required ? ' <span class="req">*</span>' : ""),
+    }));
+    parts.push(widget.input);
+    const note = [param.help, param.multiple ? "Repeats: one per line." : ""]
+      .filter(Boolean).join(" ");
+    if (note) parts.push(el("div", { class: "hint", html: inline(note) }));
+  }
+  if (!entry.params.length) parts.push(el("div", { class: "hint", text: "Takes no options." }));
+
+  $("run-form").replaceChildren(...parts);
+  $("run").disabled = false;
+}
+
+function apply(job) {
+  if (job.log) {
+    const pane = $("log");
+    const pinned = pane.scrollTop + pane.clientHeight >= pane.scrollHeight - 24;
+    pane.textContent += job.log;
+    if (pinned) pane.scrollTop = pane.scrollHeight;
+  }
+  run.offset = job.log_size;
+
+  const running = job.state === "running";
+  if (running) setState("run", `running · ${job.command}`);
+  else if (job.state === "lost") setState("bad", "lost — it ended without recording an exit code");
+  else setState(job.exit_code === 0 ? "ok" : "bad", `${job.command} · exit ${job.exit_code}`);
+  $("cancel").hidden = !running;
+  $("run").disabled = running;
+}
+
+function schedule() {
+  clearTimeout(run.timer);
+  run.timer = setTimeout(tick, 400);
+}
+
+async function tick() {
+  if (!run.job) return;
+  try {
+    const job = await api(`/api/jobs/${run.job}?since=${run.offset}`);
+    apply(job);
+    if (job.state === "running") schedule();
+  } catch (error) {
+    setState("bad", error.message);
+  }
+}
+
+function attach(job) {
+  run.job = job.job_id;
+  $("argv").textContent = job.argv.join(" ");
+  apply(job);
+  if (job.state === "running") schedule();
+}
+
+async function start() {
+  const options = {};
+  for (const widget of run.widgets) {
+    const value = widget.read();
+    if (value !== undefined) options[widget.param.flag] = value;
+  }
+  setState("run", "starting…");
+  $("log").textContent = "";
+  run.offset = 0;
+  try {
+    attach(await api("/api/jobs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        command: run.entry.name,
+        options,
+        global_options: $("verbose").checked ? { "--verbose": true } : {},
+      }),
+    }));
+  } catch (error) {
+    // A refusal names one flag, so it belongs where you are looking: next to the button.
+    setState("bad", error.message);
+    $("run").disabled = false;
+  }
+}
+
+function buildRun(data, runnable) {
+  run.reference = data;
+  run.runnable = runnable.commands;
+  for (const group of data.groups) {
+    for (const entry of group.commands) run.byName[entry.name] = entry;
+  }
+  renderForm(run.runnable.includes("categories") ? "categories" : run.runnable[0]);
+
+  $("run").addEventListener("click", start);
+  $("cancel").addEventListener("click", async () => {
+    if (!run.job) return;
+    apply(await api(`/api/jobs/${run.job}`, { method: "DELETE" }));
+    schedule();
+  });
+
+  // Adopt whatever is already running. A reload is not a new session as far as a job is
+  // concerned -- the state was never in this page to begin with.
+  api("/api/jobs")
+    .then((jobs) => (jobs.length ? api(`/api/jobs/${jobs[0].job_id}?since=0`) : null))
+    .then((job) => job && attach(job))
+    .catch(() => {});
+}
+
 // ------------------------------------------------------------------ start-up
 
 function field(key, value, bad) {
@@ -327,11 +587,18 @@ api("/api/doctor").then((report) => {
     `<span class="bad">doctor failed: ${escape(error.message)}</span>`;
 });
 
-Promise.all([api("/api/commands"), api("/api/categories")])
-  .then(([data, categories]) => renderReference(data, categories))
+// One fetch of the reference, two things built from it: the document, and the form. If they
+// could disagree, one of them would be lying about what the CLI accepts.
+Promise.all([api("/api/commands"), api("/api/categories"), api("/api/runnable")])
+  .then(([data, categories, runnable]) => {
+    renderReference(data, categories);
+    buildRun(data, runnable);
+  })
   .catch((error) => {
     const target = document.getElementById("reference");
     target.className = "card failed";
     target.textContent = `the reference failed to load: ${error.message}`;
+    $("run-form").innerHTML = `<span class="failed">the commands failed to load: ${
+      escape(error.message)}</span>`;
   });
 </script>

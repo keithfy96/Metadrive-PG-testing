@@ -3,13 +3,20 @@
 A bank of procedurally generated MetaDrive scenarios with fixed seeds, forced destinations, and
 run-time difficulty options — plus the runner that scores a camera model against it.
 
+**The studio is the way in.** `scenariobank studio` serves a local web page: pick a scenario type,
+build a bank, look at every scenario in it, and swap a poor seed. That is the product;
+[`docs/web-setup.md`](docs/web-setup.md) is how to install and run it.
+
+The CLI underneath is how the studio executes rather than a second product. MetaDrive's engine is a
+per-process singleton, so every simulation has to be a subprocess, and that subprocess is this
+package's own command line — which is also why the studio's forms and its job validation are
+generated from the CLI's flags and cannot describe a different program.
+
 `IMPLEMENTATION_PLAN.md` is the source of truth for what gets built and in what order.
 `CONTRACT.md` (Phase 6) is what the bank will promise its consumers.
 [`docs/reference/commands.md`](docs/reference/commands.md) is the full flag reference --
 generated from the CLI, so it cannot drift. This file explains *why* each command exists;
 that one lists every flag and every value they accept.
-[`docs/web-setup.md`](docs/web-setup.md) is how to install and run the studio, the local web
-page in front of these same commands.
 
 All scenarios are **left-side traffic** (right-hand-drive market). See
 [Which side of the road](#which-side-of-the-road) — it is not a MetaDrive setting, and it is the
