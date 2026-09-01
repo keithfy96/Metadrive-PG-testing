@@ -4,8 +4,9 @@
 `BaseEngine.singleton` (`engine/engine_utils.py:36-59`) is one engine per *process*: a server that
 built an env would hold it for its lifetime, could not serve two requests that each need one, and
 would die with it -- a panda3d/bullet fault is a segfault, not an exception a handler can catch. So
-every simulator-touching command runs as a subprocess of this same CLI, which also means the CLI
-stays the single source of truth and `docs/reference/commands.md` keeps describing what runs.
+every simulator-touching command runs as a subprocess of this same CLI. That is also what keeps
+this page honest: its forms and the validation in `invoke.py` are both derived from the CLI's own
+parameters, so the page cannot offer a flag that does not exist.
 
 `create_app` takes its roots as arguments rather than reading module globals, so the tests drive it
 with `TestClient` against a temp directory -- no server, no port, no simulator.
@@ -19,6 +20,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from scenariobank.cli import EXAMPLES_DIR
 from scenariobank.web.invoke import NOT_RUNNABLE, InvokeError, build_argv, catalog
 from scenariobank.web.jobs import JobBusy, JobNotFound, Jobs
 
@@ -152,6 +154,28 @@ def create_app(*, banks_root: Path, state_dir: Path, workdir: Path | None = None
             return jobs.cancel(job_id)
         except JobNotFound as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.get("/api/examples/{category}.png")
+    def example(category: str) -> FileResponse:
+        """The checked-in example picture for one category, which is what the gallery shows.
+
+        The name is looked up in `CATEGORIES` *before* anything touches the filesystem, so a path
+        that escapes the examples directory cannot be spelled -- it is not filtered out, it never
+        becomes a path at all.
+        """
+        from scenariobank.categories import CATEGORIES
+
+        if category not in CATEGORIES:
+            raise HTTPException(status_code=404, detail=f"no category named {category!r}")
+        path = workdir / EXAMPLES_DIR / f"{category}.png"
+        if not path.is_file():
+            # Named rather than blank: a studio started outside the repo, or a category added
+            # since the last redraw, is a command away from being fixed.
+            raise HTTPException(
+                status_code=404,
+                detail=f"no example picture for {category!r} yet -- run: scenariobank examples",
+            )
+        return FileResponse(path, media_type="image/png")
 
     @app.get("/")
     def index() -> FileResponse:

@@ -1036,7 +1036,7 @@ plumbing and nothing else. Pick `doctor`, tick `--json`, Run: the checkbox came 
 flags. Run twice quickly — the second is refused, naming the job that holds the slot. Reload
 mid-job — the log is still there and still filling. **Cancel** — red, with the signal's exit code.
 
-### Step 4 — the gallery: pick what to build ⬜  ⟵ *feature 1*
+### Step 4 — the gallery: pick what to build ✅  ⟵ *feature 1*
 
 *(Reordered 2026-09-02 — Keith: "this idea of using the cli before the web feels very counter
 intuitive, it creates a web interface that's barely useable and not much better". The steps below
@@ -1049,16 +1049,36 @@ hand-drawn for the same reason `destinations.md` is: a picture nobody regenerate
 the failure is silent. Needs `docs.GROUPS` and `docs.EXAMPLES` entries or the reference refuses to
 render, which is the existing rule doing its job.
 
+**Drawing the picture is building an engine**, so this could not have been done in the server:
+`figures.draw_route` constructs a `MetaDriveEnv`, and the `web` group deliberately installs neither
+MetaDrive nor matplotlib. The subprocess is not a stylistic choice here, it is the only shape
+available — and checking the output in is what lets the screen work on a `--group web` machine at
+all.
+
 Checked in rather than drawn on demand, because this is the screen you meet **before** you have a
 bank, a simulator, or any patience: it has to be instant and it has to work on a machine with only
 the `web` group installed.
 
-- `GET /api/examples/{category}.png`, resolved inside the examples directory
+- `GET /api/examples/{category}.png`. The name is looked up in `CATEGORIES` **before anything
+  becomes a path**, so a traversal is not filtered out — it never reaches the filesystem. A
+  missing picture is a 404 naming the command that draws it.
 - the **Build** tab becomes the landing view: one card per category — the example picture, the
-  description, the road, the exit rule, the step budget. Click to select; select several.
+  description, the road, the exit rule, the step budget. Click to select; select several. The
+  selection is the state Step 5 consumes.
+- a card whose picture has not been drawn says so and offers to draw it: `examples` is a
+  registered command, so the button is a `POST /api/jobs` and no new machinery at all.
+
+*(Its own directory rather than reusing `docs/reference/figures/`, which is where an ad-hoc
+`inspect --block-seq` lands by default — not a directory the page could safely show. The cost is
+one duplicated picture per category, ~312 KB.)*
 
 **Test in the page:** open the studio with no bank generated and nothing typed, and see seven
 pictures. Tick `curve` and `roundabout`.
+
+*(Done 2026-09-02. Verified: `uv run scenariobank examples` drew all seven; all seven serve as
+`image/png` with correct PNG magic; `banana`, `..` and `curve-seed0` are each a 404; the page
+lands on **Build** with **Run** hidden. 217 tests pass. A no-sim test asserts one checked-in
+picture per category, so adding a category and forgetting to redraw fails on every machine.)*
 
 ### Step 5 — generate what you picked ⬜  ⟵ *bridges 1 to 2*
 

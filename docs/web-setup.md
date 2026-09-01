@@ -122,7 +122,7 @@ it for its lifetime, could serve exactly one simulator request, and would die wi
 fault is a segfault, not an exception a handler can catch. So every simulator command runs as a
 subprocess of this same CLI. That costs a second or two of import per job and buys three things:
 a crash kills a job rather than the studio, there is no engine contention to get wrong, and the CLI
-stays the single source of truth, so the page and `docs/reference/commands.md` describe the same
+keeps describing what runs, so the page and `docs/reference/commands.md` describe the same
 program.
 
 ## Development

@@ -112,6 +112,26 @@ uv run scenariobank inspect -c intersection_left -s 0                 # a catego
 uv run scenariobank inspect -b CC -s 22 --rule only -o /tmp/cc22.png  # any road, no category needed
 ```
 
+### `examples`
+
+Draw one example picture per category, which is what the studio's gallery shows.
+
+Checked in rather than drawn on demand: this is the screen you meet before you have a bank, a
+simulator, or any patience, and the web group installs neither MetaDrive nor matplotlib. Re-run
+it when a category's road or exit rule changes -- a picture nobody regenerates goes stale, and
+the failure is silent.
+
+| flag | | repeats | meaning |
+|---|---|---|---|
+| `--out/-o <path>` | default `docs/reference/examples` |  | Directory to write the example pictures into. |
+| `--category/-c <str>` | optional |  | Redraw one category instead of all of them. One of: `intersection_left`, `intersection_right`, `intersection_straight`, `t_junction`, `roundabout`, `curve`, `ramp_traffic_merge`. |
+| `--seed/-s <int>` | default `0` |  | Map seed. Any non-negative integer. |
+
+```bash
+uv run scenariobank examples                # redraw the studio's gallery
+uv run scenariobank examples -c roundabout  # just the one that changed
+```
+
 ### `seeds`
 
 Rank candidate seeds by how unlike the ones you are keeping they are.
@@ -233,9 +253,10 @@ The same commands behind a local web page, for the parts of the job that are pic
 
 Serve the local authoring studio: the bank in a page instead of an image viewer.
 
-A second front door onto these same commands, not a second implementation of them. Every
-simulator command it offers runs as a subprocess of this CLI, so what the page does and what
-`docs/reference/commands.md` describes cannot drift apart.
+This is the way in. Every simulation runs as a subprocess of this same CLI, because a
+MetaDrive engine is one per process and a server holding one would die with it -- so the page's
+forms and its validation are derived from this CLI's own parameters rather than declared a
+second time, and the two cannot drift apart.
 
 Needs the web group: `uv sync --group web`.
 

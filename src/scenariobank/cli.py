@@ -465,6 +465,51 @@ def destinations(
     typer.echo(f"destinations written: {path}")
 
 
+#: Where the studio's gallery reads its example pictures from. Separate from
+#: `docs/reference/figures/`, which is where an ad-hoc `inspect` lands by default and so holds
+#: whatever anyone happened to draw -- not a directory a page could safely show.
+EXAMPLES_DIR = Path("docs/reference/examples")
+
+
+@app.command()
+def examples(
+    out: Annotated[
+        Path, typer.Option("--out", "-o", help="Directory to write the example pictures into.")
+    ] = EXAMPLES_DIR,
+    category: Annotated[
+        str | None,
+        typer.Option("--category", "-c", help="Redraw one category instead of all of them."),
+    ] = None,
+    seed: Seed = 0,
+) -> None:
+    """Draw one example picture per category, which is what the studio's gallery shows.
+
+    Checked in rather than drawn on demand: this is the screen you meet before you have a bank, a
+    simulator, or any patience, and the web group installs neither MetaDrive nor matplotlib. Re-run
+    it when a category's road or exit rule changes -- a picture nobody regenerates goes stale, and
+    the failure is silent.
+    """
+    _require_simulator()
+    from scenariobank.figures import FigureError, draw_route
+
+    try:
+        wanted = {category: get_category(category)} if category else dict(CATEGORIES)
+    except CategoryError as error:
+        typer.echo(f"examples failed: {error}", err=True)
+        raise typer.Exit(code=1) from error
+
+    out.mkdir(parents=True, exist_ok=True)
+    for name, entry in wanted.items():
+        try:
+            result = draw_route(entry, seed, out / f"{name}.png")
+        except (CategoryError, SocketError, FigureError, ValueError) as error:
+            typer.echo(f"examples failed on {name}: {error}", err=True)
+            raise typer.Exit(code=1) from error
+        # One line per figure as it lands: the studio reads this log while the job runs, so
+        # progress costs nothing beyond saying what was just drawn.
+        typer.echo(f"{name} -> {result['path']} ({result['destination']})")
+
+
 #: Addresses the studio will bind. Nothing else, because these routes run subprocesses that write
 #: into the repo and there is no authentication -- so the only safe listener is one nothing else
 #: can reach. Refused loudly rather than silently rewritten, so an attempt to expose it is an
@@ -482,9 +527,10 @@ def studio(
 ) -> None:
     """Serve the local authoring studio: the bank in a page instead of an image viewer.
 
-    A second front door onto these same commands, not a second implementation of them. Every
-    simulator command it offers runs as a subprocess of this CLI, so what the page does and what
-    `docs/reference/commands.md` describes cannot drift apart.
+    This is the way in. Every simulation runs as a subprocess of this same CLI, because a
+    MetaDrive engine is one per process and a server holding one would die with it -- so the page's
+    forms and its validation are derived from this CLI's own parameters rather than declared a
+    second time, and the two cannot drift apart.
 
     Needs the web group: `uv sync --group web`.
     """

@@ -207,7 +207,7 @@ def test_a_job_runs_the_cli_and_the_page_can_read_its_output(client):
     assert job["state"] == "finished"
     assert job["exit_code"] == 0
     # The same seven names `/api/categories` serves, this time produced by the CLI itself in a
-    # subprocess -- which is the whole claim the studio makes about being a second front door.
+    # subprocess -- which is the whole claim the studio makes about how it executes.
     for name in CATEGORIES:
         assert name in job["log"]
 
@@ -215,3 +215,54 @@ def test_a_job_runs_the_cli_and_the_page_can_read_its_output(client):
 def test_a_bad_job_id_is_a_404_not_a_file_read(client):
     assert client.get("/api/jobs/../../../etc/passwd").status_code in (404, 400)
     assert client.get("/api/jobs/nope").status_code == 404
+
+
+def test_every_category_has_an_example_picture_checked_in():
+    """The gallery's assets, guarded from a machine with no simulator.
+
+    Not a web test at all in spirit: the realistic failure is adding a category and forgetting to
+    redraw, and that has to fail on every machine rather than only where MetaDrive is installed --
+    the same reason `test_docs.py` guards the generated reference.
+    """
+    from scenariobank.cli import EXAMPLES_DIR
+
+    missing = [name for name in CATEGORIES if not (EXAMPLES_DIR / f"{name}.png").is_file()]
+    assert not missing, (
+        f"no example picture for {', '.join(missing)}. Run: uv run scenariobank examples"
+    )
+
+
+def test_the_gallery_serves_a_picture_for_every_category(tmp_path):
+    """Served through the app, from a temp directory that stands in for the repo."""
+    from scenariobank.cli import EXAMPLES_DIR
+
+    examples = tmp_path / EXAMPLES_DIR
+    examples.mkdir(parents=True)
+    for name in CATEGORIES:
+        (examples / f"{name}.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    application = create_app(
+        banks_root=tmp_path / "banks", state_dir=tmp_path / ".studio", workdir=tmp_path
+    )
+    with TestClient(application) as served:
+        for name in CATEGORIES:
+            response = served.get(f"/api/examples/{name}.png")
+            assert response.status_code == 200, name
+            assert response.headers["content-type"] == "image/png"
+
+
+def test_a_picture_that_has_not_been_drawn_yet_names_the_command(client):
+    # The studio started somewhere without the pictures. A blank card teaches nothing; this is
+    # the one screen where the fix is a single command.
+    response = client.get("/api/examples/curve.png")
+    assert response.status_code == 404
+    assert "scenariobank examples" in response.json()["detail"]
+
+
+@pytest.mark.parametrize("segment", ["banana", "..", "../../../etc/passwd", "curve-seed0"])
+def test_the_gallery_only_answers_to_a_category_name(client, segment):
+    # The name is checked against `CATEGORIES` before anything becomes a path, so a traversal is
+    # not filtered out -- it never reaches the filesystem at all.
+    response = client.get(f"/api/examples/{segment}.png")
+    assert response.status_code == 404
+    assert "escaped" not in response.text

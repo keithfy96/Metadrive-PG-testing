@@ -37,7 +37,7 @@ GROUPS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     (
         "Look before you commit",
         "Measure and draw. Still nothing written into a bank.",
-        ("inspect", "seeds", "destinations"),
+        ("inspect", "examples", "seeds", "destinations"),
     ),
     (
         "Build and correct",
@@ -70,6 +70,10 @@ EXAMPLES: dict[str, tuple[tuple[str, str], ...]] = {
             "uv run scenariobank inspect -b CC -s 22 --rule only -o /tmp/cc22.png",
             "any road, no category needed",
         ),
+    ),
+    "examples": (
+        ("uv run scenariobank examples", "redraw the studio's gallery"),
+        ("uv run scenariobank examples -c roundabout", "just the one that changed"),
     ),
     "seeds": (
         (
