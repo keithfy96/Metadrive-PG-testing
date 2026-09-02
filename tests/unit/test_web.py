@@ -597,3 +597,51 @@ def test_the_studios_banks_root_is_the_directory_the_listing_reads(client):
     root = client.get("/api/studio").json()["banks_root"]
     assert (client.workdir / root / "b" / "manifest.json").is_file()
     assert [bank["name"] for bank in client.get("/api/banks").json()] == ["b"]
+
+
+# ---------------------------------------------------------------- the review (Step 6b)
+
+
+def test_the_review_reports_what_is_actually_in_a_bank(client):
+    """The counting is `review.py`'s and tested there; this is that it reaches the page.
+
+    Five rows over two seeds means every scenario is built twice, so the bank has half the
+    scenarios it has rows -- which is the whole point of serving this.
+    """
+    _bank(client.workdir / "banks", "b", categories=("curve", "roundabout"), seeds=(0, 1))
+    report = client.get("/api/banks/b/review").json()
+
+    assert report["bank_id"] == "b"
+    assert report["total"] == 4
+    assert [one["category"] for one in report["categories"]] == ["curve", "roundabout"]
+    for one in report["categories"]:
+        # `_bank` writes every row with the same destination, length and rotation, differing only
+        # in the id -- so each category is one drive wearing two names.
+        assert one["duplicates"]["distinct"] == 1
+        assert len(one["duplicates"]["identical_groups"][0]) == 2
+        assert any("distinct" in line for line in one["warnings"])
+
+
+def test_the_review_is_separate_from_the_manifest_it_is_computed_from(client):
+    """Step 6 serves the manifest unshaped. A computed report folded into it would be exactly the
+    second description of a bank that rule exists to prevent."""
+    _bank(client.workdir / "banks", "b")
+    served = client.get("/api/banks/b").json()
+    assert "duplicates" not in served
+    assert "warnings" not in json.dumps(served)
+
+
+def test_the_review_refuses_the_same_names_the_rest_of_the_bank_api_does(client):
+    _bank(client.workdir / "banks", "b")
+    assert client.get("/api/banks/.hidden/review").status_code == 400
+    assert client.get("/api/banks/nope/review").status_code == 404
+
+
+def test_an_unreadable_bank_cannot_be_reviewed_and_says_why(client):
+    broken = client.workdir / "banks" / "broken"
+    broken.mkdir(parents=True)
+    (broken / "manifest.json").write_text("{ not json")
+
+    response = client.get("/api/banks/broken/review")
+    assert response.status_code == 422
+    assert "not valid JSON" in response.json()["detail"]

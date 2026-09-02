@@ -423,6 +423,82 @@ def _parse_scan(raw: str) -> tuple[int, ...]:
     return _parse_seeds(raw, hint="--scan")
 
 
+@app.command("review")
+def review_bank(
+    bank: Annotated[
+        Path, typer.Option("--bank", help="Bank directory holding the manifest to review.")
+    ],
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Emit the report as JSON instead of aligned text.")
+    ] = False,
+) -> None:
+    """Say what is actually in a bank: duplicates, coverage, step budgets and spread.
+
+    **A bank of 35 rows is not automatically 35 scenarios.** `intersection_left` resolves every
+    seed to the same destination, the same route and the same turn -- the `X` junction does not
+    vary with the seed -- so five seeds draw two scenarios, one per spawn lane, and the other three
+    are padding. Nothing said so until this command.
+
+    Reads the manifest and nothing else: **no simulator, no environment, and no rebuild**, so it
+    runs on a machine with no MetaDrive and answers in milliseconds. The companion to `seeds`,
+    which needs the simulator and asks the other question -- that one is *what should I build*,
+    this one is *what did I build*.
+    """
+    from scenariobank.bank import BankError, read_manifest
+    from scenariobank.review import review
+
+    try:
+        report = review(read_manifest(bank))
+    except (BankError, ValueError) as error:
+        typer.echo(f"review failed: {error}", err=True)
+        raise typer.Exit(code=1) from error
+
+    if as_json:
+        typer.echo(report.model_dump_json(indent=2))
+        return
+
+    typer.echo(f"{report.bank_id}: {report.distinct} distinct of {report.total}")
+    for one in report.categories:
+        dupes = one.duplicates
+        typer.echo(
+            f"\n{one.category} ({one.block_seq}, rule {one.exit_rule})"
+            f"  {dupes.distinct} distinct of {dupes.total}"
+        )
+        for ids in dupes.identical_groups:
+            typer.echo(f"  identical:  {' = '.join(ids)}")
+        for ids in dupes.same_drive_groups:
+            typer.echo(f"  same drive, different lane:  {', '.join(ids)}")
+        if dupes.closest:
+            typer.echo(
+                f"  closest:    {dupes.closest.left} / {dupes.closest.right}"
+                f"  {dupes.closest.gap * 100:.0f}%  ({dupes.closest.verdict})"
+            )
+        cover = one.coverage
+        if cover.turn_pairs_present:
+            covered = ", ".join(cover.turn_pairs_present)
+            missing = f", missing {', '.join(cover.turn_pairs_missing)}" if (
+                cover.turn_pairs_missing
+            ) else ""
+            typer.echo(f"  turn pairs: {covered}{missing}")
+        typer.echo(
+            f"  exits:      {', '.join(f'{k} x{v}' for k, v in cover.destinations.items())}"
+            f"   lanes: {', '.join(f'{k} x{v}' for k, v in cover.spawn_lanes.items())}"
+            f"   turns: {cover.turns_left}L/{cover.turns_right}R"
+        )
+        typer.echo(
+            f"  route:      {one.spread.route_length_min_m:.1f} to "
+            f"{one.spread.route_length_max_m:.1f} m"
+            f"   rotation {one.spread.rotation_min_deg:+.1f} to "
+            f"{one.spread.rotation_max_deg:+.1f} deg"
+        )
+        typer.echo(
+            f"  budget:     worst earns {one.budget.worst_earned} of {one.budget.max_steps} steps"
+            + (f"  OVER: {', '.join(one.budget.over_budget)}" if one.budget.over_budget else "")
+        )
+        for line in one.warnings:
+            typer.echo(f"  ! {line}")
+
+
 @app.command()
 def commands(
     out: Annotated[

@@ -140,6 +140,7 @@ Three endpoints behind it, and nothing else:
 | `GET /api/banks` | directories under `--banks-root` holding a `manifest.json`, summarised: name, `bank_id`, when it was built, its categories and its scenario count |
 | `GET /api/banks/{bank}` | that bank's manifest, **as it is on disk** |
 | `GET /api/banks/{bank}/thumbs/{name}.png` | one scenario's picture |
+| `GET /api/banks/{bank}/review` | what is in it: duplicates, coverage, step budgets and spread — computed, never stored |
 
 The manifest is returned unshaped. It was written to explain itself — "declare the intent, store
 the fact" — so a studio that reformatted it here would be inventing a second description of a bank
@@ -155,6 +156,43 @@ Two states that are not errors, and say so:
 
 `generate --no-thumbnails` is a supported way to build a bank, so a card with no picture says
 "built without a thumbnail" rather than showing a broken image.
+
+## What is actually in a bank
+
+Under each scenario type is a row of counts, and the first one is the point: **`2 distinct of 5`**.
+
+A bank of 35 rows is not automatically 35 scenarios. `intersection_left` resolves every seed to the
+same destination, the same 111.7 m route and the same +90.0° turn — MetaDrive's `X` junction does
+not vary with the seed — so five seeds draw **two** scenarios, one per spawn lane, and the other
+three are padding. Nothing said so until this screen, and a bank that is 60% repetition would have
+reached the frontend team looking like 35.
+
+Duplicates are marked on the cards too, where you are already looking:
+
+| mark | means |
+|---|---|
+| `≡ 0002` | identical: every measured field matches, spawn lane included |
+| `≈ 0004 · 7%` | near-duplicate: close enough that the two thumbnails are the same picture |
+| `lane only` | the same drive from a different starting lane — the weakest real difference |
+
+The rest of the chips answer *what does this bank fail to test*: turn pairs covered against the
+four possible, destinations and spawn lanes with counts, the left/right balance, the route-length
+range, and `budget 1140/1200` — the largest step budget any route earns against the category's cap.
+That last one is a **correctness** check rather than a quality one: over the cap means a policy runs
+out of steps before reaching the destination.
+
+The warnings under the chips are sentences written by `review.py`, not assembled by the page, so
+the studio and the CLI cannot describe the same bank two different ways.
+
+`GET /api/banks/{bank}/review` serves it, and `scenariobank review --bank ./banks/b` prints the same
+thing in a terminal (`--json` for a machine). **No simulator is involved** — every field the
+comparison needs is already in the manifest, so it answers in milliseconds, runs on a machine with
+no MetaDrive, and works on banks generated before the feature existed.
+
+One measure was deliberately not reused: `variety.shape_gap` compares the *road*, and for `X` and
+`T` the road is identical across every seed by construction, so it would score 0% for every pair
+and say nothing exactly where the trouble is. What a thumbnail shows, and what actually differs, is
+the **route**.
 
 Bank and scenario names are checked **on the shape of the name**, before either becomes a path:
 letters, digits, dot, dash, underscore, and not a leading dot. A name that cannot hold a separator
@@ -241,6 +279,7 @@ design is arranged to prevent. Existing examples of the pattern: `/api/doctor` r
 | the reference tab says it failed to load | look at the terminal — a `ValueError` from `docs.reference()` means a CLI command was added without a group or without examples in `docs.py` |
 | a job says `lost` | its process ended without recording an exit code — the studio was killed while it ran |
 | the **Bank** tab says there are no banks | no directory under `--banks-root` holds a `manifest.json`; generate one from the **Build** tab, or with `scenariobank generate -o ./banks/b --bank-id b` |
+| a category says `2 distinct of 5` | not a fault: `X` and `T` junctions do not vary with the seed, so the spawn-lane count is the ceiling however many seeds you build. Use a category whose road varies, or accept the smaller set |
 | a bank is listed as `unreadable` | its `manifest.json` does not parse or does not validate — opening it names the reason. A bank written by an older schema reads exactly like this |
 | **Generate** is greyed out and says banks live outside the working directory | the studio was started with a `--banks-root` outside its own checkout; no job may write out there. Restart it inside the directory you want the bank in |
 
@@ -256,6 +295,7 @@ done. Currently live:
 4. the gallery — the **Build** tab, one example picture per scenario type
 5. generation from that selection — how many of each type, and a progress bar
 6. the dataset — the **Bank** tab, every scenario in a bank as the picture of it
+7. the review — how many of those scenarios are actually different
 
 Still to come are the surfaces that read one scenario back: the panel saying what generated a
 picture, and the swap. See **Phase 2c** in `IMPLEMENTATION_PLAN.md`.

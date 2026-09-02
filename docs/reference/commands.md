@@ -156,6 +156,30 @@ uv run scenariobank seeds -c curve --keep 0,1,2,3 --scan 0-30  # what would a fi
 uv run scenariobank seeds -c roundabout --scan 0,7,22          # score three named seeds
 ```
 
+### `review`
+
+Say what is actually in a bank: duplicates, coverage, step budgets and spread.
+
+**A bank of 35 rows is not automatically 35 scenarios.** `intersection_left` resolves every
+seed to the same destination, the same route and the same turn -- the `X` junction does not
+vary with the seed -- so five seeds draw two scenarios, one per spawn lane, and the other three
+are padding. Nothing said so until this command.
+
+Reads the manifest and nothing else: **no simulator, no environment, and no rebuild**, so it
+runs on a machine with no MetaDrive and answers in milliseconds. The companion to `seeds`,
+which needs the simulator and asks the other question -- that one is *what should I build*,
+this one is *what did I build*.
+
+| flag | | repeats | meaning |
+|---|---|---|---|
+| `--bank <path>` | **required** |  | Bank directory holding the manifest to review. |
+| `--json` | default `false` |  | Emit the report as JSON instead of aligned text. |
+
+```bash
+uv run scenariobank review --bank ./banks/b
+uv run scenariobank review --bank ./banks/b --json | jq '.categories[].duplicates'  # the duplicate counts alone
+```
+
 ### `destinations`
 
 Resolve every category at every seed and write the destinations reference.

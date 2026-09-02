@@ -1172,7 +1172,69 @@ scenario the manifest does not name is a 404 saying so; `..` and `%2f` never rea
 at all, because an HTTP client normalises them away and the router matches nothing — which is
 recorded in the test rather than papered over. 237 tests pass, ruff clean.)*
 
-### Step 7 — what generated this picture ⬜  ⟵ *feature 4*
+### Step 6b — the statistics: what is actually in this bank ✅
+
+*(Added 2026-09-02 — Keith: "it should also show me statistics, like which maps are a close
+overlap... anything which is too similar should be raised as a warning with text".)*
+
+**A bank of 35 rows is not automatically 35 scenarios, and nothing said so.** Running the measure
+against the three banks on disk:
+
+```
+curve                 5 distinct of 5    all four turn pairs LL/LR/RL/RR
+t_junction            4 distinct of 5    t_junction_0001 = t_junction_0004
+intersection_left     2 distinct of 5    0000 = 0002,  0001 = 0003 = 0004
+```
+
+`intersection_left` holds five scenarios and two distinct ones: every seed resolved to the same
+destination, the same 111.7 m route and the same +90.0° turn, and only the spawn lane separates
+any of them. That is a property of the category — MetaDrive's `X` junction does not vary with the
+seed, which `bank.py` already said about `spawn_lane_index` — so five seeds *cannot* draw five
+scenarios, and the report says the lane count is the ceiling rather than leaving "2 of 5" as an
+invitation to swap seeds that would not help.
+
+**`variety.shape_gap` is not what this uses, despite being the similarity measure this package
+already owns.** It compares the *road* — total lane length and bounding box — and for `X` and `T`
+the road is identical across every seed by construction, so it scores 0.00 for every pair and says
+nothing exactly where the trouble is. It also needs a live env. What a thumbnail shows, and what
+differs, is the **route**, and every field for that is already in `ScenarioRow`. So `review.py` is
+pure: no simulator, no job, no schema change, and it works on banks generated before it existed.
+A test asserts that in a subprocess, because `sys.modules` is shared across a pytest session and
+nothing else would notice one convenient import.
+
+Route length alone would have been wrong, which is why the measure is multi-field with destination
+and turn pairs as hard discriminators: `curve` seeds 1 and 3 are 5% apart in length — *closer* than
+seeds 0 and 4, which are the real near-duplicates — but they drive `LR` against `RL`.
+
+Four verdicts, because the data shows they are different things: `identical`, `same-drive` (only
+the spawn lane differs), `near-duplicate` (under `NEAR_DUPLICATE = 0.10`), `distinct`. The
+threshold is defined in `review.py` with its own measured justification rather than imported from
+`variety.py`, which holds the same number for a different measure — one constant serving two would
+be a coincidence the next change breaks.
+
+Ships as `src/scenariobank/review.py`, `GET /api/banks/{bank}/review`, and
+`scenariobank review --bank <dir> [--json]` beside `seeds` in **"Look before you commit"** — that
+one needs the simulator and asks *what should I build*; this one reads a bank off disk and asks
+*what did I build*. Warning sentences are written in `review.py` so the page and the CLI cannot
+describe one bank two ways. On the page: chips under each category band led by `2 distinct of 5`
+in the warning colour, the sentences beneath, and a marker on every card that repeats another
+(`≡ 0002`, `≈ 0004 · 7%`, `lane only`).
+
+*(Done 2026-09-02. 261 tests pass, ruff clean. Verified against the three real banks in the CLI and
+in the page, agreeing exactly: `intersection_left` 2 of 5 naming both duplicate groups and the lane
+ceiling, `t_junction` 4 of 5 naming `0001 = 0004`, `curve` 5 of 5 with all four turn pairs and
+`curve_0000 / curve_0004` at 7%. The `review` command's bank argument is a `--bank` flag, not a
+positional: `test_the_form_and_the_table_describe_the_same_flags` enforces that every parameter has
+a flag, because the studio's run form is built from them and a positional has nothing to render.)*
+
+### Step 7 — what generated this picture, and how does it compare ⬜  ⟵ *feature 4*
+
+*(Amended 2026-09-02 — Keith: "I should be able to select any 2 maps in a list and see how
+different they are as well... i can select a maximum of 2 pictures at once". Chosen shape: a click
+**selects**, one selected shows the row, two show the comparison, and a third drops the oldest so
+comparisons chain. That unifies this step with the request rather than adding a second way to
+touch a card, and the comparison calls `review.gap` and `review.verdict` from Step 6b, so this
+step adds an interaction and no new measurement.)*
 
 Click a card and read the row: seed, destination node, spawn lane, route length, net rotation, turn
 pairs, step budget, road, exit rule, and the MetaDrive commit the bank was built on.

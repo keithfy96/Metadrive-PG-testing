@@ -246,6 +246,32 @@ h3.band { display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap;
           margin: 1.7rem 0 0.6rem; }
 h3.band .facts { font-family: var(--sans); font-weight: 400; font-size: 12px;
                  color: var(--muted); }
+
+/* The review. Numbers a bank cannot tell you about itself by being looked at: a category of five
+   rows that is two scenarios reads as five pictures until something counts them. */
+.stats { display: flex; gap: 0.4rem; flex-wrap: wrap; margin: 0 0 0.7rem; }
+.chip {
+  font-family: var(--mono); font-size: 11.5px; padding: 0.1rem 0.5rem;
+  border: 1px solid var(--hair); border-radius: 5px; color: var(--ink-2);
+  background: var(--inset);
+}
+.chip b { font-weight: 600; color: var(--ink); }
+.chip.bad  { border-color: var(--bad); color: var(--bad); }
+.chip.bad b { color: var(--bad); }
+.warn {
+  margin: 0.3rem 0; padding: 0.4rem 0.7rem; font-size: 12.5px;
+  border-left: 3px solid var(--bad); background: var(--inset); border-radius: 0 5px 5px 0;
+}
+.warn.soft { border-left-color: var(--muted); color: var(--ink-2); }
+/* The marker on the card itself, so a duplicate is visible in the grid you are already looking at
+   rather than only in a table above it. */
+.shot-card .mark {
+  display: inline-block; margin: 0.25rem 0 0;
+  font-family: var(--mono); font-size: 11px; padding: 0.02rem 0.36rem;
+  border-radius: 4px; border: 1px solid var(--bad); color: var(--bad);
+}
+.shot-card .mark.soft { border-color: var(--muted); color: var(--muted); }
+.shot-card.flagged { border-color: var(--bad); }
 </style>
 
 <header class="top">
@@ -365,7 +391,8 @@ h3.band .facts { font-family: var(--sans); font-weight: 400; font-size: 12px;
         <li class="done">the gallery — pick a scenario type from pictures</li>
         <li class="done">generate what you picked</li>
         <li class="done">the dataset — every picture in the bank</li>
-        <li>what generated this picture</li>
+        <li class="sub">6b — the statistics: how many are actually different</li>
+        <li>what generated this picture, and how two compare</li>
         <li>replace the seed behind an image</li>
         <li class="sub">8b — edit, add or remove one item</li>
         <li>four new scenario types</li>
@@ -779,7 +806,64 @@ function renderBankList() {
     : [el("p", { class: "none", text: `no bank matches "${needle}"` })]));
 }
 
-function scenarioCard(bank, row) {
+// One marker per scenario, worst first, built from the category's review. A card carries the
+// strongest thing true of it: exactly-the-same beats close-enough beats only-the-lane-differs.
+function markersFor(one) {
+  const marks = {};
+  const short = (id) => id.replace(`${one.category}_`, "");
+  for (const group of one.duplicates.identical_groups) {
+    for (const id of group) {
+      marks[id] = { text: `≡ ${group.filter((other) => other !== id).map(short).join(", ")}`,
+                    kind: "" };
+    }
+  }
+  for (const pair of one.duplicates.near_duplicates) {
+    for (const [id, other] of [[pair.left, pair.right], [pair.right, pair.left]]) {
+      if (!marks[id]) {
+        marks[id] = { text: `≈ ${short(other)} · ${Math.round(pair.gap * 100)}%`, kind: "" };
+      }
+    }
+  }
+  for (const group of one.duplicates.same_drive_groups) {
+    for (const id of group) {
+      if (!marks[id]) marks[id] = { text: "lane only", kind: "soft" };
+    }
+  }
+  return marks;
+}
+
+// The chips above a category: the counts you would otherwise have to derive by reading the grid.
+function statChips(one) {
+  const dupes = one.duplicates;
+  const cover = one.coverage;
+  const chips = [];
+  const short = (id) => id.replace(`${one.category}_`, "");
+  const add = (html, bad) => chips.push(el("span", { class: `chip${bad ? " bad" : ""}`, html }));
+
+  // First, and coloured when it is under the total: this is the number the screen exists for.
+  add(`<b>${dupes.distinct}</b> distinct of <b>${dupes.total}</b>`,
+      dupes.distinct < dupes.total);
+  if (cover.turn_pairs_present.length) {
+    add(`turns ${cover.turn_pairs_present.join(" ")}`
+        + (cover.turn_pairs_missing.length
+          ? ` <b>no ${cover.turn_pairs_missing.join(" ")}</b>` : ""),
+        cover.turn_pairs_missing.length > 0);
+  }
+  add(`lanes ${Object.entries(cover.spawn_lanes).map(([k, v]) => `${k}×${v}`).join(" ")}`,
+      Object.keys(cover.spawn_lanes).length === 1 && dupes.total > 1);
+  add(`exits ${Object.entries(cover.destinations).map(([k, v]) => `${k}×${v}`).join(" ")}`);
+  add(`${cover.turns_left}L / ${cover.turns_right}R`);
+  add(`${one.spread.route_length_min_m.toFixed(0)}–${one.spread.route_length_max_m.toFixed(0)} m`);
+  add(`budget ${one.budget.worst_earned}/${one.budget.max_steps}`,
+      one.budget.over_budget.length > 0);
+  if (dupes.closest) {
+    add(`closest ${short(dupes.closest.left)}/${short(dupes.closest.right)} `
+        + `${Math.round(dupes.closest.gap * 100)}%`);
+  }
+  return el("div", { class: "stats" }, chips);
+}
+
+function scenarioCard(bank, row, mark) {
   const shot = el("div", { class: "shot" });
   // The manifest stores the thumbnail's own relative path, so the file name comes from the file
   // the bank recorded rather than from this page re-deriving `<id>.png`.
@@ -797,7 +881,7 @@ function scenarioCard(bank, row) {
     });
     shot.appendChild(picture);
   }
-  return el("div", { class: "shot-card" }, [
+  const parts = [
     shot,
     el("p", { class: "id", text: row.scenario_id }),
     el("p", { class: "seed", text: `seed ${row.seed}` }),
@@ -807,13 +891,20 @@ function scenarioCard(bank, row) {
       class: "meta",
       text: `→ ${row.destination} · ${Math.round(row.route_length_m)} m`,
     }),
-  ]);
+  ];
+  if (mark) parts.push(el("span", { class: `mark ${mark.kind}`, text: mark.text }));
+  return el("div", { class: `shot-card${mark && !mark.kind ? " flagged" : ""}` }, parts);
 }
 
-function renderBank(name, manifest) {
+function renderBank(name, manifest, report) {
   const cards = [];
+  const reviewed = Object.fromEntries((report ? report.categories : []).map((one) =>
+    [one.category, one]));
+
   for (const [category, entry] of Object.entries(manifest.categories)) {
-    cards.push(card([
+    const one = reviewed[category];
+    const marks = one ? markersFor(one) : {};
+    const parts = [
       el("h3", { class: "band" }, [
         el("span", { text: category }),
         el("span", {
@@ -824,8 +915,18 @@ function renderBank(name, manifest) {
             + `${entry.scenarios.length === 1 ? "scenario" : "scenarios"}`,
         }),
       ]),
-      el("div", { class: "shelf" }, entry.scenarios.map((row) => scenarioCard(name, row))),
-    ]));
+    ];
+    if (one) {
+      parts.push(statChips(one));
+      // Sentences rather than a legend for the chips: `review.py` writes them so the page and the
+      // CLI cannot describe the same bank two different ways.
+      for (const line of one.warnings) {
+        parts.push(el("p", { class: "warn", html: inline(line) }));
+      }
+    }
+    parts.push(el("div", { class: "shelf" },
+      entry.scenarios.map((row) => scenarioCard(name, row, marks[row.scenario_id]))));
+    cards.push(card(parts));
   }
   if (!cards.length) {
     cards.push(card([el("p", { class: "blurb", text: "This bank has no categories in it." })]));
@@ -835,8 +936,11 @@ function renderBank(name, manifest) {
   const total = Object.values(manifest.categories)
     .reduce((sum, entry) => sum + entry.scenarios.length, 0);
   const types = Object.keys(manifest.categories).length;
-  $("bank-count").textContent =
-    `${total} ${total === 1 ? "scenario" : "scenarios"} · ${types} `
+  const pill = $("bank-count");
+  const short = report && report.distinct < total ? ` · ${report.distinct} distinct` : "";
+  pill.className = short ? "pill bad" : "pill";
+  pill.textContent =
+    `${total} ${total === 1 ? "scenario" : "scenarios"}${short} · ${types} `
     + `${types === 1 ? "type" : "types"}`;
   const commit = manifest.metadrive.commit;
   $("bank-where").textContent =
@@ -850,7 +954,14 @@ async function openBank(name) {
   $("bank-body").replaceChildren(
     card([el("p", { class: "loading", text: `loading ${name}…` })]));
   try {
-    renderBank(name, await api(`/api/banks/${encodeURIComponent(name)}`));
+    const at = `/api/banks/${encodeURIComponent(name)}`;
+    // Two requests, one round trip. The review is computed from the manifest rather than served
+    // inside it, so that the manifest stays the file on disk and nothing else.
+    const [manifest, report] = await Promise.all([
+      api(at),
+      api(`${at}/review`).catch(() => null),
+    ]);
+    renderBank(name, manifest, report);
   } catch (error) {
     // A manifest this studio cannot read is a state worth naming: a bank from an older schema
     // reads exactly like this, and "no such bank" would be a lie about it.

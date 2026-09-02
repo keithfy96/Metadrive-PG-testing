@@ -206,6 +206,22 @@ def create_app(*, banks_root: Path, state_dir: Path, workdir: Path | None = None
             # rather than 404, so the page can say *why* instead of "no such bank".
             raise HTTPException(status_code=422, detail=str(error)) from error
 
+    @app.get("/api/banks/{bank}/review")
+    def bank_review(bank: str) -> dict:
+        """What is actually in this bank: duplicates, coverage, step budgets and spread.
+
+        Separate from `GET /api/banks/{bank}` on purpose. That endpoint serves the manifest
+        **unshaped**, and folding a computed report into it would be exactly the second description
+        of a bank it exists to avoid. Nothing here builds an environment -- every field the review
+        needs is already in the manifest -- so this is a read and some arithmetic.
+        """
+        from scenariobank.review import review
+
+        try:
+            return review(read_manifest(_bank_dir(bank))).model_dump()
+        except (BankError, ValueError) as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
     @app.get("/api/banks/{bank}/thumbs/{name}.png")
     def thumbnail(bank: str, name: str) -> FileResponse:
         """One scenario's picture.
