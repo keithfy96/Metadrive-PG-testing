@@ -132,7 +132,7 @@ a.jump:hover { text-decoration: underline; }
 }
 .form label .req { color: var(--bad); }
 .form .hint { grid-column: 2; margin: -0.25rem 0 0.35rem; color: var(--muted); font-size: 12px; }
-input[type="text"], input[type="number"], select, textarea {
+input[type="text"], input[type="number"], input[type="search"], select, textarea {
   font: inherit; width: 100%; padding: 0.32rem 0.5rem;
   color: var(--ink); background: var(--ground);
   border: 1px solid var(--hair); border-radius: 6px;
@@ -168,6 +168,8 @@ button.ghost[hidden] { display: none; }
 .empty ol { margin: 0.9rem 0 0; padding-left: 1.3rem; color: var(--ink-2); }
 .empty li { margin: 0.25rem 0; }
 .empty li.done { color: var(--muted); text-decoration: line-through; }
+/* `display: block` takes it out of the list's numbering, so inserting 8b does not renumber 9-12. */
+.empty li.sub { display: block; }
 
 /* The gallery: the picture is the unit, so the card is mostly picture. */
 .gallery { display: grid; gap: 0.7rem;
@@ -183,8 +185,67 @@ button.ghost[hidden] { display: none; }
 .type p { margin: 0.15rem 0; font-size: 12px; color: var(--ink-2); }
 .type .facts { color: var(--muted); }
 .missing { font-size: 12px; color: var(--muted); text-align: center; padding: 0 0.6rem; }
+
+/* The progress bar. It measures the CLI's own `[3/35]` lines, so it is honest about a job it
+   does not otherwise control. */
+input#bank-name { width: 15rem; font-family: var(--mono); font-size: 12.5px; }
+input#count { width: 4.5rem; font-family: var(--mono); font-size: 12.5px; }
+.lab { font-family: var(--mono); font-size: 12.5px; color: var(--accent); }
+.bar { height: 7px; border-radius: 999px; background: var(--inset); overflow: hidden; }
+.bar span {
+  display: block; height: 100%; width: 0;
+  background: var(--accent); transition: width 0.25s ease;
+}
+.bar.ok span  { background: var(--good); }
+.bar.bad span { background: var(--bad); }
+.count { font-family: var(--mono); font-size: 13px; margin: 0.7rem 0 0.15rem; }
 .loading, .failed { color: var(--muted); }
 .failed { color: var(--bad); }
+
+/* The dataset. Same rule as the gallery -- the picture is the unit -- but denser, because here
+   you are comparing thirty-five of them rather than choosing among seven. */
+/* The banks are a list, not a dropdown. With a dozen of them you want to see them all at once
+   and read their sizes against each other -- which is the one thing a <select> hides until you
+   open it. Search filters the list rather than replacing it. */
+input#bank-find { width: 17rem; font-family: var(--mono); font-size: 12.5px; }
+.banklist {
+  margin-top: 0.9rem; max-height: 15rem; overflow-y: auto;
+  border: 1px solid var(--hair); border-radius: 8px;
+}
+.bankrow {
+  display: flex; align-items: baseline; gap: 0.7rem; flex-wrap: wrap;
+  padding: 0.5rem 0.8rem; cursor: pointer; border-bottom: 1px solid var(--hair);
+}
+.bankrow:last-child { border-bottom: none; }
+.bankrow:hover { background: var(--inset); }
+.bankrow.on { background: var(--inset); box-shadow: inset 3px 0 0 var(--accent); }
+.bankrow .spacer { flex: 1; }
+.bankrow .name { font-family: var(--mono); font-size: 13px; font-weight: 600; }
+.bankrow.on .name { color: var(--accent); }
+.bankrow .sub { font-size: 12px; color: var(--muted); }
+.bankrow .n { font-family: var(--mono); font-size: 12px; color: var(--ink-2); }
+.bankrow .oops { font-size: 12px; color: var(--bad); }
+.banklist .none { margin: 0; padding: 0.7rem 0.8rem; color: var(--muted); font-size: 12.5px; }
+/* Wide enough that the longest id -- `intersection_left_0000` -- fits on one line. An id that
+   wraps mid-number is unreadable, and the id is how you name the card to anyone else. */
+.shelf { display: grid; gap: 0.55rem;
+         grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+.shot-card { border: 1px solid var(--hair); border-radius: 7px; padding: 0.4rem;
+             background: var(--surface); }
+.shot-card .shot { aspect-ratio: 4 / 3; background: #fff; border-radius: 4px; overflow: hidden;
+                   display: flex; align-items: center; justify-content: center; }
+.shot-card img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.shot-card .id { font-family: var(--mono); font-size: 12px; margin: 0.4rem 0 0;
+                 overflow-wrap: anywhere; }
+/* The seed is the scenario's identity and the thing two near-duplicate cards differ by, so it is
+   the one field big enough to read across a grid. */
+.shot-card .seed { font-family: var(--mono); font-size: 12px; color: var(--accent);
+                   margin: 0.05rem 0 0.15rem; }
+.shot-card .meta { font-size: 11.5px; color: var(--muted); margin: 0; }
+h3.band { display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap;
+          margin: 1.7rem 0 0.6rem; }
+h3.band .facts { font-family: var(--sans); font-weight: 400; font-size: 12px;
+                 color: var(--muted); }
 </style>
 
 <header class="top">
@@ -205,18 +266,35 @@ button.ghost[hidden] { display: none; }
       <p class="blurb">
         One picture per scenario type, drawn at seed 0 by <code>scenariobank examples</code>. The
         arrow is where the car starts, so the picture says which way the route goes and not just
-        what the road looks like. Click the ones you want.
+        what the road looks like. Click the ones you want, say how many of each, and generate.
       </p>
       <div class="gallery" id="gallery">
         <span class="loading">loading the scenario types…</span>
       </div>
       <div class="row">
-        <button class="go" id="build-go" disabled title="Generating from this selection is step 5.">
-          Generate
-        </button>
+        <label class="lab" for="bank-name">bank name</label>
+        <input type="text" id="bank-name" spellcheck="false" autocomplete="off">
+        <label class="lab" for="count">per type</label>
+        <input type="number" id="count" min="1" step="1">
+        <button class="go" id="build-go" disabled>Generate</button>
         <button class="ghost" id="draw" hidden>Draw the missing pictures</button>
         <span class="spacer"></span>
         <span class="pill" id="picked">nothing picked</span>
+      </div>
+      <p class="argv" id="build-where"></p>
+    </div>
+
+    <div class="card" id="build-progress" hidden>
+      <h2>Generating</h2>
+      <div class="bar" id="bar"><span id="bar-fill"></span></div>
+      <p class="count" id="build-count">starting…</p>
+      <p class="argv" id="build-last"></p>
+      <p class="blurb" id="build-next" hidden></p>
+      <div class="row">
+        <button class="ghost" id="build-cancel" hidden>Cancel</button>
+        <button class="ghost" id="build-open" hidden>Open the bank</button>
+        <span class="spacer"></span>
+        <span class="pill" id="build-state">idle</span>
       </div>
     </div>
   </section>
@@ -249,23 +327,47 @@ button.ghost[hidden] { display: none; }
   </section>
 
   <section id="view-bank" hidden>
-    <div class="card empty">
-      <h2>Nothing here yet — the thumbnail grid is Step 6.</h2>
+    <div class="card" id="bank-head" hidden>
+      <h2>The bank</h2>
+      <p class="blurb">
+        Every scenario that was built, as the picture of it. Grouped by type, in the order the
+        manifest lists them, so a card's position is the position its <code>scenario_id</code>
+        names. Two cards that look the same are two seeds that drew the same road — which is the
+        thing this screen exists to make visible.
+      </p>
+      <div class="row" style="margin-top: 0">
+        <label class="lab" for="bank-find">find</label>
+        <input type="search" id="bank-find" placeholder="name or scenario type"
+               spellcheck="false" autocomplete="off">
+        <button class="ghost" id="bank-reload">Reload</button>
+        <span class="spacer"></span>
+        <span class="pill" id="bank-count"></span>
+      </div>
+      <div class="banklist" id="bank-list"></div>
+      <p class="argv" id="bank-where"></p>
+    </div>
+
+    <div id="bank-body"></div>
+
+    <div class="card empty" id="bank-empty" hidden>
+      <h2>No banks yet.</h2>
       <p>
-        Everything arrives one step at a time, so each can be tested on its own. Picking types
-        on the <b>Build</b> tab works; generating from that selection is the next one. The
-        <b>Run</b> tab is scaffolding — a generated form over the flags, so nothing is unreachable while the
-        real screens are built. It is deleted at step 8.
+        Nothing under <code id="bank-root">the banks directory</code> holds a
+        <code>manifest.json</code>, so there is nothing to look at. Pick some scenario types on
+        the <b>Build</b> tab and generate one; this tab fills in when it finishes. The
+        <b>Run</b> tab is scaffolding — a generated form over the flags, so nothing is
+        unreachable while the real screens are built. It is deleted at step 8.
       </p>
       <ol>
         <li class="done">the shell, and <code>doctor</code> in the header</li>
         <li class="done"><code>categories</code> and <code>commands</code> — the reference tab</li>
         <li class="done">the job engine — run any command from the page</li>
         <li class="done">the gallery — pick a scenario type from pictures</li>
-        <li>generate what you picked</li>
-        <li>the dataset — every picture in the bank</li>
+        <li class="done">generate what you picked</li>
+        <li class="done">the dataset — every picture in the bank</li>
         <li>what generated this picture</li>
         <li>replace the seed behind an image</li>
+        <li class="sub">8b — edit, add or remove one item</li>
         <li>four new scenario types</li>
         <li>the road builder — compose a road by hand</li>
         <li>the road utilities — exits, and the destinations reference</li>
@@ -341,6 +443,9 @@ function showView(name) {
   // Coming back after drawing them is the moment to look again, and a 404 is cached, so the
   // re-render carries a new stamp.
   if (name === "build" && build.missing.size && build.rows) renderBuild(build.rows);
+  // Fetched when the tab is first opened rather than at boot: a studio started to run one command
+  // should not stat every bank on disk to do it.
+  if (name === "bank" && !dataset.banks) loadBanks();
 }
 
 tabs.addEventListener("click", (event) => {
@@ -350,13 +455,77 @@ tabs.addEventListener("click", (event) => {
 
 // ------------------------------------------------------------------ the gallery
 
-const build = { rows: null, selected: new Set(), missing: new Set(), stamp: 0 };
+const build = { rows: null, selected: new Set(), missing: new Set(), stamp: 0,
+                seeds: [], root: null, writable: true };
+
+// A bank name becomes a directory name, so it is kept to what one safely is. The real guard is
+// the server's containment check on `--out`; this is only so the refusal arrives before the click.
+const NAME_OK = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+const bankName = () => $("bank-name").value.trim();
+
+// How many scenarios of each ticked type to build. A bank of five per type was the CLI's default
+// and nothing more; the number is a question the page can just ask.
+const perType = () => Number($("count").value.trim());
+
+// The seeds a count of N asks for: the bank's own default list while it reaches, then counting on
+// from its end. At the default count this is exactly `default_seeds`, so leaving the box alone
+// generates precisely what the CLI would have generated on its own -- and the rule holds even if
+// that list is ever something other than `0..4`.
+function seedsFor(count) {
+  const seeds = build.seeds.slice(0, count);
+  let next = build.seeds.length ? Math.max(...build.seeds) + 1 : 0;
+  while (seeds.length < count) seeds.push(next++);
+  return seeds;
+}
+
+// `bank-2026-09-02-1431`. Naming a directory is not a decision worth interrupting someone for,
+// so it is filled in and editable rather than asked for.
+function defaultBankName() {
+  const now = new Date();
+  const two = (n) => String(n).padStart(2, "0");
+  return `bank-${now.getFullYear()}-${two(now.getMonth() + 1)}-${two(now.getDate())}`
+    + `-${two(now.getHours())}${two(now.getMinutes())}`;
+}
 
 function pickedLabel() {
-  const count = build.selected.size;
-  $("picked").textContent = count === 0
+  const types = build.selected.size;
+  const total = types * (perType() || 0);
+  $("picked").textContent = types === 0
     ? "nothing picked"
-    : `${count} ${count === 1 ? "type" : "types"} picked`;
+    : `${types} ${types === 1 ? "type" : "types"} · ${total} scenarios`;
+  refreshGo();
+}
+
+// One place decides whether Generate may be pressed, and the same sentence that disables it is
+// the one shown underneath. A greyed-out button with no reason beside it is a dead end.
+function refreshGo() {
+  const name = bankName();
+  const count = perType();
+  let why = "";
+  if (!build.writable) {
+    why = `banks live in ${build.root}, outside this studio's working directory, and a job may `
+      + "not write there";
+  } else if (!build.selected.size) {
+    why = "";
+  } else if (!NAME_OK.test(name)) {
+    why = "a bank name is letters, digits, dot, dash or underscore";
+  } else if (!Number.isInteger(count) || count < 1) {
+    why = "how many of each type is a whole number, one or more";
+  } else if (gen.running) {
+    why = "a job is already running";
+  }
+  $("build-go").disabled = Boolean(why) || !build.selected.size;
+  $("build-go").title = why || (build.selected.size ? `into ${build.root}/${name}` : "");
+  const line = $("build-where");
+  if (why) line.textContent = `${why}.`;
+  else if (!build.selected.size) line.textContent = "";
+  else {
+    // The seed list, not just the count: a seed is the scenario's identity, and this is where you
+    // read which ones you are about to build.
+    line.textContent = `→ ${build.root}/${name} · ${build.selected.size * count} scenarios, `
+      + `each type at seeds ${seedsFor(count).join(",")}`;
+  }
 }
 
 function typeCard(row) {
@@ -419,6 +588,126 @@ function renderBuild(rows) {
   pickedLabel();
 }
 
+// ---------------------------------------------------------------- generating
+//
+// The selection becomes a `generate` job through the same POST every other command uses, so the
+// page gains no second way of calling the CLI: `--category` repeats once per type, `--out` and
+// `--bank-id` carry the name, and `invoke.py` checks all three against the CLI's own parameters.
+
+const gen = { running: false, done: 0, total: 0, expected: 0, bank: null };
+
+// The CLI already says where it is -- `[3/35] curve_0002  seed 2  -> ...`, one line per scenario
+// on stderr. The bar reads those. No new progress protocol: structured JSON-line progress is
+// Phase 7's, and is not brought forward for a bar.
+const COUNTED = /\[\s*(\d+)\/(\d+)\]\s*(\S.*)$/gm;
+
+async function generate() {
+  const name = bankName();
+  const seeds = seedsFor(perType());
+  gen.running = true;
+  gen.done = 0;
+  gen.total = 0;
+  gen.bank = name;
+  // Known before the first line arrives, which matters: importing MetaDrive is twenty silent
+  // seconds, and "0 / 35" during them is the difference between waiting and wondering.
+  gen.expected = build.selected.size * seeds.length;
+  $("build-progress").hidden = false;
+  $("build-next").hidden = true;
+  $("build-open").hidden = true;
+  $("build-last").textContent = "";
+  $("build-count").textContent = `starting the simulator — 0 / ${gen.expected} scenarios`;
+  $("bar").className = "bar";
+  $("bar-fill").style.width = "0";
+  refreshGo();
+
+  $("log").textContent = "";
+  run.offset = 0;
+  setState("run", "starting…");
+  try {
+    attach(await api("/api/jobs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        command: "generate",
+        options: {
+          "--out": `${build.root}/${name}`,
+          "--bank-id": name,
+          "--category": [...build.selected],
+          // Sent as the CLI spells it -- one comma-separated list, the same value you would type
+          // after `--seeds` yourself. `invoke.py` and then `_parse_seed_options` check it.
+          "--seeds": seeds.join(","),
+        },
+        global_options: {},
+      }),
+    }));
+  } catch (error) {
+    // A refusal is about one flag, and it belongs where the click was.
+    gen.running = false;
+    $("bar").className = "bar bad";
+    $("build-count").textContent = error.message;
+    $("build-state").className = "pill bad";
+    $("build-state").textContent = "refused";
+    refreshGo();
+  }
+}
+
+// Called for every poll of a `generate` job, including one adopted after a reload -- the state
+// was never in this page to begin with, so coming back to it mid-run is not a special case.
+function applyGenerate(job) {
+  if (!gen.bank) {
+    const at = job.argv.indexOf("--bank-id");
+    if (at >= 0) gen.bank = job.argv[at + 1];
+  }
+  $("build-progress").hidden = false;
+
+  let last = null;
+  for (const match of (job.log || "").matchAll(COUNTED)) last = match;
+  if (last) {
+    gen.done = Number(last[1]);
+    gen.total = Number(last[2]);
+    $("build-last").textContent = last[3].trim();
+  }
+  const total = gen.total || gen.expected;
+  const running = job.state === "running";
+  gen.running = running;
+
+  $("bar-fill").style.width = total ? `${Math.min(100, (gen.done / total) * 100)}%` : "0";
+  const pill = $("build-state");
+  if (running) {
+    $("bar").className = "bar";
+    pill.className = "pill run";
+    pill.textContent = "running";
+    $("build-count").textContent = gen.done
+      ? `${gen.done} / ${total} scenarios`
+      : `starting the simulator — 0 / ${total || "?"} scenarios`;
+  } else if (job.state === "lost" || job.exit_code !== 0) {
+    $("bar").className = "bar bad";
+    pill.className = "pill bad";
+    pill.textContent = job.state === "lost" ? "lost" : `exit ${job.exit_code}`;
+    $("build-count").textContent = gen.done
+      ? `stopped after ${gen.done} of ${total} scenarios`
+      : "it did not get as far as building one";
+    $("build-next").hidden = false;
+    $("build-next").innerHTML =
+      "The whole log is on the <b>Run</b> tab — a generate that fails says which category and "
+      + "which seed on the line before it stopped.";
+  } else {
+    $("bar").className = "bar ok";
+    $("bar-fill").style.width = "100%";
+    pill.className = "pill ok";
+    pill.textContent = "exit 0";
+    $("build-count").textContent = `${gen.done || total} scenarios in ${gen.bank}`;
+    $("build-next").hidden = false;
+    $("build-next").innerHTML = `Written to <code>${escape(build.root)}/${escape(gen.bank)}</code>`
+      + " — a manifest and one thumbnail per scenario.";
+  }
+  $("build-cancel").hidden = !running;
+  // The end of a build is the moment you want to look at what it built, so the payoff of the bar
+  // is a way into the Bank tab rather than a sentence about where the files went.
+  $("build-open").hidden = running || job.state === "lost" || job.exit_code !== 0;
+  refreshGo();
+}
+
 // `examples` is a registered command, so drawing the gallery from the page needs no new endpoint
 // and no second way of starting a job -- it is the job engine, given a command name.
 async function drawExamples() {
@@ -436,6 +725,175 @@ async function drawExamples() {
   } catch (error) {
     setState("bad", error.message);
   }
+}
+
+// ------------------------------------------------------------------ the dataset
+//
+// What replaces opening the thumbnail directory in an image viewer. Three endpoints and no
+// cleverness: the list of banks, one bank's manifest **as it is on disk**, and the pictures. The
+// manifest was written to explain itself, so this screen reads it rather than deriving anything.
+
+const dataset = { banks: null, name: null };
+
+// `2026-09-02T05:52:22Z` -> `2026-09-02 05:52`. Seconds and the zone marker are noise in a list
+// you are scanning to find "the one I made this morning".
+const when = (stamp) => String(stamp || "").replace("T", " ").slice(0, 16);
+
+function bankRow(entry) {
+  const row = el("div", {
+    class: `bankrow${entry.name === dataset.name ? " on" : ""}`,
+    role: "button", tabindex: "0", "aria-pressed": String(entry.name === dataset.name),
+  }, [
+    el("span", { class: "name", text: entry.name }),
+    entry.error
+      // Listed rather than dropped, so it carries the one word that says why it is not openable.
+      ? el("span", { class: "oops", text: "unreadable" })
+      : el("span", {
+          class: "sub",
+          text: `${entry.categories.join(", ")} · ${when(entry.created_utc)}`,
+        }),
+    el("span", { class: "spacer" }),
+    el("span", { class: "n", text: entry.error ? "" : `${entry.scenarios} scenarios` }),
+  ]);
+  const open = () => openBank(entry.name);
+  row.addEventListener("click", open);
+  row.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      open();
+    }
+  });
+  return row;
+}
+
+// Filters the list rather than replacing it, and matches the scenario types as well as the name:
+// "the roundabout ones" is as likely a question as "the one called b".
+function renderBankList() {
+  const needle = $("bank-find").value.trim().toLowerCase();
+  const shown = (dataset.banks || []).filter((entry) =>
+    !needle
+    || entry.name.toLowerCase().includes(needle)
+    || (entry.categories || []).some((name) => name.toLowerCase().includes(needle)));
+  $("bank-list").replaceChildren(...(shown.length
+    ? shown.map(bankRow)
+    : [el("p", { class: "none", text: `no bank matches "${needle}"` })]));
+}
+
+function scenarioCard(bank, row) {
+  const shot = el("div", { class: "shot" });
+  // The manifest stores the thumbnail's own relative path, so the file name comes from the file
+  // the bank recorded rather than from this page re-deriving `<id>.png`.
+  const file = row.thumbnail ? row.thumbnail.split("/").pop().replace(/\.png$/, "") : null;
+  if (!file) {
+    // `generate --no-thumbnails` is a real way to build a bank. The row is still worth showing.
+    shot.appendChild(el("div", { class: "missing", html: "built without a thumbnail" }));
+  } else {
+    const picture = el("img", {
+      src: `/api/banks/${encodeURIComponent(bank)}/thumbs/${encodeURIComponent(file)}.png`,
+      alt: `${row.scenario_id}, seed ${row.seed}`, loading: "lazy",
+    });
+    picture.addEventListener("error", () => {
+      shot.replaceChildren(el("div", { class: "missing", html: "picture missing from disk" }));
+    });
+    shot.appendChild(picture);
+  }
+  return el("div", { class: "shot-card" }, [
+    shot,
+    el("p", { class: "id", text: row.scenario_id }),
+    el("p", { class: "seed", text: `seed ${row.seed}` }),
+    // The two fields that say *why* two seeds drew the same picture. The rest of the row is the
+    // panel in step 7; this is the minimum that makes a duplicate legible in a grid.
+    el("p", {
+      class: "meta",
+      text: `→ ${row.destination} · ${Math.round(row.route_length_m)} m`,
+    }),
+  ]);
+}
+
+function renderBank(name, manifest) {
+  const cards = [];
+  for (const [category, entry] of Object.entries(manifest.categories)) {
+    cards.push(card([
+      el("h3", { class: "band" }, [
+        el("span", { text: category }),
+        el("span", {
+          class: "facts",
+          html: `road <code>${escape(entry.block_seq)}</code> · exit `
+            + `<code>${escape(entry.exit_rule)}</code> · ${entry.max_steps} steps · `
+            + `${entry.scenarios.length} `
+            + `${entry.scenarios.length === 1 ? "scenario" : "scenarios"}`,
+        }),
+      ]),
+      el("div", { class: "shelf" }, entry.scenarios.map((row) => scenarioCard(name, row))),
+    ]));
+  }
+  if (!cards.length) {
+    cards.push(card([el("p", { class: "blurb", text: "This bank has no categories in it." })]));
+  }
+  $("bank-body").replaceChildren(...cards);
+
+  const total = Object.values(manifest.categories)
+    .reduce((sum, entry) => sum + entry.scenarios.length, 0);
+  const types = Object.keys(manifest.categories).length;
+  $("bank-count").textContent =
+    `${total} ${total === 1 ? "scenario" : "scenarios"} · ${types} `
+    + `${types === 1 ? "type" : "types"}`;
+  const commit = manifest.metadrive.commit;
+  $("bank-where").textContent =
+    `${build.root}/${name} · bank_id ${manifest.bank_id} · built ${manifest.created_utc}`
+    + ` · metadrive ${commit ? commit.slice(0, 8) : "unrecorded"}`;
+}
+
+async function openBank(name) {
+  dataset.name = name;
+  renderBankList();
+  $("bank-body").replaceChildren(
+    card([el("p", { class: "loading", text: `loading ${name}…` })]));
+  try {
+    renderBank(name, await api(`/api/banks/${encodeURIComponent(name)}`));
+  } catch (error) {
+    // A manifest this studio cannot read is a state worth naming: a bank from an older schema
+    // reads exactly like this, and "no such bank" would be a lie about it.
+    $("bank-body").replaceChildren(card([
+      el("h2", { text: `${name} could not be read` }),
+      el("p", { class: "failed", text: error.message }),
+    ]));
+    $("bank-count").textContent = "unreadable";
+    $("bank-where").textContent = "";
+  }
+}
+
+async function loadBanks(prefer) {
+  let banks;
+  try {
+    banks = await api("/api/banks");
+  } catch (error) {
+    $("bank-head").hidden = true;
+    $("bank-empty").hidden = true;
+    $("bank-list").replaceChildren();
+    $("bank-body").replaceChildren(card([
+      el("p", { class: "failed", text: `the banks failed to load: ${error.message}` }),
+    ]));
+    return;
+  }
+  dataset.banks = banks;
+  $("bank-empty").hidden = banks.length > 0;
+  $("bank-head").hidden = banks.length === 0;
+  if (!banks.length) {
+    dataset.name = null;
+    $("bank-list").replaceChildren();
+    $("bank-body").replaceChildren();
+    return;
+  }
+
+  // Prefer what was asked for, then whatever was already open, then the newest -- which is the
+  // order the list already comes in. Set before the first render so the row is highlighted as
+  // the list appears, rather than a beat later when the manifest lands.
+  const names = banks.map((entry) => entry.name);
+  dataset.name = names.includes(prefer) ? prefer
+    : names.includes(dataset.name) ? dataset.name : names[0];
+  renderBankList();
+  await openBank(dataset.name);
 }
 
 // -------------------------------------------------------------- the reference
@@ -624,6 +1082,10 @@ function apply(job) {
   else setState(job.exit_code === 0 ? "ok" : "bad", `${job.command} · exit ${job.exit_code}`);
   $("cancel").hidden = !running;
   $("run").disabled = running;
+
+  // One job at a time, so one watcher -- the Build tab is a second view onto it rather than a
+  // second poller with its own offset to keep in step.
+  if (job.command === "generate") applyGenerate(job);
 }
 
 function schedule() {
@@ -725,12 +1187,40 @@ api("/api/doctor").then((report) => {
 
 // One fetch of the reference, two things built from it: the document, and the form. If they
 // could disagree, one of them would be lying about what the CLI accepts.
-Promise.all([api("/api/commands"), api("/api/categories"), api("/api/runnable")])
-  .then(([data, categories, runnable]) => {
+Promise.all([api("/api/commands"), api("/api/categories"), api("/api/runnable"),
+             api("/api/studio")])
+  .then(([data, categories, runnable, studio]) => {
+    // Both facts the Build tab needs but may not invent: how many seeds a category is built at
+    // (the CLI's default, which reads as `None` in the parameter table) and where banks go.
+    build.seeds = data.default_seeds;
+    build.root = studio.banks_root;
+    build.writable = studio.writable;
+    $("bank-name").value = defaultBankName();
+    // The box starts at the size of a bank the CLI would have built, then it is yours.
+    $("count").value = String(build.seeds.length);
+
     renderReference(data, categories);
     renderBuild(categories);
     buildRun(data, runnable);
     $("draw").addEventListener("click", drawExamples);
+    $("build-go").addEventListener("click", generate);
+    $("bank-name").addEventListener("input", refreshGo);
+    $("bank-root").textContent = build.root;
+    $("bank-find").addEventListener("input", renderBankList);
+    $("bank-reload").addEventListener("click", () => loadBanks());
+    $("build-open").addEventListener("click", async () => {
+      // Fetched before the tab is shown, so `showView` finds the list already there and does not
+      // start a second one. The bank that was just built is not in a list fetched before it
+      // existed, so this always re-fetches rather than reusing what is cached.
+      await loadBanks(gen.bank);
+      showView("bank");
+    });
+    $("count").addEventListener("input", pickedLabel);
+    $("build-cancel").addEventListener("click", async () => {
+      if (!run.job) return;
+      apply(await api(`/api/jobs/${run.job}`, { method: "DELETE" }));
+      schedule();
+    });
   })
   .catch((error) => {
     const target = document.getElementById("reference");

@@ -14,12 +14,14 @@ with `TestClient` against a temp directory -- no server, no port, no simulator.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from scenariobank.bank import MANIFEST_NAME, THUMBNAIL_DIR, BankError, read_manifest
 from scenariobank.cli import EXAMPLES_DIR
 from scenariobank.web.invoke import NOT_RUNNABLE, InvokeError, build_argv, catalog
 from scenariobank.web.jobs import JobBusy, JobNotFound, Jobs
@@ -29,6 +31,13 @@ from scenariobank.web.jobs import JobBusy, JobNotFound, Jobs
 STATE_DIR_NAME = ".studio"
 
 _STATIC = Path(__file__).parent / "static"
+
+#: What a bank directory and a thumbnail may be called. A name matching this cannot contain a
+#: separator and cannot begin with a dot, so `..` and `../../etc/passwd` are not names that get
+#: filtered out -- they are names that never become a path at all. Same reasoning as
+#: `/api/examples/{category}.png` resolving through `CATEGORIES`: check the shape of the name
+#: before it touches the filesystem, rather than checking where the path landed afterwards.
+_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 class JobRequest(BaseModel):
@@ -54,6 +63,11 @@ def create_app(*, banks_root: Path, state_dir: Path, workdir: Path | None = None
     state_dir = Path(state_dir)
     workdir = Path(workdir) if workdir is not None else Path.cwd()
     jobs = Jobs(state_dir / "jobs", workdir=workdir)
+
+    def _root() -> Path:
+        """`--banks-root`, made absolute. One definition, because `/api/studio` reports this
+        directory and `/api/banks` reads it, and the two must be the same place."""
+        return banks_root if banks_root.is_absolute() else workdir / banks_root
 
     app = FastAPI(
         title="scenariobank studio",
@@ -95,6 +109,123 @@ def create_app(*, banks_root: Path, state_dir: Path, workdir: Path | None = None
         from scenariobank.docs import reference
 
         return reference()
+
+    @app.get("/api/studio")
+    def studio() -> dict:
+        """Where this studio was started, and where a new bank would go.
+
+        The page has to name a directory for `generate --out`, and it may not invent one: banks
+        live under `--banks-root`, which is a flag, and a job may only write inside the directory
+        the studio was started in. Both facts live here rather than being assumed by the page.
+        """
+        root = _root()
+        inside = root.resolve().is_relative_to(workdir.resolve())
+        return {
+            "workdir": str(workdir),
+            # Relative when it can be: that is the form `--out` wants, and the form the argv the
+            # page shows you reads as.
+            "banks_root": str(root.resolve().relative_to(workdir.resolve()))
+            if inside
+            else str(root),
+            # A studio pointed at banks outside its own checkout can still *list* them; it just
+            # cannot generate into them, because no job may write out there.
+            "writable": inside,
+        }
+
+    def _bank_dir(bank: str) -> Path:
+        """The directory for one bank, or a refusal.
+
+        Two failures, deliberately different: a name that is not a name at all is a 400, because
+        nothing could ever be served for it; a well-formed name with no manifest behind it is a
+        404, because a bank could be there tomorrow. A directory without a manifest is not a bank
+        -- generation writes the manifest last, so that is exactly the interrupted-run case.
+        """
+        if not _NAME.match(bank):
+            raise HTTPException(
+                status_code=400,
+                detail=f"{bank!r} is not a bank name: letters, digits, dot, dash or underscore",
+            )
+        path = _root() / bank
+        if not (path / MANIFEST_NAME).is_file():
+            raise HTTPException(status_code=404, detail=f"no bank named {bank!r}")
+        return path
+
+    @app.get("/api/banks")
+    def banks() -> list[dict]:
+        """Every bank under `--banks-root`, newest first, summarised.
+
+        A summary rather than the manifests: the page opens one bank at a time, and a listing that
+        carried every scenario row would grow with the disk. The counts are what a picker shows.
+
+        A directory whose manifest does not validate is **listed with its error** rather than
+        skipped. A bank silently missing from the list is the one failure a person cannot debug
+        from the page, and a schema bump is exactly when it would happen.
+        """
+        root = _root()
+        if not root.is_dir():
+            return []
+        found = []
+        for path in sorted(root.iterdir()):
+            if not path.is_dir() or not _NAME.match(path.name):
+                continue
+            if not (path / MANIFEST_NAME).is_file():
+                continue
+            try:
+                manifest = read_manifest(path)
+            except (BankError, ValueError) as error:
+                found.append({"name": path.name, "error": str(error)})
+                continue
+            found.append(
+                {
+                    "name": path.name,
+                    "bank_id": manifest.bank_id,
+                    "created_utc": manifest.created_utc,
+                    "categories": list(manifest.categories),
+                    "scenarios": sum(
+                        len(entry.scenarios) for entry in manifest.categories.values()
+                    ),
+                }
+            )
+        # Newest first: the bank you just generated is the one you want to look at. An unreadable
+        # one has no date, so it sorts to the end rather than to the top.
+        found.sort(key=lambda entry: entry.get("created_utc") or "", reverse=True)
+        return found
+
+    @app.get("/api/banks/{bank}")
+    def bank(bank: str) -> dict:
+        """One bank's manifest, as it is on disk.
+
+        Returned unshaped. The manifest was designed to explain itself -- "declare the intent,
+        store the fact" -- so a studio that reformatted it here would be inventing a second
+        description of a bank for the page to drift away from.
+        """
+        try:
+            return read_manifest(_bank_dir(bank)).model_dump()
+        except (BankError, ValueError) as error:
+            # A manifest this studio cannot read is the bank's problem, not the request's: 422
+            # rather than 404, so the page can say *why* instead of "no such bank".
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.get("/api/banks/{bank}/thumbs/{name}.png")
+    def thumbnail(bank: str, name: str) -> FileResponse:
+        """One scenario's picture.
+
+        `name` is guarded the same way the bank is, so the served path is built from two names
+        neither of which can hold a separator. `THUMBNAIL_DIR` comes from `bank.py` rather than
+        being spelled here, because where thumbnails live is that module's decision.
+        """
+        directory = _bank_dir(bank)
+        if not _NAME.match(name):
+            raise HTTPException(status_code=400, detail=f"{name!r} is not a scenario name")
+        path = directory / THUMBNAIL_DIR / f"{name}.png"
+        if not path.is_file():
+            # `generate --no-thumbnails` is a supported way to build a bank, so a missing picture
+            # is an ordinary state and says so.
+            raise HTTPException(
+                status_code=404,
+                detail=f"no thumbnail for {name!r} in {bank!r}",
+            )
+        return FileResponse(path, media_type="image/png")
 
     @app.get("/api/runnable")
     def runnable() -> dict:

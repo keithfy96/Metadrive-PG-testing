@@ -1080,20 +1080,49 @@ pictures. Tick `curve` and `roundabout`.
 lands on **Build** with **Run** hidden. 217 tests pass. A no-sim test asserts one checked-in
 picture per category, so adding a category and forgetting to redraw fails on every machine.)*
 
-### Step 5 — generate what you picked ⬜  ⟵ *bridges 1 to 2*
+### Step 5 — generate what you picked ✅  ⟵ *bridges 1 to 2*
 
 The selection becomes a `generate` job through the existing `invoke.build_argv`, so the page gains
-no second way of calling the CLI. Banks are auto-named `bank-YYYY-MM-DD-hhmm` and renameable —
+no second way of calling the CLI: one repeated `--category` per ticked type, `--out` and
+`--bank-id` carrying the name. Banks are auto-named `bank-YYYY-MM-DD-hhmm` and renameable —
 naming a directory is not a decision worth interrupting someone for.
 
 The studio knows how many scenarios the selection asked for, so the bar counts the CLI's existing
 per-scenario stderr lines against that total. **No new progress protocol**: structured JSON-line
 progress belongs to Phase 7, Step 1, and is not brought forward.
 
+*(Amended 2026-09-02 — Keith: "could you allow me to select a number of scenarios to generate? i
+think having 5 hardcoded is not a good idea". **per type** is a number box on the Build tab, and
+the seeds it asks for are `default_seeds` while that list reaches, then counting on from its end —
+so the default count still generates exactly what `generate` would on its own, and the rule holds
+if `SEEDS` is ever not `0..4`. The page shows the seed list, not just the count, because a
+scenario is a seed. A seed list that is not a count — `--seeds curve=0,1,2,3,22` — stays the Run
+tab's.)*
+
+Two facts the page needs and may not invent, so both are served rather than assumed:
+
+- `reference()["default_seeds"]` — how many seeds a category is built at. The parameter table
+  reads `None`, because the CLI resolves the default inside `_parse_seed_options`, so the count
+  had to come from `categories.SEEDS` itself. It also replaced the hand-typed `0,1,2,3,4` in two
+  `--seeds`/`--keep` prose notes, which were the same constant written a second time.
+- `GET /api/studio` — where a bank goes. Banks live under `--banks-root`, which is a flag, and a
+  job may only write inside the directory the studio was started in. A studio pointed outside its
+  own checkout can still *list* those banks; it says so and greys **Generate** out, rather than
+  letting the click discover it.
+
 **Test in the page:** two types ticked, Generate, watch the count climb to 10, and land in the
 browser with the new bank open.
 
-### Step 6 — the dataset: every picture of the type you picked ⬜  ⟵ *feature 2*
+*(Done 2026-09-02. Verified end to end against a running studio: `curve` + `roundabout` submitted
+the way the page submits it, ten `[n/m]` lines parsed, every one agreeing with the 10 the selection
+predicted before the first arrived, `exit 0`, a manifest and ten thumbs on disk. Refusals: a name
+climbing out of the workdir, a missing `--out`, and an unknown category are each a 400 naming the
+one flag. 222 tests pass. The browser that would open the finished bank is Step 6, so success ends
+in a line naming the directory instead. **per type** verified afterwards: 3 with two types ticked
+submitted `--seeds 0,1,2`, six scenarios, the CLI's own total agreeing with the six the page
+predicted. 224 tests pass.)*
+
+### Step 6 — the dataset: every picture of the type you picked ✅  ⟵ *feature 2*
 
 The step that replaces `eog`, and it has a bank to show because Step 5 made one.
 
@@ -1104,9 +1133,44 @@ The step that replaces `eog`, and it has a bank to show because Step 5 made one.
 One row per category, one card per scenario, and **the picture is the unit** — not a table with a
 thumbnail column. What is being judged is an image.
 
+Three decisions the step forced, none of them in the sketch above:
+
+- **The manifest is served unshaped.** It was written to explain itself — "declare the intent,
+  store the fact" — so a studio that reformatted it into a page-shaped payload would be inventing
+  a second description of a bank, and the second one is the one that drifts.
+- **A manifest that does not parse is *listed*, carrying its error**, and opening it is a 422
+  naming the reason rather than a 404 claiming there is no such bank. A bank vanishing silently
+  from the list is the one failure a person cannot debug from the page, and Step 8b's schema bump
+  is exactly when it would happen. A directory with *no* manifest is different and is left out:
+  generation writes the manifest last, so that is an interrupted run, not a bank.
+- **Names are checked on their shape, before either becomes a path.** `_NAME` is the same class
+  the Build tab already holds bank names to; a name that cannot contain a separator and cannot
+  begin with a dot is not a traversal that gets filtered out, it is one that cannot be spelled.
+  The same rule `/api/examples/{category}.png` follows, which is why it is a regex here rather
+  than an `is_relative_to` check on where the path landed.
+
+The picture-is-the-unit rule also decided what a card carries: the id, the seed, and the
+destination and route length — the two fields that say *why* two cards look alike. The rest of the
+row is Step 7's panel, so the card stops there.
+
+And the end of a build now leads somewhere: **Open the bank** on the Build tab fetches the list
+again (the bank it just made is not in one fetched before it existed) and opens it, which is the
+line Step 5 had to end on instead.
+
 **Test in the page:** 35 cards, every thumbnail loads, and the two near-duplicate `curve` seeds are
 visibly the same picture — which is the whole reason this phase exists.
 `curl -s 'localhost:8770/api/banks/b/thumbs/../../../etc/passwd'` -> 400, not a file.
+
+*(Done 2026-09-02. Verified against a running studio holding two real banks generated through the
+page. `curves-only` at seeds 0-4 renders five cards, every thumbnail a real PNG, and **seeds 0 and
+4 are visibly the same picture** — 452 m against 420 m, the near-duplicate the phase exists to
+make visible. `step6-check` renders two category bands, roundabout then curve, in manifest order.
+The picker is newest-first by `created_utc`, not by directory name. **Open the bank** carried a
+finished build straight into the tab. No console errors. Refusals checked live: `.hidden` and
+`-lead` as bank names are 400 on the shape of the name; `.ssh.png` as a scenario name is 400; a
+scenario the manifest does not name is a 404 saying so; `..` and `%2f` never reach the name check
+at all, because an HTTP client normalises them away and the router matches nothing — which is
+recorded in the test rather than papered over. 237 tests pass, ruff clean.)*
 
 ### Step 7 — what generated this picture ⬜  ⟵ *feature 4*
 
@@ -1139,6 +1203,74 @@ same job — one of them worse. `web/jobs.py` and `web/invoke.py` stay; only the
 **Test in the page:** swap `curve_0004` to seed 22; the card redraws and
 `jq '.categories.curve.scenarios[4]'` agrees. Then try seed 0 — refused, and the reason is readable
 on the page. There is no Run tab left to fall back to.
+
+### Step 8b — edit, add or remove one item ⬜
+
+*(Added 2026-09-02 — Keith: "could you add step after step 8, call it 8b, that will let me change a
+specific item in the dataset?" Three things Step 8 does not do, chosen from four: type an exact
+seed, edit an item's settings, and add or remove items. Swapping an item's **category** was offered
+and declined — an id carries its category name, so that is a rename, and a rename is the
+renumbering problem below wearing a different hat.)*
+
+Step 8 re-rolls a seed and **deliberately** keeps the bank's size, its ids and its positions. This
+is the step that changes those, plus the fields a re-roll never touches.
+
+**1. Type an exact seed.** Needs nothing new: `bank.replace_scenario` already takes any seed and
+already refuses one the category is using. Step 8's ranked table becomes one of two ways in; the
+other is a box. Worth having because ranking is a thirty-seed scan and sometimes you already know
+which seed you want.
+
+**2. Edit the item's settings.** One distinction decides the whole design: **`max_steps` is
+declared, `destination` and `exit_rule` are measured.**
+
+- `max_steps` is a budget, not a measurement. Changing it is a manifest edit — no simulator, no
+  rebuild, instant, and the only control on this panel that does not start a job.
+- `destination` changes the route, and `route_length_m`, `net_rotation_deg` and `turn_pairs` are
+  all measured *from* that route, with the thumbnail drawing it. Changing it is a rebuild at the
+  same seed. The dropdown is filled from `read_sockets` — the exits the road actually has — never
+  a text box, for the reason `--category` is a dropdown.
+- `exit_rule` is the *declared intent* the destination was resolved from. Changing it per scenario
+  is a re-resolve and a rebuild.
+
+**This is the first change that touches the manifest schema, and that is the real cost of the
+step.** `exit_rule` and `max_steps` live on `CategoryEntry` — "the fixed facts they share" — not on
+`ScenarioRow`. A per-scenario override means new optional fields on `ScenarioRow`, which is
+`extra="forbid"`, under a `schema_version` pinned to `Literal["1.0"]`: a manifest this build writes
+will not load in an older one, and the reverse. So **bump to `1.1`**, and say what the new fields
+mean in `CONTRACT.md` (Phase 6) before Tyrone builds a picker against the old shape.
+
+The open sub-question, with a recommendation: does an overridden `exit_rule` mean the scenario has
+left its category? **No — keep the category name and record the override.** The manifest's rule is
+"declare the intent, store the fact", and an override *is* the declared intent for that row; a bank
+that silently reclassified a scenario would be the manifest failing to explain itself.
+
+**3. Add and remove items.** The renumbering decision, which has to be made before a line is
+written. `scenario_id(name, index)` puts the index in the id, so `curve_0004` **is** position 4.
+Deleting `curve_0002` either renumbers `_0003` and `_0004` down — changing the ids of scenarios
+nobody touched — or leaves a gap, so an id is no longer a position.
+
+- **Leave the gap.** An id is how a run refers to a scenario, and Phase 5's results are keyed on
+  it; a bank that renumbers on delete makes every id anyone recorded ambiguous. `_locate` already
+  searches by id rather than indexing, so nothing in `bank.py` cares.
+- Adding appends at `max(index) + 1`, not `len(scenarios)`, for the same reason.
+- Removing deletes the thumbnail with the row. `replace_scenario` already establishes that a
+  picture of a seed that is gone is wrong rather than merely stale.
+- Removing a category's last scenario removes its entry; removing the bank's last category is
+  refused. An empty bank is a manifest with nothing in it, and `generate` is how a new one is made.
+
+**What it needs:** `bank.remove_scenario` (no simulator), `bank.add_scenario` (one env, one reset)
+and `bank.set_max_steps` (a manifest edit), each with a CLI command beside `replace`, because
+everything still runs as a subprocess. `docs.GROUPS` and `docs.EXAMPLES` entries or `reference()`
+raises — the existing rule doing its job.
+
+**The Run tab is gone by the time this lands** (Step 8 deletes it), so there is no log to recover a
+refusal from. Every one of these has to say what is wrong on the panel itself.
+
+**Test in the page:** set `curve_0003`'s `max_steps` to 500 and watch it save without the simulator
+ever starting. Remove `curve_0002`, and confirm `curve_0003` and `curve_0004` keep their ids and
+their pictures while `thumbs/curve_0002.png` is gone. Add one to `t_junction` and get
+`t_junction_0005`, not `t_junction_0000` reused. Type seed 137 into `curve_0004` and watch it
+rebuild. Then remove every scenario of a one-category bank — refused, readably, on the panel.
 
 ### Step 9 — four new scenario types ⬜
 

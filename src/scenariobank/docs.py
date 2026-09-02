@@ -163,8 +163,9 @@ def _value_notes() -> dict[str, str]:
     code actually accepts. This is the half of a flag table that usually goes missing: knowing a
     flag exists is no use without knowing what may follow it.
     """
-    from scenariobank.categories import CATEGORIES, VALID_BLOCK_IDS, ExitRule
+    from scenariobank.categories import CATEGORIES, SEEDS, VALID_BLOCK_IDS, ExitRule
 
+    seeds = ",".join(str(seed) for seed in SEEDS)
     categories = ", ".join(f"`{name}`" for name in CATEGORIES)
     rules = ", ".join(f"`{rule.value}`" for rule in ExitRule)
     blocks = " ".join(f"`{block}`" for block in sorted(VALID_BLOCK_IDS))
@@ -178,9 +179,9 @@ def _value_notes() -> dict[str, str]:
         "--seed": "Any non-negative integer.",
         "--seeds": (
             "A comma-separated list. Also takes `category=list` to override one category, and "
-            "repeats, so later flags win. Omitted, every category uses `0,1,2,3,4`."
+            f"repeats, so later flags win. Omitted, every category uses `{seeds}`."
         ),
-        "--keep": "A comma-separated list. Defaults to the bank's seeds, `0,1,2,3,4`.",
+        "--keep": f"A comma-separated list. Defaults to the bank's seeds, `{seeds}`.",
         "--scan": "A comma-separated list, or an inclusive range like `0-30`.",
         "--scenario": "A `scenario_id` from the bank's manifest, e.g. `curve_0004`.",
     }
@@ -428,6 +429,7 @@ def reference() -> dict[str, Any]:
     """
     import typer
 
+    from scenariobank.categories import SEEDS
     from scenariobank.cli import app
 
     group = typer.main.get_command(app)
@@ -461,6 +463,11 @@ def reference() -> dict[str, Any]:
             for title, blurb, names in GROUPS
         ],
         "categories": category_rows(),
+        # The default `--seeds` reads as `None` in the parameter table, because the CLI
+        # resolves it inside `_parse_seed_options`. The studio needs the real list to say how
+        # many scenarios a selection asks for before the first one is built, so it is carried
+        # here rather than counted a second time in the page.
+        "default_seeds": list(SEEDS),
         "rules": [
             {"rule": rule.value, "picks": picks} for rule, picks in _rule_meanings().items()
         ],

@@ -266,3 +266,334 @@ def test_the_gallery_only_answers_to_a_category_name(client, segment):
     response = client.get(f"/api/examples/{segment}.png")
     assert response.status_code == 404
     assert "escaped" not in response.text
+
+
+def test_the_studio_says_where_a_new_bank_would_go(client):
+    """The page may not invent a directory for `generate --out`.
+
+    Banks live under `--banks-root`, which is a flag, and a job may only write inside the
+    directory the studio was started in. A page that assumed `banks/` would quietly write
+    somewhere else the moment either changed.
+    """
+    served = client.get("/api/studio").json()
+    assert served["workdir"] == str(client.workdir)
+    assert served["banks_root"] == "banks"
+    assert served["writable"] is True
+
+
+def test_a_banks_root_outside_the_workdir_is_listed_but_not_generated_into(tmp_path):
+    # Legal to point at: the bank list is a read. Not legal to write into, because no job may
+    # write outside the checkout -- so the page is told, rather than finding out at the click.
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    application = create_app(
+        banks_root=outside, state_dir=workdir / ".studio", workdir=workdir
+    )
+    with TestClient(application) as served:
+        studio = served.get("/api/studio").json()
+        assert studio["writable"] is False
+        assert studio["banks_root"] == str(outside)
+
+
+def test_the_reference_carries_the_seeds_a_category_is_built_at(client):
+    """`--seeds` defaults to `None` in the parameter table; the real list has to reach the page.
+
+    The studio says how many scenarios a selection asks for *before* the first one is built, and
+    counting them means knowing the seeds. Carried from `categories.SEEDS` rather than restated
+    in the page, which is the one place it could go stale unnoticed.
+    """
+    from scenariobank.categories import SEEDS
+
+    served = client.get("/api/commands").json()
+    assert served["default_seeds"] == list(SEEDS)
+    # The same list the prose promises, so the sentence and the number cannot disagree.
+    seeds = ",".join(str(seed) for seed in SEEDS)
+    rows = [
+        row
+        for group in served["groups"]
+        for entry in group["commands"]
+        for row in entry["options"]
+        if row["flag"].startswith("`--seeds")
+    ]
+    assert rows and all(f"`{seeds}`" in row["meaning"] for row in rows)
+
+
+def test_the_selection_becomes_a_generate_the_cli_would_accept(client):
+    """What the Build tab submits, checked against the CLI's own parameters.
+
+    Not a mock of the page: this is the same POST body it sends, refused or accepted by the same
+    `invoke.build_argv` every other command goes through.
+    """
+    from scenariobank.web.invoke import build_argv
+
+    argv = build_argv(
+        "generate",
+        {
+            "--out": "banks/bank-2026-09-02-1431",
+            "--bank-id": "bank-2026-09-02-1431",
+            "--category": ["curve", "roundabout"],
+        },
+        {},
+        workdir=client.workdir,
+    )
+    assert argv[-6:] == [
+        "--bank-id", "bank-2026-09-02-1431",
+        "--category", "curve",
+        "--category", "roundabout",
+    ]
+    # `--out` is a path, so it arrives resolved and inside the workdir -- the containment check
+    # is not something the page opts into.
+    assert str(client.workdir / "banks" / "bank-2026-09-02-1431") in argv
+
+
+def test_a_bank_name_cannot_climb_out_of_the_workdir(client):
+    response = client.post(
+        "/api/jobs",
+        json={
+            "command": "generate",
+            "options": {"--out": "banks/../../escaped", "--bank-id": "escaped"},
+        },
+    )
+    assert response.status_code == 400
+    assert str(client.workdir) in response.json()["detail"]
+    assert not (client.workdir.parent / "escaped").exists()
+
+
+def test_how_many_of_each_type_becomes_a_seed_list_the_cli_parses(client):
+    """The Build tab asks for a count; the CLI takes a seed list. This is the join between them.
+
+    The page sends the list the way you would type it -- one comma-separated `--seeds` value --
+    so the count it offers cannot mean something the CLI would read differently.
+    """
+    from scenariobank.cli import _parse_seed_options
+    from scenariobank.web.invoke import build_argv
+
+    argv = build_argv(
+        "generate",
+        {
+            "--out": "banks/b",
+            "--bank-id": "b",
+            "--category": ["curve"],
+            "--seeds": "0,1,2,3,4,5,6",
+        },
+        {},
+        workdir=client.workdir,
+    )
+    at = argv.index("--seeds")
+    shared, overrides = _parse_seed_options([argv[at + 1]])
+    assert shared == (0, 1, 2, 3, 4, 5, 6)
+    assert not overrides
+
+
+def test_a_count_of_one_is_a_bank_of_one_scenario_per_type(client):
+    # The smallest thing worth generating, and the case a hardcoded five could not express.
+    from scenariobank.cli import _parse_seed_options
+
+    shared, _ = _parse_seed_options(["0"])
+    assert shared == (0,)
+
+
+# ---------------------------------------------------------------- the dataset (Step 6)
+#
+# These build banks on disk by hand rather than by running `generate`, so they say what the studio
+# serves without needing a simulator. `write_manifest` is the same function generation ends with,
+# so the file under test is the real shape.
+
+
+def _bank(root, name, *, categories=("curve",), seeds=(0, 1), thumbnails=True,
+          bank_id=None, created="2026-09-01T00:00:00Z"):
+    """A bank on disk: a manifest, and a PNG per scenario. No simulator involved."""
+    from scenariobank.bank import (
+        THUMBNAIL_DIR,
+        CategoryEntry,
+        Manifest,
+        ScenarioRow,
+        scenario_id,
+        write_manifest,
+    )
+    from scenariobank.handedness import DRIVE_SIDE_LEFT
+
+    directory = root / name
+    directory.mkdir(parents=True)
+    (directory / THUMBNAIL_DIR).mkdir()
+    entries = {}
+    for category in categories:
+        rows = []
+        for index, seed in enumerate(seeds):
+            row_id = scenario_id(category, index)
+            if thumbnails:
+                # A real PNG header, so a browser fetching it would get an image and not a 200
+                # over nonsense. The endpoint serves bytes; this is about the content type being
+                # honest, which is the only thing the file's contents can be wrong about here.
+                (directory / THUMBNAIL_DIR / f"{row_id}.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+            rows.append(
+                ScenarioRow(
+                    scenario_id=row_id,
+                    seed=seed,
+                    destination="1T0_1_",
+                    spawn_lane_index=1,
+                    route_length_m=340.1,
+                    net_rotation_deg=88.0,
+                    turn_pairs="L",
+                    thumbnail=f"{THUMBNAIL_DIR}/{row_id}.png" if thumbnails else None,
+                )
+            )
+        entries[category] = CategoryEntry(
+            description=CATEGORIES[category].description,
+            block_seq=CATEGORIES[category].block_seq,
+            exit_rule=str(CATEGORIES[category].exit_rule),
+            max_steps=CATEGORIES[category].max_steps,
+            scenarios=rows,
+        )
+    write_manifest(
+        directory,
+        Manifest(
+            schema_version="1.0",
+            bank_id=bank_id or name,
+            created_utc=created,
+            metadrive={
+                "edition": None,
+                "dist_version": None,
+                "commit": None,
+                "asset_version": None,
+            },
+            base_config={},
+            drive_side=DRIVE_SIDE_LEFT,
+            categories=entries,
+        ),
+    )
+    return directory
+
+
+def test_no_banks_is_an_empty_list_rather_than_an_error(client):
+    # The state a fresh checkout is in. The page shows "no banks yet" from this, so it has to be
+    # an ordinary answer and not something to catch.
+    assert client.get("/api/banks").json() == []
+
+
+def test_the_listing_summarises_each_bank_newest_first(client):
+    # Sorted by what the manifest says it was built at, not by directory name -- the bank you just
+    # generated is the one you want at the top, and its name is whatever you called it.
+    _bank(client.workdir / "banks", "zed", created="2026-09-01T00:00:00Z")
+    _bank(
+        client.workdir / "banks",
+        "abel",
+        categories=("curve", "roundabout"),
+        created="2026-09-02T00:00:00Z",
+    )
+
+    banks = client.get("/api/banks").json()
+    assert [bank["name"] for bank in banks] == ["abel", "zed"]
+    assert banks[0]["scenarios"] == 4
+    assert banks[0]["categories"] == ["curve", "roundabout"]
+    # A summary, not the manifest: the picker needs counts, and a listing carrying every scenario
+    # row would grow with the disk.
+    assert "scenarios" not in banks[0]["categories"]
+
+
+def test_a_directory_without_a_manifest_is_not_a_bank(client):
+    # Generation writes the manifest last, so this is precisely the interrupted-run case: the
+    # directory exists and holds nothing a reader could trust.
+    (client.workdir / "banks" / "half-built" / "thumbs").mkdir(parents=True)
+    assert client.get("/api/banks").json() == []
+    assert client.get("/api/banks/half-built").status_code == 404
+
+
+def test_an_unreadable_manifest_is_listed_with_its_reason(client):
+    """A bank the studio cannot parse stays in the list, carrying the error.
+
+    Silently dropping it is the one failure a person cannot debug from the page -- and a schema
+    bump is exactly when it happens.
+    """
+    broken = client.workdir / "banks" / "broken"
+    broken.mkdir(parents=True)
+    (broken / "manifest.json").write_text("{ not json")
+
+    listed = client.get("/api/banks").json()
+    assert [bank["name"] for bank in listed] == ["broken"]
+    assert "not valid JSON" in listed[0]["error"]
+
+    # And opening it says why, rather than claiming there is no such bank.
+    response = client.get("/api/banks/broken")
+    assert response.status_code == 422
+    assert "not valid JSON" in response.json()["detail"]
+
+
+def test_a_bank_is_served_as_the_manifest_on_disk(client):
+    from scenariobank.bank import read_manifest
+
+    directory = _bank(client.workdir / "banks", "b", categories=("curve",), seeds=(0, 4))
+    served = client.get("/api/banks/b").json()
+
+    # Unshaped: the manifest was written to explain itself, so a studio that reformatted it here
+    # would be inventing a second description of a bank for the page to drift away from.
+    assert served == json.loads(read_manifest(directory).model_dump_json())
+    assert [row["seed"] for row in served["categories"]["curve"]["scenarios"]] == [0, 4]
+
+
+def test_a_thumbnail_is_served_as_an_image(client):
+    _bank(client.workdir / "banks", "b", categories=("curve",), seeds=(0, 1))
+    response = client.get("/api/banks/b/thumbs/curve_0000.png")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/png"
+    assert response.content.startswith(b"\x89PNG")
+
+
+def test_a_bank_built_without_thumbnails_still_serves_its_rows(client):
+    # `generate --no-thumbnails` is a supported way to build a bank, so a missing picture is an
+    # ordinary state: the row is there, the file is not, and the 404 says so.
+    _bank(client.workdir / "banks", "b", thumbnails=False)
+    served = client.get("/api/banks/b").json()
+    assert served["categories"]["curve"]["scenarios"][0]["thumbnail"] is None
+
+    response = client.get("/api/banks/b/thumbs/curve_0000.png")
+    assert response.status_code == 404
+    assert "no thumbnail" in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    "segment",
+    [
+        "%2e%2e%2f%2e%2e%2fetc",
+        "..",
+        ".hidden",
+        "a/b",
+    ],
+)
+def test_a_bank_name_that_is_not_a_name_never_becomes_a_path(client, segment):
+    """Refused, and refused before it touches the filesystem.
+
+    Two layers, and which one catches a given segment is not the point: an HTTP client normalises
+    `..` and decodes `%2f` on the way out, so the router sees a path that matches no route; what
+    survives as a single segment meets the name check. The same rule
+    `/api/examples/{category}.png` follows -- a name that cannot hold a separator and cannot begin
+    with a dot is not a traversal that gets filtered out, it is one that cannot be spelled.
+    """
+    _bank(client.workdir / "banks", "b")
+    secret = client.workdir / "secret.txt"
+    secret.write_text("not yours")
+
+    for path in (f"/api/banks/{segment}", f"/api/banks/{segment}/thumbs/x.png"):
+        response = client.get(path)
+        assert response.status_code in (400, 404), path
+        assert "not yours" not in response.text, path
+
+
+def test_a_thumbnail_name_that_is_not_a_name_is_refused(client):
+    # A leading dot is the shape that matters: `..` is the traversal, and the class that forbids
+    # one forbids the other. The bank exists, so this is the name check refusing and not a 404.
+    _bank(client.workdir / "banks", "b")
+    response = client.get("/api/banks/b/thumbs/.ssh.png")
+    assert response.status_code == 400
+    assert "not a scenario name" in response.json()["detail"]
+
+
+def test_the_studios_banks_root_is_the_directory_the_listing_reads(client):
+    """`/api/studio` says where banks are and `/api/banks` lists them. One place, or neither
+    means anything."""
+    _bank(client.workdir / "banks", "b")
+    root = client.get("/api/studio").json()["banks_root"]
+    assert (client.workdir / root / "b" / "manifest.json").is_file()
+    assert [bank["name"] for bank in client.get("/api/banks").json()] == ["b"]

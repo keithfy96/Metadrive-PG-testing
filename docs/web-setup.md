@@ -81,11 +81,92 @@ To reach it from another machine, forward the port over SSH rather than changing
 ssh -N -L 8770:127.0.0.1:8770 you@this-machine
 ```
 
+## Building a bank from the page
+
+The **Build** tab is the landing view: one card per scenario type, showing the example picture
+`scenariobank examples` drew at seed 0. Click the types you want, check the bank name — it is
+filled in as `bank-YYYY-MM-DD-hhmm` and editable — say how many of each type you want, and click
+**Generate**.
+
+**per type** is how many scenarios of each ticked type to build. It starts at the size of a bank
+the CLI would have built on its own and is then yours: one for a quick look, thirty when you are
+choosing between seeds. A scenario *is* a seed, so the line under the button always names the
+seeds it is about to build — `each type at seeds 0,1,2` — rather than only the count. Leaving the
+box alone asks for exactly the seeds `generate` uses by default.
+
+The bar counts the CLI's own per-scenario progress lines. `generate` prints `[3/35]` to stderr as
+each scenario lands, and the page reads those; the total it shows *before* the first one arrives is
+the types times the count. Importing MetaDrive is twenty silent seconds, and `0 / 10` during them
+is the difference between waiting and wondering.
+
+Banks are written under `--banks-root`, and only if that is inside the directory the studio was
+started in — a job may not write outside the checkout. `GET /api/studio` is where the page learns
+both, rather than assuming `banks/`.
+
+Underneath, this is the same `POST /api/jobs` every other command goes through: the selection
+becomes one repeated `--category` per type and one `--seeds 0,1,2`, spelled exactly as you would
+type them, and `invoke.py` checks every flag against the CLI's own parameters. There is no second
+way of calling the CLI. A seed list that is not a simple count — `--seeds curve=0,1,2,3,22`, one
+category built at its own seeds — is still the **Run** tab's, or the terminal's.
+
+When a build finishes, **Open the bank** takes you straight to it.
+
+## Looking at a bank
+
+The **Bank** tab is what replaces opening the thumbnail directory in an image viewer. Pick a bank
+from the list — newest first, by what its manifest says it was built at, each row carrying its
+scenario types and its size — and every scenario in it appears as the picture of it, grouped by
+type.
+
+The banks are **a list, not a dropdown**: with a dozen of them you want to see them all at once and
+read their sizes against each other, which is the one thing a `<select>` hides until you open it.
+**find** filters the list — by name, or by scenario type, so "the roundabout ones" is as answerable
+as "the one called `b`".
+
+**The picture is the unit.** This is not a table with a thumbnail column: what you are judging is
+an image, so the card is mostly image, with the `scenario_id`, the seed, and the destination and
+route length underneath. Those last two are the fields that say *why* two cards look alike. Two
+seeds that drew the same road is the thing this screen exists to make visible — `curve` seeds 0
+and 4 are a few percent apart in route length and their thumbnails are the same picture, which is
+a fact about the bank you cannot get from the manifest by reading it.
+
+Cards appear in the order the manifest lists them, so a card's position is the position its
+`scenario_id` names: `curve_0004` is the fifth curve card.
+
+Three endpoints behind it, and nothing else:
+
+| endpoint | what it is |
+|---|---|
+| `GET /api/banks` | directories under `--banks-root` holding a `manifest.json`, summarised: name, `bank_id`, when it was built, its categories and its scenario count |
+| `GET /api/banks/{bank}` | that bank's manifest, **as it is on disk** |
+| `GET /api/banks/{bank}/thumbs/{name}.png` | one scenario's picture |
+
+The manifest is returned unshaped. It was written to explain itself — "declare the intent, store
+the fact" — so a studio that reformatted it here would be inventing a second description of a bank
+for the page to drift away from.
+
+Two states that are not errors, and say so:
+
+- **A directory with no `manifest.json` is not a bank.** Generation writes the manifest last, so
+  an interrupted run leaves exactly that, and it is left out of the list rather than half-listed.
+- **A manifest this studio cannot parse stays in the list, carrying its error**, and opening it
+  says why. A bank silently missing from the list is the one failure you cannot debug from the
+  page, and a schema bump is when it would happen.
+
+`generate --no-thumbnails` is a supported way to build a bank, so a card with no picture says
+"built without a thumbnail" rather than showing a broken image.
+
+Bank and scenario names are checked **on the shape of the name**, before either becomes a path:
+letters, digits, dot, dash, underscore, and not a leading dot. A name that cannot hold a separator
+and cannot begin with a dot is not a traversal that gets filtered out — it is one that cannot be
+spelled. Same rule as `/api/examples/{category}.png`.
+
 ## Running a command from the page
 
-The **Run** tab is the landing view. Pick a command, fill in the flags, click **Run**, and watch
-the output arrive. Start with `categories`: it takes no flags, needs no simulator, and finishes in
-under a second, so it is the quickest way to confirm a fresh install works end to end.
+The **Run** tab is the escape hatch — everything the purpose-built screens do not cover yet. Pick a
+command, fill in the flags, click **Run**, and watch the output arrive. Start with `categories`: it
+takes no flags, needs no simulator, and finishes in under a second, so it is the quickest way to
+confirm a fresh install works end to end.
 
 The form is **generated from the CLI's own flags** — the same data
 `docs/reference/commands.md` is written from. It cannot offer a flag the command does not take,
@@ -159,19 +240,22 @@ design is arranged to prevent. Existing examples of the pattern: `/api/doctor` r
 | `Address already in use` | another studio is running; `pkill -f 'bin/scenariobank studio'` or use `--port` |
 | the reference tab says it failed to load | look at the terminal — a `ValueError` from `docs.reference()` means a CLI command was added without a group or without examples in `docs.py` |
 | a job says `lost` | its process ended without recording an exit code — the studio was killed while it ran |
-| the bank list is empty | no directory under `--banks-root` has a `manifest.json`; generate one with `scenariobank generate -o ./banks/b --bank-id b` |
+| the **Bank** tab says there are no banks | no directory under `--banks-root` holds a `manifest.json`; generate one from the **Build** tab, or with `scenariobank generate -o ./banks/b --bank-id b` |
+| a bank is listed as `unreadable` | its `manifest.json` does not parse or does not validate — opening it names the reason. A bank written by an older schema reads exactly like this |
+| **Generate** is greyed out and says banks live outside the working directory | the studio was started with a `--banks-root` outside its own checkout; no job may write out there. Restart it inside the directory you want the bank in |
 
 ## What exists today
 
-Built one step at a time; the Bank tab lists the same twelve steps and strikes through what is
+Built one step at a time; the Bank tab lists the same steps and strikes through what is
 done. Currently live:
 
 1. the shell, and `doctor` in the header
 2. `categories` and `commands` — the reference tab
 3. the job engine — **every command is runnable from the Run tab**, which is scaffolding: it
    is deleted once the purpose-built screens replace it
+4. the gallery — the **Build** tab, one example picture per scenario type
+5. generation from that selection — how many of each type, and a progress bar
+6. the dataset — the **Bank** tab, every scenario in a bank as the picture of it
 
-Still to come are the purpose-built surfaces that replace typing flags into a generated form: a
-gallery of scenario types with example pictures, generation from that gallery, the dataset of
-thumbnails, the panel saying what generated each one, and the swap. At that point the Run tab stops
-being the front door and becomes an escape hatch. See **Phase 2c** in `IMPLEMENTATION_PLAN.md`.
+Still to come are the surfaces that read one scenario back: the panel saying what generated a
+picture, and the swap. See **Phase 2c** in `IMPLEMENTATION_PLAN.md`.
