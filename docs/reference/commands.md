@@ -150,6 +150,7 @@ first. Look at the top of the list with `inspect --block-seq`, then commit what 
 | `--category/-c <str>` | **required** |  | The category to scan. One of: `intersection_left`, `intersection_right`, `intersection_straight`, `t_junction`, `roundabout`, `curve`, `ramp_traffic_merge`. |
 | `--keep <str>` | optional |  | The seeds you are keeping, which candidates are measured against. A comma-separated list. Defaults to the bank's seeds, `0,1,2,3,4`. |
 | `--scan <str>` | default `0-30` |  | The candidate seeds to consider. A comma-separated list, or an inclusive range like `0-30`. |
+| `--json` | default `false` |  | Emit the ranking as JSON instead of an aligned table. |
 
 ```bash
 uv run scenariobank seeds -c curve --keep 0,1,2,3 --scan 0-30  # what would a fifth seed add?

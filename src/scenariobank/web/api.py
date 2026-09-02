@@ -30,6 +30,10 @@ from scenariobank.web.jobs import JobBusy, JobNotFound, Jobs
 #: nothing here is worth keeping.
 STATE_DIR_NAME = ".studio"
 
+#: Where a candidate seed's picture is drawn, under the state directory. Scratch: the seed it
+#: draws has not been committed to any bank, and drawing the same one twice is a job away.
+LOOKS_DIR = "looks"
+
 _STATIC = Path(__file__).parent / "static"
 
 #: What a bank directory and a thumbnail may be called. A name matching this cannot contain a
@@ -68,6 +72,11 @@ def create_app(*, banks_root: Path, state_dir: Path, workdir: Path | None = None
         """`--banks-root`, made absolute. One definition, because `/api/studio` reports this
         directory and `/api/banks` reads it, and the two must be the same place."""
         return banks_root if banks_root.is_absolute() else workdir / banks_root
+
+    def _state() -> Path:
+        """`state_dir`, made absolute, for the same reason `_root` exists: `/api/studio` tells the
+        page where to write a look and `/api/looks` reads it back, and the two must agree."""
+        return state_dir if state_dir.is_absolute() else workdir / state_dir
 
     app = FastAPI(
         title="scenariobank studio",
@@ -130,6 +139,12 @@ def create_app(*, banks_root: Path, state_dir: Path, workdir: Path | None = None
             # A studio pointed at banks outside its own checkout can still *list* them; it just
             # cannot generate into them, because no job may write out there.
             "writable": inside,
+            # Where `inspect --out` should draw a candidate seed. Reported rather than assumed by
+            # the page for the same reason `banks_root` is: it is where *this* studio keeps its
+            # scratch, and `/api/looks` serves the same directory back.
+            "looks": str(_looks().relative_to(workdir.resolve()))
+            if _looks().is_relative_to(workdir.resolve())
+            else str(_looks()),
         }
 
     def _bank_dir(bank: str) -> Path:
@@ -327,6 +342,27 @@ def create_app(*, banks_root: Path, state_dir: Path, workdir: Path | None = None
             return jobs.cancel(job_id)
         except JobNotFound as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
+
+    def _looks() -> Path:
+        """Where a candidate seed's picture is drawn. Under the state directory rather than in a
+        bank: nothing here belongs to a bank, and a picture of a seed nobody committed would be a
+        thumbnail of a scenario that does not exist."""
+        return (_state() / LOOKS_DIR).resolve()
+
+    @app.get("/api/looks/{name}.png")
+    def look(name: str) -> FileResponse:
+        """A candidate seed, drawn by `inspect` before anyone commits it to a bank.
+
+        Guarded on the shape of the name the same way a thumbnail is, so the served path is built
+        from a name that cannot hold a separator. A missing picture is a 404 rather than a blank:
+        the drawing is a job, and a job can fail or be cancelled.
+        """
+        if not _NAME.match(name):
+            raise HTTPException(status_code=400, detail=f"{name!r} is not a look")
+        path = _looks() / f"{name}.png"
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail=f"nothing drawn for {name!r} yet")
+        return FileResponse(path, media_type="image/png")
 
     @app.get("/api/examples/{category}.png")
     def example(category: str) -> FileResponse:

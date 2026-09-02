@@ -14,6 +14,7 @@ sequence already has. Both are built on `fingerprint.shape_gap`, which is delibe
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
@@ -25,6 +26,11 @@ from scenariobank.sockets import (
     select_exit,
     turn_pairs,
 )
+
+#: Below this, two seeds of one sequence are reported as near-duplicates rather than as two
+#: roads. Chosen from measurement, not taste: `curve` seeds 0 and 4 sit at 0.07 and are visibly
+#: the same corner, while the next-closest `curve` pair is at 0.34 and is visibly not.
+NEAR_DUPLICATE = 0.10
 
 
 @dataclass(frozen=True)
@@ -42,6 +48,24 @@ class SeedReading:
     #: Small means this seed would add little: 0.07 is `curve` seed 4 against seed 0.
     gap: float | None
     nearest_kept: int | None
+
+    @property
+    def is_near_duplicate(self) -> bool:
+        """Would this candidate be a second picture of a seed you already have?
+
+        A rule, not a comparison spelled out wherever a reading is displayed. The aligned table
+        and the studio's ranked list both flag a seed because *this* said so, which is the only
+        way the two cannot come to disagree about which seeds are worth swapping to.
+        """
+        return self.gap is not None and self.gap < NEAR_DUPLICATE
+
+    def as_dict(self) -> dict[str, object]:
+        """This reading as JSON, for `seeds --json` and the studio's ranked list.
+
+        `near_duplicate` is carried rather than left to the reader to derive, so `NEAR_DUPLICATE`
+        stays a number this module owns.
+        """
+        return {**dataclasses.asdict(self), "near_duplicate": self.is_near_duplicate}
 
     def describe(self) -> str:
         gap = (
@@ -154,12 +178,6 @@ def closest_pair(shapes: dict[int, object]) -> tuple[int, int, float] | None:
         return None
     gap, a, b = min(pairs)
     return a, b, gap
-
-
-#: Below this, two seeds of one sequence are reported as near-duplicates rather than as two
-#: roads. Chosen from measurement, not taste: `curve` seeds 0 and 4 sit at 0.07 and are visibly
-#: the same corner, while the next-closest `curve` pair is at 0.34 and is visibly not.
-NEAR_DUPLICATE = 0.10
 
 
 __all__ = ["NEAR_DUPLICATE", "SeedReading", "closest_pair", "scan"]

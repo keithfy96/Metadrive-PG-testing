@@ -370,6 +370,9 @@ def seeds(
     scan_range: Annotated[
         str, typer.Option("--scan", help="The candidate seeds to consider.")
     ] = "0-30",
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Emit the ranking as JSON instead of an aligned table.")
+    ] = False,
 ) -> None:
     """Rank candidate seeds by how unlike the ones you are keeping they are.
 
@@ -383,7 +386,7 @@ def seeds(
     `generate --seeds` or `replace`.
     """
     _require_simulator()
-    from scenariobank.variety import NEAR_DUPLICATE, scan
+    from scenariobank.variety import scan
 
     try:
         entry = get_category(category)
@@ -392,11 +395,16 @@ def seeds(
             entry,
             kept,
             _parse_scan(scan_range),
+            # Progress on stderr, so `--json` writes a document to stdout and nothing else.
             progress=lambda message: typer.echo(message, err=True),
         )
     except (CategoryError, SocketError) as error:
         typer.echo(f"seeds failed: {error}", err=True)
         raise typer.Exit(code=1) from error
+
+    if as_json:
+        typer.echo(json.dumps(_seeds_report(category, entry, kept, readings), indent=2))
+        return
 
     typer.echo(f"{category} ({entry.block_seq}), rule {entry.exit_rule.value}")
     typer.echo(f"  keeping: {', '.join(str(s) for s in kept)}")
@@ -406,8 +414,28 @@ def seeds(
     typer.echo("  --- candidates, most distinct first ---")
     for reading in readings:
         if not reading.is_kept:
-            flag = "  <- near-duplicate" if (reading.gap or 0) < NEAR_DUPLICATE else ""
+            flag = "  <- near-duplicate" if reading.is_near_duplicate else ""
             typer.echo(f"  {reading.describe()}{flag}")
+
+
+def _seeds_report(name: str, entry, kept, readings) -> dict:
+    """`seeds` as one document: the same readings, in the order the table prints them.
+
+    **The order is the answer**, so the list `scan` returned is kept as a list -- kept seeds
+    first, then candidates most distinct first -- rather than being re-sorted or keyed by seed.
+    `--json` and the aligned table are two renderings of one list, which is what
+    `test_the_json_and_the_table_rank_the_same_seeds` holds them to.
+
+    The road and the rule are carried because a ranking is only meaningful for the road it was
+    measured on, and the studio swaps a seed into a bank that records its own.
+    """
+    return {
+        "category": name,
+        "block_seq": entry.block_seq,
+        "exit_rule": entry.exit_rule.value,
+        "keep": [int(seed) for seed in kept],
+        "scan": [reading.as_dict() for reading in readings],
+    }
 
 
 def _parse_scan(raw: str) -> tuple[int, ...]:

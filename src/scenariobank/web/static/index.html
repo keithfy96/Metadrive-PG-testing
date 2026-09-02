@@ -344,6 +344,29 @@ table.diff td.apart { color: var(--bad); }
    answer, and a table that showed only differences would hide it. */
 table.diff tr.same td { color: var(--muted); }
 table.diff tr.differs td { color: var(--ink); }
+
+/* The seed swap. A ranked scan is thirty-one rows, so it scrolls inside the panel rather than
+   growing it: the card you are replacing has to stay on screen while you choose. */
+.swap { margin-top: 0.9rem; border-top: 1px solid var(--hair); padding-top: 0.7rem; }
+.swap .scroll { max-height: 15rem; overflow-y: auto; margin-top: 0.5rem; }
+table.seeds { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+table.seeds th { position: sticky; top: 0; background: var(--surface); text-align: left;
+                 font-weight: 600; color: var(--muted); font-size: 11.5px;
+                 padding: 0.15rem 0.6rem 0.3rem 0; white-space: nowrap; }
+table.seeds td { padding: 0.2rem 0.6rem 0.2rem 0; font-family: var(--mono); white-space: nowrap;
+                 border-top: 1px solid var(--hair); }
+table.seeds td.act { width: 1%; text-align: right; }
+table.seeds td.act button { margin-left: 0.3rem; }
+/* A kept seed is a baseline, not an option -- dimmed so the ranked candidates are what the eye
+   lands on. Its buttons stay: the refusal for re-using one is the CLI's to give, not this
+   page's to pre-empt. */
+table.seeds tr.kept td { color: var(--muted); }
+table.seeds tr.looking td { background: var(--inset); }
+table.seeds td.gap { color: var(--ink); }
+table.seeds td.gap .dup { color: var(--bad); }
+.swap .bar { margin: 0.5rem 0 0.35rem; }
+.swap .note { font-size: 12.5px; margin: 0.4rem 0 0; overflow-wrap: anywhere; }
+.swap .note.failed { font-family: var(--mono); font-size: 12px; white-space: pre-wrap; }
 </style>
 
 <header class="top">
@@ -352,7 +375,6 @@ table.diff tr.differs td { color: var(--ink); }
     <button data-view="build" aria-selected="true">Build</button>
     <button data-view="bank" aria-selected="false">Bank</button>
     <button data-view="reference" aria-selected="false">Reference</button>
-    <button data-view="run" aria-selected="false">Run</button>
   </nav>
   <div id="sim"><span class="k">simulator…</span></div>
 </header>
@@ -388,39 +410,15 @@ table.diff tr.differs td { color: var(--ink); }
       <p class="count" id="build-count">starting…</p>
       <p class="argv" id="build-last"></p>
       <p class="blurb" id="build-next" hidden></p>
+      <!-- The tail of a job that failed. There is no Run tab to recover a log from any more, so
+           the screen that started the job is the screen that has to say what it said. -->
+      <pre id="build-log" hidden></pre>
       <div class="row">
         <button class="ghost" id="build-cancel" hidden>Cancel</button>
         <button class="ghost" id="build-open" hidden>Open the bank</button>
         <span class="spacer"></span>
         <span class="pill" id="build-state">idle</span>
       </div>
-    </div>
-  </section>
-
-  <section id="view-run" hidden>
-    <div class="card">
-      <h2>Run a command</h2>
-      <p class="blurb" id="run-blurb">
-        Every command runs as a subprocess of this same CLI, one at a time. The form below is
-        built from the CLI’s own flags, so it cannot offer one the command does not take.
-      </p>
-      <div class="form" id="run-form"><span class="loading">loading the commands…</span></div>
-      <div class="row">
-        <button class="go" id="run" disabled>Run</button>
-        <button class="ghost" id="cancel" hidden>Cancel</button>
-        <label style="font-family: var(--sans); color: var(--ink-2); padding: 0">
-          <input type="checkbox" id="verbose" style="margin: 0 0.3rem 0 0; vertical-align: -1px">
-          verbose
-        </label>
-        <span class="spacer"></span>
-        <span class="pill" id="state">idle</span>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>Output</h2>
-      <p class="argv" id="argv"></p>
-      <pre id="log"></pre>
     </div>
   </section>
 
@@ -452,9 +450,7 @@ table.diff tr.differs td { color: var(--ink); }
       <p>
         Nothing under <code id="bank-root">the banks directory</code> holds a
         <code>manifest.json</code>, so there is nothing to look at. Pick some scenario types on
-        the <b>Build</b> tab and generate one; this tab fills in when it finishes. The
-        <b>Run</b> tab is scaffolding — a generated form over the flags, so nothing is
-        unreachable while the real screens are built. It is deleted at step 8.
+        the <b>Build</b> tab and generate one; this tab fills in when it finishes.
       </p>
       <ol>
         <li class="done">the shell, and <code>doctor</code> in the header</li>
@@ -465,7 +461,7 @@ table.diff tr.differs td { color: var(--ink); }
         <li class="done">the dataset — every picture in the bank</li>
         <li class="done sub">6b — the statistics: how many are actually different</li>
         <li class="done">what generated this picture, and how two compare</li>
-        <li>replace the seed behind an image</li>
+        <li class="done">replace the seed behind an image</li>
         <li class="sub">8b — edit, add or remove one item</li>
         <li>four new scenario types</li>
         <li>the road builder — compose a road by hand</li>
@@ -559,7 +555,7 @@ tabs.addEventListener("click", (event) => {
 // ------------------------------------------------------------------ the gallery
 
 const build = { rows: null, selected: new Set(), missing: new Set(), stamp: 0,
-                seeds: [], root: null, writable: true };
+                seeds: [], root: null, looks: null, writable: true };
 
 // A bank name becomes a directory name, so it is kept to what one safely is. The real guard is
 // the server's containment check on `--out`; this is only so the refusal arrives before the click.
@@ -699,11 +695,6 @@ function renderBuild(rows) {
 
 const gen = { running: false, done: 0, total: 0, expected: 0, bank: null };
 
-// The CLI already says where it is -- `[3/35] curve_0002  seed 2  -> ...`, one line per scenario
-// on stderr. The bar reads those. No new progress protocol: structured JSON-line progress is
-// Phase 7's, and is not brought forward for a bar.
-const COUNTED = /\[\s*(\d+)\/(\d+)\]\s*(\S.*)$/gm;
-
 async function generate() {
   const name = bankName();
   const seeds = seedsFor(perType());
@@ -716,6 +707,7 @@ async function generate() {
   gen.expected = build.selected.size * seeds.length;
   $("build-progress").hidden = false;
   $("build-next").hidden = true;
+  $("build-log").hidden = true;
   $("build-open").hidden = true;
   $("build-last").textContent = "";
   $("build-count").textContent = `starting the simulator — 0 / ${gen.expected} scenarios`;
@@ -723,26 +715,15 @@ async function generate() {
   $("bar-fill").style.width = "0";
   refreshGo();
 
-  $("log").textContent = "";
-  run.offset = 0;
-  setState("run", "starting…");
   try {
-    attach(await api("/api/jobs", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        command: "generate",
-        options: {
-          "--out": `${build.root}/${name}`,
-          "--bank-id": name,
-          "--category": [...build.selected],
-          // Sent as the CLI spells it -- one comma-separated list, the same value you would type
-          // after `--seeds` yourself. `invoke.py` and then `_parse_seed_options` check it.
-          "--seeds": seeds.join(","),
-        },
-        global_options: {},
-      }),
-    }));
+    await startJob("generate", {
+      "--out": `${build.root}/${name}`,
+      "--bank-id": name,
+      "--category": [...build.selected],
+      // Sent as the CLI spells it -- one comma-separated list, the same value you would type
+      // after `--seeds` yourself. `invoke.py` and then `_parse_seed_options` check it.
+      "--seeds": seeds.join(","),
+    });
   } catch (error) {
     // A refusal is about one flag, and it belongs where the click was.
     gen.running = false;
@@ -763,12 +744,11 @@ function applyGenerate(job) {
   }
   $("build-progress").hidden = false;
 
-  let last = null;
-  for (const match of (job.log || "").matchAll(COUNTED)) last = match;
-  if (last) {
-    gen.done = Number(last[1]);
-    gen.total = Number(last[2]);
-    $("build-last").textContent = last[3].trim();
+  const at = counted(run.text);
+  if (at) {
+    gen.done = at.done;
+    gen.total = at.total;
+    $("build-last").textContent = at.what;
   }
   const total = gen.total || gen.expected;
   const running = job.state === "running";
@@ -791,9 +771,12 @@ function applyGenerate(job) {
       ? `stopped after ${gen.done} of ${total} scenarios`
       : "it did not get as far as building one";
     $("build-next").hidden = false;
-    $("build-next").innerHTML =
-      "The whole log is on the <b>Run</b> tab — a generate that fails says which category and "
-      + "which seed on the line before it stopped.";
+    $("build-next").textContent =
+      "It stopped here. A generate that fails names the category and the seed on the line "
+      + "before it stopped.";
+    // The whole reason the tail is kept: this is where the Run tab's log went.
+    $("build-log").hidden = false;
+    $("build-log").textContent = tail(run.text, 8);
   } else {
     $("bar").className = "bar ok";
     $("bar-fill").style.width = "100%";
@@ -803,6 +786,7 @@ function applyGenerate(job) {
     $("build-next").hidden = false;
     $("build-next").innerHTML = `Written to <code>${escape(build.root)}/${escape(gen.bank)}</code>`
       + " — a manifest and one thumbnail per scenario.";
+    $("build-log").hidden = true;
   }
   $("build-cancel").hidden = !running;
   // The end of a build is the moment you want to look at what it built, so the payoff of the bar
@@ -814,20 +798,30 @@ function applyGenerate(job) {
 // `examples` is a registered command, so drawing the gallery from the page needs no new endpoint
 // and no second way of starting a job -- it is the job engine, given a command name.
 async function drawExamples() {
-  build.stamp = Date.now();
-  showView("run");
-  $("log").textContent = "";
-  run.offset = 0;
-  setState("run", "starting…");
   try {
-    attach(await api("/api/jobs", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ command: "examples", options: {}, global_options: {} }),
-    }));
+    await startJob("examples", {});
   } catch (error) {
-    setState("bad", error.message);
+    $("draw").textContent = "Draw the missing pictures";
+    $("draw").disabled = false;
+    $("build-where").textContent = error.message;
   }
+}
+
+// Reports on the button that started it. Drawing seven figures is a job like any other, and the
+// gallery is where you are looking when it finishes.
+function applyExamples(job) {
+  const button = $("draw");
+  button.disabled = job.state === "running";
+  button.textContent = job.state === "running"
+    ? "drawing the pictures…" : "Draw the missing pictures";
+  if (job.state === "running") return;
+  if (job.state === "lost" || job.exit_code !== 0) {
+    $("build-where").textContent = `drawing the pictures failed: ${tail(run.text, 1)}`;
+    return;
+  }
+  // A 404 is cached, so the re-render carries a new stamp or the missing pictures stay missing.
+  build.stamp = Date.now();
+  if (build.rows) renderBuild(build.rows);
 }
 
 // ------------------------------------------------------------------ the dataset
@@ -836,7 +830,7 @@ async function drawExamples() {
 // cleverness: the list of banks, one bank's manifest **as it is on disk**, and the pictures. The
 // manifest was written to explain itself, so this screen reads it rather than deriving anything.
 
-const dataset = { banks: null, name: null };
+const dataset = { banks: null, name: null, stamp: 0 };
 
 // `2026-09-02T05:52:22Z` -> `2026-09-02 05:52`. Seconds and the zone marker are noise in a list
 // you are scanning to find "the one I made this morning".
@@ -944,8 +938,12 @@ function statChips(one) {
 // with `--no-thumbnails`, which is a real way to build one.
 function thumbUrl(bank, row) {
   const file = row.thumbnail ? row.thumbnail.split("/").pop().replace(/\.png$/, "") : null;
+  // Stamped with when the bank was read. Replacing a seed redraws the picture at the same URL,
+  // and without this the browser would answer the reload out of its cache and show you the
+  // scenario you just swapped away.
   return file
     ? `/api/banks/${encodeURIComponent(bank)}/thumbs/${encodeURIComponent(file)}.png`
+      + `?v=${dataset.stamp}`
     : null;
 }
 
@@ -1162,6 +1160,9 @@ function detailPanel(bank, id) {
       ])),
     ]),
   ]));
+  // The row says what this seed drew. The swap is what to do about it when the answer is "the
+  // same thing as the card next to it".
+  parts.push(...swapParts(bank, id));
   return parts;
 }
 
@@ -1238,8 +1239,305 @@ async function renderPick(bank) {
   }
 }
 
+// ------------------------------------------------------------- replacing a seed
+//
+// A scenario is a seed and what was measured from it, so "this picture is a poor draw" is
+// answered by swapping the seed. Two jobs, both of them commands that already exist: `seeds`
+// ranks the candidates, `replace` commits the one you pick.
+//
+// **Neither rule is restated here.** `variety.SeedReading` decides which candidates are
+// near-duplicates and `--json` carries the flag, and `bank.replace_scenario` refuses a seed the
+// category is already using -- so **Use this seed** is offered on every row, kept ones included,
+// and the sentence that comes back when it is refused is the CLI's own.
+
+// Thirty-one resets, about a minute. Fixed rather than a box: it is the default the CLI
+// documents, and a wider scan is a thing to run from a terminal and walk away from.
+const SCAN_RANGE = "0-30";
+
+const swap = { bank: null, id: null, category: null, keep: [], state: null, report: null,
+               note: null, looking: null, looked: null, stamp: 0 };
+
+function forgetSwap() {
+  Object.assign(swap, { id: null, category: null, keep: [], state: null, report: null,
+                        note: null, looking: null, looked: null });
+}
+
+// `seeds --json` writes its progress on stderr and one document on stdout, and a job merges the
+// two into a single log. The document is written last and, indented, its only brace at the start
+// of a line is the outermost one -- so the answer is the tail from there. Reading it back off the
+// log rather than inventing a second channel for it is the same choice `applyGenerate` makes.
+function lastJson(text) {
+  const at = text.lastIndexOf("\n{");
+  if (at < 0 && !text.startsWith("{")) throw new Error("the command printed no JSON");
+  return JSON.parse(text.slice(at < 0 ? 0 : at + 1));
+}
+
+// The ranking is measured on `categories.py`'s road; a replacement is built on the road the
+// *manifest* records. They are the same road until a category is edited, and a bank generated
+// before such an edit would be ranked against a road it is not built on. Worth saying rather
+// than quietly getting wrong.
+function roadDrift(entry, category) {
+  const known = (build.rows || []).find((row) => row.name === category);
+  if (!known) {
+    return `this build has no scenario type called ${category}, so it cannot rank seeds for it`;
+  }
+  if (known.block_seq !== entry.block_seq || known.exit_rule !== entry.exit_rule) {
+    return `this bank built ${category} on ${entry.block_seq} / ${entry.exit_rule}, and this `
+      + `build's ${category} is ${known.block_seq} / ${known.exit_rule} — a ranking would be `
+      + "measured on a different road from the one a replacement is built on";
+  }
+  return null;
+}
+
+async function findSeeds(bank, id) {
+  const found = dataset.index[id];
+  // Measured against the seeds that are **staying**. A candidate earns its place by being unlike
+  // what you keep, and the seed being replaced is not being kept -- ranking against it would
+  // score candidates on how much they resemble the draw you are throwing away. A lone scenario
+  // has nothing else to be unlike, so it stands in for itself.
+  const others = found.entry.scenarios
+    .filter((row) => row.scenario_id !== id).map((row) => row.seed);
+  Object.assign(swap, {
+    bank, id, category: found.category, keep: others.length ? others : [found.row.seed],
+    state: "scanning", report: null, note: null, looking: null, looked: null,
+  });
+  renderPick(bank);
+  try {
+    await startJob("seeds", {
+      "--category": found.category,
+      "--keep": swap.keep.join(","),
+      "--scan": SCAN_RANGE,
+      "--json": true,
+    });
+  } catch (error) {
+    swap.state = "failed";
+    swap.note = error.message;
+    renderPick(bank);
+  }
+}
+
+function applySeeds(job) {
+  if (swap.state !== "scanning") return;
+  const at = counted(run.text);
+  if (job.state === "running") {
+    // Updated in place. A re-render would rebuild the panel's `<img>` four times a second for the
+    // minute the scan takes, to move a bar.
+    const status = $("swap-status");
+    if (status && at) {
+      status.textContent = `${at.what} — ${at.done} of ${at.total} seeds`;
+      $("swap-fill").style.width = `${(at.done / at.total) * 100}%`;
+    }
+    return;
+  }
+  if (job.state === "lost" || job.exit_code !== 0) {
+    swap.state = "failed";
+    swap.note = tail(run.text, 3) || "the scan ended without saying why";
+  } else {
+    try {
+      swap.report = lastJson(run.text);
+      swap.state = "ranked";
+    } catch (error) {
+      swap.state = "failed";
+      swap.note = `the ranking could not be read: ${error.message}`;
+    }
+  }
+  renderPick(swap.bank);
+}
+
+async function lookAt(seed) {
+  swap.looking = seed;
+  swap.note = null;
+  renderPick(swap.bank);
+  try {
+    await startJob("inspect", {
+      "--category": swap.category,
+      "--seed": String(seed),
+      // Where the studio keeps its scratch, which it told us -- this page does not decide where a
+      // job may write. Under `.studio` rather than in the bank: the seed has not been committed
+      // to anything, and a picture of it in a thumbnail directory would be a scenario that does
+      // not exist.
+      "--out": `${build.looks}/${lookName(swap.category, seed)}.png`,
+    });
+  } catch (error) {
+    swap.looking = null;
+    swap.note = error.message;
+    renderPick(swap.bank);
+  }
+}
+
+const lookName = (category, seed) => `${category}-seed${seed}`;
+
+function applyLook(job) {
+  if (swap.looking === null || job.state === "running") return;
+  if (job.state === "lost" || job.exit_code !== 0) {
+    swap.note = `drawing seed ${swap.looking} failed: ${tail(run.text, 2)}`;
+    swap.looking = null;
+  } else {
+    swap.looked = swap.looking;
+    swap.looking = null;
+    swap.stamp = Date.now();
+  }
+  renderPick(swap.bank);
+}
+
+async function useSeed(bank, id, seed) {
+  swap.state = "replacing";
+  swap.note = `rebuilding ${id} at seed ${seed}…`;
+  renderPick(bank);
+  try {
+    await startJob("replace", {
+      "--bank": `${build.root}/${bank}`,
+      "--scenario": id,
+      "--seed": String(seed),
+    });
+  } catch (error) {
+    swap.state = "refused";
+    swap.note = error.message;
+    renderPick(bank);
+  }
+}
+
+function applyReplace(job) {
+  if (swap.state !== "replacing" || job.state === "running") return;
+  if (job.state === "lost" || job.exit_code !== 0) {
+    // `replace failed: seed 0 is already used by curve: each seed builds one scenario.` -- one
+    // sentence, on stderr, from the module that owns the rule.
+    swap.state = "refused";
+    swap.note = tail(run.text, 3) || "the replacement ended without saying why";
+    renderPick(swap.bank);
+    return;
+  }
+  // The row changed and so did its picture, so the bank is read again rather than patched here --
+  // and the card is re-selected, because what you want next is to look at what you just built.
+  const { bank, id } = swap;
+  openBank(bank).then(() => {
+    picked.length = 0;
+    picked.push(id);
+    markPicked();
+    renderPick(bank);
+  });
+}
+
+// ------------------------------------------------------------- the swap, drawn
+
+function lookFigure(category, seed) {
+  const shot = el("div", { class: "shot" });
+  const picture = el("img", {
+    src: `/api/looks/${encodeURIComponent(lookName(category, seed))}.png?v=${swap.stamp}`,
+    alt: `${category} at seed ${seed}`,
+  });
+  picture.addEventListener("error", () => shot.replaceChildren(
+    el("div", { class: "missing", text: "the drawing is not on disk" })));
+  shot.appendChild(picture);
+  return el("figure", {}, [
+    shot, el("figcaption", { text: `seed ${seed}, not in the bank` }),
+  ]);
+}
+
+function seedRow(bank, id, one, busy) {
+  const gap = one.is_kept
+    ? el("span", { text: "kept" })
+    : one.gap === null
+      ? el("span", { text: "—" })
+      : el("span", {
+          class: one.near_duplicate ? "dup" : null,
+          text: `${Math.round(one.gap * 100)}% from seed ${one.nearest_kept}`
+            + (one.near_duplicate ? " · near-duplicate" : ""),
+        });
+
+  const look = el("button", { class: "ghost", text: "Look" });
+  look.addEventListener("click", () => lookAt(one.seed));
+  const use = el("button", { class: "ghost", text: "Use this seed" });
+  use.addEventListener("click", () => useSeed(bank, id, one.seed));
+  look.disabled = busy;
+  use.disabled = busy;
+
+  const marks = [one.is_kept ? "kept" : "", swap.looked === one.seed ? "looking" : ""];
+  return el("tr", { class: marks.filter(Boolean).join(" ") || null }, [
+    el("td", { text: `seed ${one.seed}` }),
+    el("td", { text: `${one.route_length_m.toFixed(1)} m` }),
+    el("td", { text: `${one.net_rotation_deg > 0 ? "+" : ""}`
+                     + `${one.net_rotation_deg.toFixed(1)}\u00b0` }),
+    el("td", { text: one.turn_pairs || "none" }),
+    el("td", { text: one.destination }),
+    el("td", { class: "gap" }, [gap]),
+    el("td", { class: "act" }, [look, use]),
+  ]);
+}
+
+function seedTable(bank, id) {
+  const busy = swap.state === "replacing" || swap.looking !== null;
+  const head = ["", "route", "rotation", "turns", "exit", "unlike what you keep", ""];
+  return el("div", { class: "scroll" }, [
+    el("table", { class: "seeds" }, [
+      el("thead", {}, [el("tr", {}, head.map((label) => el("th", { text: label })))]),
+      el("tbody", {}, swap.report.scan.map((one) => seedRow(bank, id, one, busy))),
+    ]),
+  ]);
+}
+
+// The swap, as it appears under the one-card panel: a button, then a bar while the scan runs,
+// then the ranking.
+function swapParts(bank, id) {
+  const found = dataset.index[id];
+  const mine = swap.id === id;
+  const drift = roadDrift(found.entry, found.category);
+  const scanning = mine && swap.state === "scanning";
+
+  const button = el("button", {
+    class: scanning ? "ghost" : "go",
+    text: scanning ? "Cancel the scan" : "Find a better seed",
+  });
+  button.disabled = Boolean(drift) || (mine && swap.state === "replacing");
+  button.addEventListener("click", () => (scanning ? cancelJob() : findSeeds(bank, id)));
+
+  const parts = [el("div", { class: "picked-head" }, [
+    el("span", { class: "who", text: "a better seed" }),
+    el("span", { class: "hint", text:
+      `ranks seeds ${SCAN_RANGE} of ${found.category} by how unlike the `
+      + `${found.entry.scenarios.length - 1} you are keeping each one draws` }),
+    el("span", { class: "spacer" }),
+    button,
+  ])];
+
+  if (drift) {
+    parts.push(el("p", { class: "note failed", text: drift }));
+    return [el("div", { class: "swap" }, parts)];
+  }
+  if (!mine) return [el("div", { class: "swap" }, parts)];
+
+  if (scanning) {
+    parts.push(el("div", { class: "bar" }, [el("span", { id: "swap-fill" })]));
+    parts.push(el("p", { class: "note", id: "swap-status",
+                         text: "starting the simulator — 0 of ? seeds" }));
+  }
+  if (swap.report) parts.push(seedTable(bank, id));
+  if (swap.looking !== null) {
+    parts.push(el("p", { class: "note", text: `drawing seed ${swap.looking}…` }));
+  }
+  if (swap.looked !== null) {
+    // Side by side with what is in the bank now, because that is the question: is this one a
+    // different picture, or the same corner again?
+    parts.push(el("div", { class: "side" }, [
+      figureFor(bank, id, "in the bank"),
+      lookFigure(swap.category, swap.looked),
+    ]));
+  }
+  if (swap.note) {
+    parts.push(el("p", {
+      class: swap.state === "failed" || swap.state === "refused" ? "note failed" : "note",
+      text: swap.note,
+    }));
+  }
+  return [el("div", { class: "swap" }, parts)];
+}
+
 async function openBank(name) {
   dataset.name = name;
+  // Every picture in this bank is re-fetched rather than served from cache: a bank is re-opened
+  // precisely when something in it may have changed.
+  dataset.stamp = Date.now();
+  forgetSwap();
   // The selection is of *these* cards. Carrying it into another bank would leave two ids picked
   // that are no longer on the screen, and a panel comparing scenarios you cannot see.
   picked.length = 0;
@@ -1375,123 +1673,54 @@ function renderReference(data, categories) {
   target.replaceWith(...cards);
 }
 
-// ------------------------------------------------------------------ the run tab
+// -------------------------------------------------------------- the job watcher
 //
-// The form is generated from `/api/commands` -- the CLI's own parameters -- and the server
-// validates a submission against the same data. There is no list of flags in this file, which is
-// the only reason the page cannot come to offer a flag the command does not take.
+// One job at a time, so one watcher. Everything on this page that needs the simulator is a
+// subprocess of this same CLI -- generating a bank, drawing the examples, ranking candidate
+// seeds, swapping one in -- and every one of them is started through `startJob` and reports on
+// the screen that asked for it.
+//
+// The log is accumulated into a string here rather than shown in a pane. There is no Run tab any
+// more: a refusal is one sentence the CLI wrote on stderr, and `run.text` is where the screen
+// that started the job reads it back from. `seeds --json` reads its whole answer out of the same
+// place.
 
-const run = { reference: null, byName: {}, runnable: [], entry: null, widgets: [], job: null,
-              offset: 0, timer: null };
+const run = { job: null, command: null, offset: 0, text: "", timer: null };
 
 const $ = (id) => document.getElementById(id);
 
-function setState(kind, text) {
-  const pill = $("state");
-  pill.className = kind === "idle" ? "pill" : `pill ${kind}`;
-  pill.textContent = text;
+// The last few lines of a job's output, which is what a failure leaves behind.
+function tail(text, lines = 6) {
+  return (text || "").trimEnd().split("\n").slice(-lines).join("\n");
 }
 
-function widgetFor(param) {
-  const id = `opt${param.flag}`;
-  let input;
-  if (param.type === "boolean") {
-    input = el("input", { type: "checkbox", id });
-    input.checked = Boolean(param.default);
-  } else if (param.multiple) {
-    input = el("textarea", { id, placeholder: "one per line" });
-  } else if (param.choices) {
-    input = el("select", { id });
-    if (!param.required) input.appendChild(el("option", { value: "", text: "—" }));
-    for (const choice of param.choices) {
-      input.appendChild(el("option", { value: choice, text: choice }));
-    }
-    if (param.default !== null && param.default !== undefined) input.value = String(param.default);
-  } else {
-    const numeric = ["int", "integer", "float"].includes(param.type);
-    const shown = param.default === null || param.default === undefined
-      ? (param.required ? "required" : "")
-      : String(param.default);
-    input = el("input", { type: numeric ? "number" : "text", id, placeholder: shown });
-  }
-  return {
-    param,
-    input,
-    // undefined means "do not send this flag at all", which is how a default stays the CLI's
-    // to decide rather than being restated here as an empty string.
-    read() {
-      if (param.type === "boolean") return input.checked;
-      const raw = input.value.trim();
-      if (!raw) return undefined;
-      if (param.multiple) {
-        const values = raw.split("\n").map((line) => line.trim()).filter(Boolean);
-        return values.length ? values : undefined;
-      }
-      return raw;
-    },
-  };
+// `[12/31] seed 11` -- the CLI already says where it is, one line per unit of work, and both the
+// build bar and the seed scan read the same lines. No second progress protocol.
+const COUNTED = /\[\s*(\d+)\/(\d+)\]\s*(\S.*)$/gm;
+
+function counted(text) {
+  let last = null;
+  for (const match of (text || "").matchAll(COUNTED)) last = match;
+  return last && { done: Number(last[1]), total: Number(last[2]), what: last[3].trim() };
 }
 
-function commandPicker(selected) {
-  const picker = el("select", { id: "command" });
-  for (const group of run.reference.groups) {
-    const names = group.commands.map((c) => c.name).filter((n) => run.runnable.includes(n));
-    if (!names.length) continue;
-    const optgroup = el("optgroup", { label: group.title });
-    for (const name of names) optgroup.appendChild(el("option", { value: name, text: name }));
-    picker.appendChild(optgroup);
-  }
-  picker.value = selected;
-  picker.addEventListener("change", () => renderForm(picker.value));
-  return picker;
-}
-
-function renderForm(name) {
-  const entry = run.byName[name];
-  run.entry = entry;
-  run.widgets = [];
-
-  const parts = [el("label", { for: "command", text: "command" }), commandPicker(name)];
-  if (entry.help) {
-    parts.push(el("div", { class: "hint", html: inline(entry.help.split("\n\n")[0]) }));
-  }
-  for (const param of entry.params) {
-    const widget = widgetFor(param);
-    run.widgets.push(widget);
-    parts.push(el("label", {
-      for: widget.input.id,
-      html: escape(param.flag) + (param.required ? ' <span class="req">*</span>' : ""),
-    }));
-    parts.push(widget.input);
-    const note = [param.help, param.multiple ? "Repeats: one per line." : ""]
-      .filter(Boolean).join(" ");
-    if (note) parts.push(el("div", { class: "hint", html: inline(note) }));
-  }
-  if (!entry.params.length) parts.push(el("div", { class: "hint", text: "Takes no options." }));
-
-  $("run-form").replaceChildren(...parts);
-  $("run").disabled = false;
-}
+// Which screen is listening for which command. A job adopted after a reload lands here too --
+// its state was never in this page to begin with, so coming back to it mid-run is not a special
+// case.
+const WATCHERS = {
+  generate: applyGenerate,
+  examples: applyExamples,
+  seeds: applySeeds,
+  inspect: applyLook,
+  replace: applyReplace,
+};
 
 function apply(job) {
-  if (job.log) {
-    const pane = $("log");
-    const pinned = pane.scrollTop + pane.clientHeight >= pane.scrollHeight - 24;
-    pane.textContent += job.log;
-    if (pinned) pane.scrollTop = pane.scrollHeight;
-  }
+  run.text += job.log || "";
   run.offset = job.log_size;
-
-  const running = job.state === "running";
-  if (running) setState("run", `running · ${job.command}`);
-  else if (job.state === "lost") setState("bad", "lost — it ended without recording an exit code");
-  else setState(job.exit_code === 0 ? "ok" : "bad", `${job.command} · exit ${job.exit_code}`);
-  $("cancel").hidden = !running;
-  $("run").disabled = running;
-
-  // One job at a time, so one watcher -- the Build tab is a second view onto it rather than a
-  // second poller with its own offset to keep in step.
-  if (job.command === "generate") applyGenerate(job);
+  run.command = job.command;
+  const watcher = WATCHERS[job.command];
+  if (watcher) watcher(job);
 }
 
 function schedule() {
@@ -1506,64 +1735,39 @@ async function tick() {
     apply(job);
     if (job.state === "running") schedule();
   } catch (error) {
-    setState("bad", error.message);
+    // Nothing here can say where this belongs on the page, so it goes where every log line does.
+    run.text += `\nthe studio lost track of the job: ${error.message}\n`;
   }
 }
 
 function attach(job) {
   run.job = job.job_id;
-  $("argv").textContent = job.argv.join(" ");
+  // Reset before the first `apply`, because the response to a POST carries the log from byte
+  // zero and so does an adopted job's first poll.
+  run.text = "";
+  run.offset = 0;
   apply(job);
   if (job.state === "running") schedule();
 }
 
-async function start() {
-  const options = {};
-  for (const widget of run.widgets) {
-    const value = widget.read();
-    if (value !== undefined) options[widget.param.flag] = value;
-  }
-  setState("run", "starting…");
-  $("log").textContent = "";
-  run.offset = 0;
-  try {
-    attach(await api("/api/jobs", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        command: run.entry.name,
-        options,
-        global_options: $("verbose").checked ? { "--verbose": true } : {},
-      }),
-    }));
-  } catch (error) {
-    // A refusal names one flag, so it belongs where you are looking: next to the button.
-    setState("bad", error.message);
-    $("run").disabled = false;
-  }
+// Every job on this page starts here. `invoke.py` checks the flags against the CLI's own
+// parameters, so a refusal is the CLI declining a flag rather than this page guessing.
+async function startJob(command, options) {
+  const job = await api("/api/jobs", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ command, options, global_options: {} }),
+  });
+  attach(job);
+  return job;
 }
 
-function buildRun(data, runnable) {
-  run.reference = data;
-  run.runnable = runnable.commands;
-  for (const group of data.groups) {
-    for (const entry of group.commands) run.byName[entry.name] = entry;
-  }
-  renderForm(run.runnable.includes("categories") ? "categories" : run.runnable[0]);
-
-  $("run").addEventListener("click", start);
-  $("cancel").addEventListener("click", async () => {
-    if (!run.job) return;
-    apply(await api(`/api/jobs/${run.job}`, { method: "DELETE" }));
-    schedule();
-  });
-
-  // Adopt whatever is already running. A reload is not a new session as far as a job is
-  // concerned -- the state was never in this page to begin with.
-  api("/api/jobs")
-    .then((jobs) => (jobs.length ? api(`/api/jobs/${jobs[0].job_id}?since=0`) : null))
-    .then((job) => job && attach(job))
-    .catch(() => {});
+async function cancelJob() {
+  if (!run.job) return;
+  // The answer is not read from the DELETE: it returns the whole log again, and the next poll
+  // reports the ended job anyway.
+  await api(`/api/jobs/${run.job}`, { method: "DELETE" });
+  schedule();
 }
 
 // ------------------------------------------------------------------ start-up
@@ -1591,15 +1795,17 @@ api("/api/doctor").then((report) => {
     `<span class="bad">doctor failed: ${escape(error.message)}</span>`;
 });
 
-// One fetch of the reference, two things built from it: the document, and the form. If they
-// could disagree, one of them would be lying about what the CLI accepts.
-Promise.all([api("/api/commands"), api("/api/categories"), api("/api/runnable"),
-             api("/api/studio")])
-  .then(([data, categories, runnable, studio]) => {
-    // Both facts the Build tab needs but may not invent: how many seeds a category is built at
-    // (the CLI's default, which reads as `None` in the parameter table) and where banks go.
+// One fetch of the reference, and the document is built from it. Every job this page starts is
+// still checked against the same data on the way through `invoke.py`, so the page cannot come to
+// send a flag the CLI does not take.
+Promise.all([api("/api/commands"), api("/api/categories"), api("/api/studio")])
+  .then(([data, categories, studio]) => {
+    // The facts the page needs but may not invent: how many seeds a category is built at (the
+    // CLI's default, which reads as `None` in the parameter table), where banks go, and where a
+    // job may draw a seed nobody has committed yet.
     build.seeds = data.default_seeds;
     build.root = studio.banks_root;
+    build.looks = studio.looks;
     build.writable = studio.writable;
     $("bank-name").value = defaultBankName();
     // The box starts at the size of a bank the CLI would have built, then it is yours.
@@ -1607,8 +1813,13 @@ Promise.all([api("/api/commands"), api("/api/categories"), api("/api/runnable"),
 
     renderReference(data, categories);
     renderBuild(categories);
-    buildRun(data, runnable);
     $("draw").addEventListener("click", drawExamples);
+    // Adopt whatever is already running. A reload is not a new session as far as a job is
+    // concerned -- the state was never in this page to begin with.
+    api("/api/jobs")
+      .then((jobs) => (jobs.length ? api(`/api/jobs/${jobs[0].job_id}?since=0`) : null))
+      .then((job) => job && attach(job))
+      .catch(() => {});
     $("build-go").addEventListener("click", generate);
     $("bank-name").addEventListener("input", refreshGo);
     $("bank-root").textContent = build.root;
@@ -1628,18 +1839,12 @@ Promise.all([api("/api/commands"), api("/api/categories"), api("/api/runnable"),
       showView("bank");
     });
     $("count").addEventListener("input", pickedLabel);
-    $("build-cancel").addEventListener("click", async () => {
-      if (!run.job) return;
-      apply(await api(`/api/jobs/${run.job}`, { method: "DELETE" }));
-      schedule();
-    });
+    $("build-cancel").addEventListener("click", cancelJob);
   })
   .catch((error) => {
     const target = document.getElementById("reference");
     target.className = "card failed";
     target.textContent = `the reference failed to load: ${error.message}`;
-    $("run-form").innerHTML = `<span class="failed">the commands failed to load: ${
-      escape(error.message)}</span>`;
     $("gallery").innerHTML = `<span class="failed">the scenario types failed to load: ${
       escape(error.message)}</span>`;
   });

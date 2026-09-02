@@ -127,6 +127,8 @@ def test_a_flags_own_row_carries_the_values_it_accepts(client):
 
 
 def test_the_studio_will_not_run_itself_and_says_why(client):
+    # Read by `POST /api/jobs` rather than by the page, now that there is no Run tab: the studio
+    # is the one command a job may not be, and the refusal names it either way.
     served = client.get("/api/runnable").json()
     assert "studio" not in served["commands"]
     assert served["not_runnable"]["studio"]
@@ -144,8 +146,9 @@ def test_the_form_and_the_table_describe_the_same_flags(client):
     served = client.get("/api/commands").json()
     for group in served["groups"]:
         for entry in group["commands"]:
-            # `options` is what the reference tab reads; `params` is what the run form is built
-            # from. Two views of one Typer command -- if they can disagree, one is lying.
+            # `options` is what the reference tab reads; `params` is what `invoke.py` validates a
+            # submitted job against. Two views of one Typer command -- if they can disagree, the
+            # page would document a flag the studio then refuses to send.
             documented = {row["flag"].strip("`").split("/")[0].split(" ")[0]
                           for row in entry["options"]}
             offered = {param["flag"] for param in entry["params"]}
@@ -708,3 +711,33 @@ def test_comparing_refuses_the_same_bank_names_the_rest_of_the_bank_api_does(cli
     both = "left=curve_0000&right=curve_0001"
     assert client.get(f"/api/banks/.hidden/compare?{both}").status_code == 400
     assert client.get(f"/api/banks/nope/compare?{both}").status_code == 404
+
+
+def test_the_studio_says_where_a_candidate_seed_may_be_drawn(client):
+    served = client.get("/api/studio").json()
+    # Relative, because that is the form `inspect --out` wants and the form `invoke.py` resolves
+    # against the working directory. The page may not invent this: where the scratch lives is the
+    # studio's decision, and `/api/looks` serves the same directory back.
+    assert served["looks"] == ".studio/looks"
+
+
+def test_a_look_that_has_not_been_drawn_is_a_404_not_a_blank(client):
+    answer = client.get("/api/looks/curve-seed22.png")
+    assert answer.status_code == 404
+    assert "curve-seed22" in answer.json()["detail"]
+
+
+def test_a_look_is_served_once_a_job_has_drawn_it(client):
+    looks = client.workdir / ".studio" / "looks"
+    looks.mkdir(parents=True)
+    (looks / "curve-seed22.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    answer = client.get("/api/looks/curve-seed22.png")
+    assert answer.status_code == 200
+    assert answer.headers["content-type"] == "image/png"
+
+
+@pytest.mark.parametrize("name", [".ssh", "-lead", "a b"])
+def test_a_look_name_that_is_not_a_name_never_becomes_a_path(client, name):
+    # The same guard a thumbnail gets, for the same reason: the shape of the name is checked
+    # before it is joined to anything, so a traversal is not filtered out -- it cannot be spelled.
+    assert client.get(f"/api/looks/{name}.png").status_code == 400

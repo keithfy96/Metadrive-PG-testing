@@ -1024,7 +1024,7 @@ construction. Refusals are sentences about one flag (`--category does not accept
 Typer traceback fished out of a log afterwards. A path option that resolves outside the directory
 the studio was started in is a 400, and `studio` itself is not runnable.
 
-**The Run tab is provisional and is deleted at Step 8.** It exists only because the purpose-built
+**The Run tab was provisional and Step 8 deleted it.** It existed only because the purpose-built
 screens do not yet, and a generated form over the CLI's flags is the fastest possible way to make
 every command reachable while they are being built. It is the last CLI-shaped thing in the product
 and it goes when the screens that replace it exist. The job engine underneath is permanent — that
@@ -1274,7 +1274,7 @@ their route lengths sit 5% apart; `intersection_left_0000` against `t_junction_0
 another bank clears the selection rather than leaving two ids picked that are no longer on screen.
 No console errors.)*
 
-### Step 8 — replace the seed behind an image ⬜  ⟵ *feature 3*
+### Step 8 — replace the seed behind an image ✅  ⟵ *feature 3*
 
 From that panel, **Find a better seed** runs `seeds` and shows the ranked alternatives: the gap
 column, near-duplicates flagged, and per row a **Look** button (draws that seed) and a **Use this
@@ -1294,6 +1294,41 @@ same job — one of them worse. `web/jobs.py` and `web/invoke.py` stay; only the
 **Test in the page:** swap `curve_0004` to seed 22; the card redraws and
 `jq '.categories.curve.scenarios[4]'` agrees. Then try seed 0 — refused, and the reason is readable
 on the page. There is no Run tab left to fall back to.
+
+Three decisions this step made:
+
+- **The candidates are ranked against the seeds that are *staying*.** `--keep` is the other
+  scenarios of that type, never the one being replaced. A candidate earns its place by being
+  unlike what remains in the bank; ranking it against the draw you are throwing away would score
+  it on the wrong thing. (A lone scenario has nothing else to be unlike, so it stands in for
+  itself.)
+- **`Use this seed` is offered on every row, kept seeds included.** `replace_scenario` owns the
+  rule that a bank does not build one seed twice, and the page shows the sentence it gives back
+  rather than pre-empting it. The same reasoning put `near_duplicate` in the `--json` payload:
+  `variety.NEAR_DUPLICATE` is a number that module owns, and the page reads the flag rather than
+  comparing against a constant of its own. `SeedReading.is_near_duplicate` is now what the aligned
+  table flags with too, so the two renderings cannot come to disagree.
+- **The one thing the page checks itself** is that the bank's recorded road and exit rule for that
+  category match this build's. A ranking is measured on `categories.py`'s road and a replacement
+  is built on the manifest's; they are the same road until a category is edited, and when they are
+  not, the panel says so and will not scan.
+
+**Deleting the Run tab was mostly deleting a log pane.** The job engine is untouched; what went is
+the generated form and the single place every job used to report. A job's log is now accumulated in
+the page and read by whichever screen started the job — the build bar reads its `[n/N]` lines, the
+seed scan reads the same lines for its bar and then parses the JSON document off the tail, and a
+refused swap reads the last line. `GET /api/runnable` stays: it is what `POST /api/jobs` refuses
+`studio` by, and it was never only the form's.
+
+*(Done 2026-09-03. Verified against a running studio on a copy of `banks/curve`. `curve_0004` at
+seed 4 ranked seed 22 top of 31 at 30% from seed 1; **Look** drew it under `.studio/looks/` and
+showed it beside the card — a visibly different road, an S against a loop. **Use this seed**
+rebuilt the row: the card redrew, the manifest reads `seed 22, 312.86 m, +6.06 deg, LR`, the step
+budget moved 1060 → 800 and the band's closest pair moved from `0000/0004 7%` to `0001/0004 21%`,
+so the near-duplicate warning the phase exists to raise went away. Then seed 0: refused on the
+page with `replace failed: seed 0 is already used by curve: each seed builds one scenario. curve
+currently holds seeds [0, 1, 2, 3, 22].` Three tabs, no Run tab, no console errors. 287 tests pass,
+ruff clean. The scratch bank was removed afterwards; the three real banks were not touched.)*
 
 ### Step 8b — edit, add or remove one item ⬜
 

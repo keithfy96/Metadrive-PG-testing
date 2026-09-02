@@ -142,6 +142,7 @@ Three endpoints behind it, and nothing else:
 | `GET /api/banks/{bank}/thumbs/{name}.png` | one scenario's picture |
 | `GET /api/banks/{bank}/review` | what is in it: duplicates, coverage, step budgets and spread — computed, never stored |
 | `GET /api/banks/{bank}/compare?left=&right=` | two of its scenarios read against each other |
+| `GET /api/looks/{name}.png` | a candidate seed drawn by `inspect`, before it is committed to anything |
 
 The manifest is returned unshaped. It was written to explain itself — "declare the intent, store
 the fact" — so a studio that reformatted it here would be inventing a second description of a bank
@@ -239,22 +240,62 @@ The comparison is computed **on the server**, by `review.compare`. The page hold
 already; what it must not invent is what the fields mean together, and a copy of `gap` and
 `verdict` in JavaScript would be a second measure that drifts the first time either changes.
 
-## Running a command from the page
+## Replacing the seed behind a picture
 
-The **Run** tab is the escape hatch — everything the purpose-built screens do not cover yet. Pick a
-command, fill in the flags, click **Run**, and watch the output arrive. Start with `categories`: it
-takes no flags, needs no simulator, and finishes in under a second, so it is the quickest way to
-confirm a fresh install works end to end.
+A scenario **is** a seed and what was measured from it, so "this picture is a poor draw" is
+answered by swapping the seed. Select one card and the panel offers **Find a better seed**.
 
-The form is **generated from the CLI's own flags** — the same data
-`docs/reference/commands.md` is written from. It cannot offer a flag the command does not take,
-`--category` and `--rule` are dropdowns filled from `categories.py`, and a submission the CLI would
-reject comes back as a sentence about one flag rather than a traceback in the log.
+It runs `scenariobank seeds` over seeds 0–30 and ranks them by how unlike the ones you are
+**keeping** each one draws — the other scenarios of that type, never the one you are replacing. A
+candidate earns its place by being unlike what stays in the bank; ranking it against the draw you
+are throwing away would score it on the wrong thing. Roughly a minute, one line per seed on the
+bar.
 
-Three things it will not do:
+Each row carries the route, the rotation, the turn pairs, the exit and the gap, with the
+near-duplicates flagged. Two buttons per row:
 
-- **One job at a time.** A second Run is refused, naming the job that holds the slot. Two
-  `generate`s into one bank directory is a corrupt manifest.
+- **Look** draws that seed with `inspect` and shows it beside what is in the bank now. That is the
+  question in one picture: a different road, or the same corner again? Nothing drawn this way is in
+  any bank — it goes under `.studio/looks/`, which is scratch.
+- **Use this seed** runs `replace`. The bank never changes size and never renumbers: the scenario
+  keeps its id and its position, and only the seed and what was measured from it change. The card
+  redraws and the whole bank is re-read, so the statistics band above it moves too.
+
+**Use this seed** is offered on every row, kept seeds included, and the refusal is the CLI's:
+
+```
+replace failed: seed 0 is already used by curve: each seed builds one scenario.
+curve currently holds seeds [0, 1, 2, 3, 22].
+```
+
+`bank.replace_scenario` owns that rule. The page shows the sentence rather than knowing the rule,
+because a copy of it here would be a second rule to keep in step — the same reason the gap column
+is flagged by `variety.SeedReading` and not by a comparison in JavaScript.
+
+`seeds --json` is what the page reads, and it is the same ranking in the same order the aligned
+table prints. If those two could disagree, the seed the page recommends would not be the seed the
+command recommends.
+
+**One caveat.** The ranking is measured on the road `categories.py` declares today; a replacement
+is built on the road the *manifest* records. They are the same road unless a category has been
+edited since the bank was generated — and when they differ the panel says so and will not scan.
+
+### There is no Run tab
+
+There was, until this step: a form generated over the CLI's flags, so that nothing was unreachable
+while the real screens were built. Picking, building, looking and swapping now have screens of
+their own, and keeping a generated form beside them would leave two ways to do the same job, one of
+them worse.
+
+The job engine underneath is unchanged and permanent — every simulator command still runs as a
+subprocess of this same CLI, one at a time. What changed is only where a job reports: the screen
+that started it. A failed build shows the tail of its log under the bar, a refused swap shows the
+CLI's sentence under the table.
+
+Three things a job still will not do:
+
+- **One at a time.** A second is refused, naming the job that holds the slot. Two `generate`s into
+  one bank directory is a corrupt manifest.
 - **No writing outside this checkout.** A path flag that resolves outside the directory the studio
   was started in is refused.
 - **It will not run `studio`.** A studio inside a job would bind another port and serve this same
@@ -262,15 +303,18 @@ Three things it will not do:
 
 A job's state lives in two files — `.studio/jobs/<id>/log` and `.studio/jobs/<id>/exit` — and is
 read back off disk every time it is asked for. Reloading the page mid-job reattaches to it;
-restarting the studio does not orphan it.
+restarting the studio does not orphan it. Anything the page cannot show you is still there, in
+`.studio/jobs/`.
 
 ## What it will and will not do to your files
 
 - **Reads** `--banks-root` for directories holding a `manifest.json`, and serves thumbnails from
   inside them.
-- **Writes** under `.studio/` (job logs, scratch figures), and into whatever a command you ran was
-  told to write — `generate -o ./banks/b` writes a bank, exactly as it would from a terminal.
-  `.studio/` is gitignored and disposable: a job is re-runnable, so nothing in it is worth keeping.
+- **Writes** under `.studio/` (job logs, and the candidate seeds **Look** draws), and into
+  whatever a command you ran was told to write — `generate -o ./banks/b` writes a bank, exactly as
+  it would from a terminal, and **Use this seed** rewrites one row of one manifest and redraws its
+  thumbnail. `.studio/` is gitignored and disposable: a job is re-runnable, so nothing in it is
+  worth keeping.
 - **Never** touches a bank you did not name, and never regenerates one you did not ask it to.
 
 ## How it works, in one paragraph
@@ -321,6 +365,9 @@ design is arranged to prevent. Existing examples of the pattern: `/api/doctor` r
 | the **Bank** tab says there are no banks | no directory under `--banks-root` holds a `manifest.json`; generate one from the **Build** tab, or with `scenariobank generate -o ./banks/b --bank-id b` |
 | a category says `2 distinct of 5` | not a fault: `X` and `T` junctions do not vary with the seed, so the spawn-lane count is the ceiling however many seeds you build. Use a category whose road varies, or accept the smaller set |
 | clicking a card does nothing | the studio is older than the panel — restart it. The routes are fixed when the process starts, so a studio started before `/api/banks/{bank}/compare` existed serves a 404 for it |
+| **Find a better seed** is greyed out | the bank records a different road or exit rule for that type than this build declares, so a ranking would be measured on one road and the replacement built on another |
+| **Find a better seed** does nothing, or a swap 404s | the studio is older than the feature — restart it. Routes are fixed when the process starts |
+| a swap is refused naming the seeds the category holds | a bank does not build one seed twice. Pick another row, or free that seed first |
 | a comparison says `incomparable` | the two cards are different scenario types. There is no gap between categories, only between scenarios of one — the fields are still shown side by side |
 | a bank is listed as `unreadable` | its `manifest.json` does not parse or does not validate — opening it names the reason. A bank written by an older schema reads exactly like this |
 | **Generate** is greyed out and says banks live outside the working directory | the studio was started with a `--banks-root` outside its own checkout; no job may write out there. Restart it inside the directory you want the bank in |
@@ -332,13 +379,14 @@ done. Currently live:
 
 1. the shell, and `doctor` in the header
 2. `categories` and `commands` — the reference tab
-3. the job engine — **every command is runnable from the Run tab**, which is scaffolding: it
-   is deleted once the purpose-built screens replace it
+3. the job engine — every simulator command runs as a subprocess, one at a time, reporting on
+   the screen that started it
 4. the gallery — the **Build** tab, one example picture per scenario type
 5. generation from that selection — how many of each type, and a progress bar
 6. the dataset — the **Bank** tab, every scenario in a bank as the picture of it
 7. the review — how many of those scenarios are actually different
 8. the panel — click a card for the row behind the picture, two for how they differ
+9. the swap — rank candidate seeds for a scenario, look at one, and replace it
 
-Still to come is the swap: finding a better seed for a scenario and replacing it. See **Phase 2c**
-in `IMPLEMENTATION_PLAN.md`.
+Still to come is editing, adding and removing an item, four more scenario types, and submitting a
+run to the queue. See **Phase 2c** in `IMPLEMENTATION_PLAN.md`.
