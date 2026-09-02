@@ -52,6 +52,12 @@ IDENTICAL = "identical"
 SAME_DRIVE = "same-drive"
 NEAR_DUPLICATE_VERDICT = "near-duplicate"
 DISTINCT = "distinct"
+#: Not a fifth degree of similarity -- the absence of one. Two scenarios of different categories
+#: have no gap between them, because `gap` measures a drive and they differ by *declaration*: a
+#: different road and a different exit rule. `compare` answers with this rather than refusing,
+#: since clicking two cards is a fair thing to do and "there is no number here, and here is why"
+#: is a better answer than an error.
+INCOMPARABLE = "incomparable"
 
 
 def gap(left: ScenarioRow, right: ScenarioRow) -> float:
@@ -166,6 +172,11 @@ class Budget(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     max_steps: int
+    #: What each route earns from `step_budget`, by id. Carried per scenario as well as summarised
+    #: because the panel that reads one scenario back needs this number, and `step_budget` is the
+    #: only thing entitled to compute it -- a page dividing metres by a constant would be a second
+    #: rounding rule, and the two would part company the day this one changed.
+    earned: dict[str, int]
     #: The largest budget any route in the category earns from `step_budget`.
     worst_earned: int
     worst_scenario: str | None
@@ -214,6 +225,41 @@ class Report(BaseModel):
     total: int
     distinct: int
     categories: list[CategoryReview]
+
+
+class FieldPair(BaseModel):
+    """One field of two scenarios, side by side and already formatted.
+
+    Formatted here rather than in the caller because a comparison is a sentence about numbers, and
+    two surfaces rounding "420.34 m" differently would be two different answers to one question.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    field: str
+    left: str
+    right: str
+    same: bool
+    #: How far apart, when the difference is a quantity. `None` when the field is a fact that
+    #: either matches or does not -- there is no "40% of a destination".
+    apart: str | None
+
+
+class Comparison(BaseModel):
+    """Two scenarios of one bank, read against each other."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    left: str
+    right: str
+    #: The category both sit in, or `None` when they are not the same one.
+    category: str | None
+    #: `None` when `verdict` is `INCOMPARABLE`: a gap is only defined inside a category.
+    gap: float | None
+    verdict: str
+    #: One sentence, written here for the same reason `CategoryReview.warnings` are.
+    summary: str
+    fields: list[FieldPair]
 
 
 def _median(values: Sequence[float]) -> float:
@@ -284,6 +330,7 @@ def _budget(rows: Sequence[ScenarioRow], max_steps: int) -> Budget:
     worst = max(earned, key=lambda name: earned[name]) if earned else None
     return Budget(
         max_steps=max_steps,
+        earned=earned,
         worst_earned=earned[worst] if worst else 0,
         worst_scenario=worst,
         over_budget=[name for name, steps in earned.items() if steps > max_steps],
@@ -367,7 +414,8 @@ def review_category(name: str, entry: CategoryEntry) -> CategoryReview:
                 turns_left=0, turns_right=0, turns_straight=0,
             ),
             budget=Budget(
-                max_steps=entry.max_steps, worst_earned=0, worst_scenario=None, over_budget=[],
+                max_steps=entry.max_steps, earned={}, worst_earned=0, worst_scenario=None,
+                over_budget=[],
             ),
             spread=Spread(
                 route_length_min_m=0.0, route_length_median_m=0.0, route_length_max_m=0.0,
@@ -405,21 +453,184 @@ def review(manifest: Manifest) -> Report:
     )
 
 
+def find(manifest: Manifest, scenario_id: str) -> tuple[str, CategoryEntry, ScenarioRow] | None:
+    """The category name, its entry and the row for one `scenario_id`, or `None`.
+
+    Searched rather than parsed out of the id. An id happens to start with its category name, but
+    that is a naming convention and a convention is not a lookup: `intersection_left_0000` would
+    still be found if the categories were ever renamed underneath it.
+    """
+    for name, entry in manifest.categories.items():
+        for row in entry.scenarios:
+            if row.scenario_id == scenario_id:
+                return name, entry, row
+    return None
+
+
+def _fields(
+    left_cat: str,
+    left_entry: CategoryEntry,
+    left: ScenarioRow,
+    right_cat: str,
+    right_entry: CategoryEntry,
+    right: ScenarioRow,
+) -> list[FieldPair]:
+    """Every measured field of two scenarios, in the order a person reads them.
+
+    Seed first, because it is the handle you would change; the route in the middle, because that is
+    what the picture shows; the step budget last, because it is a consequence of the route rather
+    than a property of the scenario.
+    """
+
+    def pair(field: str, left_value: object, right_value: object, apart: str | None = None):
+        one, two = str(left_value), str(right_value)
+        return FieldPair(field=field, left=one, right=two, same=one == two, apart=apart)
+
+    longer = max(left.route_length_m, right.route_length_m, 1e-9)
+    length_apart = abs(left.route_length_m - right.route_length_m)
+    turn_apart = abs(left.net_rotation_deg - right.net_rotation_deg)
+    steps_apart = abs(step_budget(left.route_length_m) - step_budget(right.route_length_m))
+
+    rows = []
+    if left_cat != right_cat:
+        # Only shown when they differ. Within one category these three are the category, and a row
+        # that always reads the same on both sides is noise in a table about differences.
+        rows += [
+            pair("scenario type", left_cat, right_cat),
+            pair("road", left_entry.block_seq, right_entry.block_seq),
+            pair("exit rule", left_entry.exit_rule, right_entry.exit_rule),
+        ]
+    rows += [
+        pair("seed", left.seed, right.seed),
+        pair("destination", left.destination, right.destination),
+        pair("spawn lane", left.spawn_lane_index, right.spawn_lane_index),
+        pair(
+            "route length",
+            f"{left.route_length_m:.1f} m",
+            f"{right.route_length_m:.1f} m",
+            None if length_apart == 0 else f"{length_apart:.1f} m, {length_apart / longer:.0%}",
+        ),
+        pair(
+            "net rotation",
+            f"{left.net_rotation_deg:+.1f}\N{DEGREE SIGN}",
+            f"{right.net_rotation_deg:+.1f}\N{DEGREE SIGN}",
+            None if turn_apart == 0 else f"{turn_apart:.1f}\N{DEGREE SIGN}",
+        ),
+        # An empty string is a real value here -- a sequence with no curves draws no turn pairs --
+        # so it is spelled rather than left blank, which would read as a missing field.
+        pair("turn pairs", left.turn_pairs or "none", right.turn_pairs or "none"),
+        pair(
+            "step budget",
+            f"{step_budget(left.route_length_m)} / {left_entry.max_steps}",
+            f"{step_budget(right.route_length_m)} / {right_entry.max_steps}",
+            None if steps_apart == 0 else f"{steps_apart} steps",
+        ),
+    ]
+    return rows
+
+
+def _summary(
+    call: str, distance: float | None, left: ScenarioRow, right: ScenarioRow,
+    left_cat: str, right_cat: str,
+) -> str:
+    """The one sentence that says what the verdict means for these two in particular."""
+    if call == INCOMPARABLE:
+        return (
+            f"{left.scenario_id} is {left_cat} and {right.scenario_id} is {right_cat}. "
+            "Two categories differ by declaration -- a different road and a "
+            "different exit rule -- so there is no gap to measure between them. The fields below "
+            "are side by side, not scored."
+        )
+    if call == IDENTICAL:
+        return (
+            "Every measured field matches, the spawn lane included: this is one drive stored "
+            "twice, and no seed change to either will make the two pictures differ."
+        )
+    if call == SAME_DRIVE:
+        return (
+            f"The same drive from a different lane -- lane {left.spawn_lane_index} against lane "
+            f"{right.spawn_lane_index}. A policy meets these differently, so they are not "
+            "duplicates, but the spawn lane is the weakest difference a bank can be built on."
+        )
+    percent = f"{distance:.0%}" if distance is not None else "?"
+    if call == NEAR_DUPLICATE_VERDICT:
+        return (
+            f"{percent} apart -- close enough that the two thumbnails are the same picture, and "
+            "close enough that a policy learning one has largely learnt the other."
+        )
+    if left.destination != right.destination:
+        return (
+            f"Different drives: this route ends at {left.destination} and that one at "
+            f"{right.destination}. A different exit is a different scenario rather than a near "
+            "miss, which is why the gap is 100% and not the difference in their lengths."
+        )
+    if left.turn_pairs != right.turn_pairs:
+        return (
+            f"Different drives: {left.turn_pairs or 'no curves'} against "
+            f"{right.turn_pairs or 'no curves'}. Mirror images are as far apart as this measure "
+            "goes, however close the two route lengths happen to be."
+        )
+    return (
+        f"{percent} apart, past the {NEAR_DUPLICATE:.0%} under which two scenarios of one "
+        "category are called near-duplicates. Two scenarios, not one drawn twice."
+    )
+
+
+def compare(manifest: Manifest, left_id: str, right_id: str) -> Comparison:
+    """Two scenarios of one bank, read against each other with the review's own measure.
+
+    Lives here rather than in the page for the reason the warning sentences do: `gap` and
+    `verdict` are one measure, and a copy of them in JavaScript would be a second one that drifts
+    the first time either changes. The page holds every field already; what it must not invent is
+    what the fields mean together.
+
+    Raises `LookupError` for an id this bank does not hold and `ValueError` for a scenario
+    compared with itself, which the studio turns into a 404 and a 400.
+    """
+    if left_id == right_id:
+        raise ValueError(f"{left_id!r} compared with itself is not a comparison")
+    both = []
+    for scenario_id in (left_id, right_id):
+        hit = find(manifest, scenario_id)
+        if hit is None:
+            raise LookupError(f"no scenario named {scenario_id!r} in this bank")
+        both.append(hit)
+    (left_cat, left_entry, left), (right_cat, right_entry, right) = both
+
+    together = left_cat == right_cat
+    distance = round(gap(left, right), 4) if together else None
+    call = verdict(left, right) if together else INCOMPARABLE
+    return Comparison(
+        left=left_id,
+        right=right_id,
+        category=left_cat if together else None,
+        gap=distance,
+        verdict=call,
+        summary=_summary(call, distance, left, right, left_cat, right_cat),
+        fields=_fields(left_cat, left_entry, left, right_cat, right_entry, right),
+    )
+
+
 __all__ = [
     "DISTINCT",
     "FULL_TURN_DEG",
     "IDENTICAL",
+    "INCOMPARABLE",
     "NEAR_DUPLICATE",
     "NEAR_DUPLICATE_VERDICT",
     "SAME_DRIVE",
     "TURN_PAIRS",
     "Budget",
     "CategoryReview",
+    "Comparison",
     "Coverage",
     "Duplicates",
+    "FieldPair",
     "Pair",
     "Report",
     "Spread",
+    "compare",
+    "find",
     "gap",
     "review",
     "review_category",

@@ -141,6 +141,7 @@ Three endpoints behind it, and nothing else:
 | `GET /api/banks/{bank}` | that bank's manifest, **as it is on disk** |
 | `GET /api/banks/{bank}/thumbs/{name}.png` | one scenario's picture |
 | `GET /api/banks/{bank}/review` | what is in it: duplicates, coverage, step budgets and spread — computed, never stored |
+| `GET /api/banks/{bank}/compare?left=&right=` | two of its scenarios read against each other |
 
 The manifest is returned unshaped. It was written to explain itself — "declare the intent, store
 the fact" — so a studio that reformatted it here would be inventing a second description of a bank
@@ -198,6 +199,45 @@ Bank and scenario names are checked **on the shape of the name**, before either 
 letters, digits, dot, dash, underscore, and not a leading dot. A name that cannot hold a separator
 and cannot begin with a dot is not a traversal that gets filtered out — it is one that cannot be
 spelled. Same rule as `/api/examples/{category}.png`.
+
+## One card, or two against each other
+
+**Click a card and it is selected.** One selected shows the whole row; a second shows how the two
+differ; a third drops the oldest, so a run of "and how about this one" chains without a clear step
+in between. `Esc` or **clear** lets go. The panel pins itself to the bottom of the window rather
+than sitting above the grid, because the cards you are comparing are the ones you have just
+scrolled to.
+
+**Nothing in the one-card panel is computed.** Seed, destination, spawn lane, route length, net
+rotation, turn pairs, road, exit rule and the MetaDrive commit are all in the manifest already —
+it was written to explain itself, and this is the first thing in the product that reads it back to
+a person. The one number it does not read verbatim is the step budget, which comes from the review
+rather than being derived here: `step_budget` rounds, the rule for how belongs to `categories.py`,
+and a page dividing metres by a constant would be a second rounding rule to keep in step.
+
+The two-card panel is the same measure the review uses, asked about one pair:
+
+| verdict | means |
+|---|---|
+| `identical` | every measured field matches, spawn lane included — one drive stored twice |
+| `same-drive` | only the spawn lane differs |
+| `near-duplicate` | under 10% apart |
+| `distinct` | two scenarios |
+| `incomparable` | different scenario types — see below |
+
+Under it, every field side by side, with the ones that agree dimmed rather than dropped: "these two
+share a destination" is half the answer, and a table showing only differences would hide it.
+
+**Two scenarios of different types are answered, not refused.** A gap is only defined inside a
+category — two categories differ by *declaration*, a different road and a different exit rule — so
+the comparison says there is no number and why, and still lays the fields out. This is not
+pedantry: `intersection_left_0000` and `t_junction_0000` have the same 111.7 m route, the same
++90.0° turn, the same spawn lane and the same step budget, on completely different roads. Any
+measure that scored them would call them identical.
+
+The comparison is computed **on the server**, by `review.compare`. The page holds every field
+already; what it must not invent is what the fields mean together, and a copy of `gap` and
+`verdict` in JavaScript would be a second measure that drifts the first time either changes.
 
 ## Running a command from the page
 
@@ -280,6 +320,8 @@ design is arranged to prevent. Existing examples of the pattern: `/api/doctor` r
 | a job says `lost` | its process ended without recording an exit code — the studio was killed while it ran |
 | the **Bank** tab says there are no banks | no directory under `--banks-root` holds a `manifest.json`; generate one from the **Build** tab, or with `scenariobank generate -o ./banks/b --bank-id b` |
 | a category says `2 distinct of 5` | not a fault: `X` and `T` junctions do not vary with the seed, so the spawn-lane count is the ceiling however many seeds you build. Use a category whose road varies, or accept the smaller set |
+| clicking a card does nothing | the studio is older than the panel — restart it. The routes are fixed when the process starts, so a studio started before `/api/banks/{bank}/compare` existed serves a 404 for it |
+| a comparison says `incomparable` | the two cards are different scenario types. There is no gap between categories, only between scenarios of one — the fields are still shown side by side |
 | a bank is listed as `unreadable` | its `manifest.json` does not parse or does not validate — opening it names the reason. A bank written by an older schema reads exactly like this |
 | **Generate** is greyed out and says banks live outside the working directory | the studio was started with a `--banks-root` outside its own checkout; no job may write out there. Restart it inside the directory you want the bank in |
 
@@ -296,6 +338,7 @@ done. Currently live:
 5. generation from that selection — how many of each type, and a progress bar
 6. the dataset — the **Bank** tab, every scenario in a bank as the picture of it
 7. the review — how many of those scenarios are actually different
+8. the panel — click a card for the row behind the picture, two for how they differ
 
-Still to come are the surfaces that read one scenario back: the panel saying what generated a
-picture, and the swap. See **Phase 2c** in `IMPLEMENTATION_PLAN.md`.
+Still to come is the swap: finding a better seed for a scenario and replacing it. See **Phase 2c**
+in `IMPLEMENTATION_PLAN.md`.

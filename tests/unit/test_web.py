@@ -645,3 +645,66 @@ def test_an_unreadable_bank_cannot_be_reviewed_and_says_why(client):
     response = client.get("/api/banks/broken/review")
     assert response.status_code == 422
     assert "not valid JSON" in response.json()["detail"]
+
+
+# ------------------------------------------------------- two scenarios compared (Step 7)
+
+
+def test_two_scenarios_are_compared_with_the_measure_the_review_uses(client):
+    """The measure is `review.py`'s and tested there; this is that the pair reaches the page.
+
+    The fixture builds every row alike, so these two are the same drive at two seeds -- which is
+    the answer a person clicking two cards most needs to be given plainly.
+    """
+    _bank(client.workdir / "banks", "b")
+    answer = client.get("/api/banks/b/compare?left=curve_0000&right=curve_0001").json()
+    assert answer["verdict"] == "identical"
+    assert answer["gap"] == 0.0
+    assert answer["category"] == "curve"
+    assert answer["summary"]
+    fields = {one["field"]: one for one in answer["fields"]}
+    assert fields["seed"]["left"] == "0" and fields["seed"]["right"] == "1"
+    assert fields["seed"]["same"] is False
+    assert fields["route length"]["same"] is True
+
+
+def test_comparing_across_categories_is_answered_rather_than_refused(client):
+    """A gap is only defined inside a category, and a click on two cards is still a fair question.
+    The endpoint says there is no number and why, at 200 -- an error here would be about the
+    request, and the request is fine."""
+    _bank(client.workdir / "banks", "b", categories=("curve", "t_junction"))
+    response = client.get(
+        "/api/banks/b/compare?left=curve_0000&right=t_junction_0000")
+    assert response.status_code == 200
+    answer = response.json()
+    assert answer["verdict"] == "incomparable"
+    assert answer["gap"] is None
+    assert answer["category"] is None
+
+
+def test_a_scenario_this_bank_does_not_hold_is_a_404_naming_it(client):
+    _bank(client.workdir / "banks", "b")
+    response = client.get("/api/banks/b/compare?left=curve_0000&right=curve_0099")
+    assert response.status_code == 404
+    assert "curve_0099" in response.json()["detail"]
+
+
+def test_a_scenario_compared_with_itself_is_a_400(client):
+    _bank(client.workdir / "banks", "b")
+    response = client.get("/api/banks/b/compare?left=curve_0000&right=curve_0000")
+    assert response.status_code == 400
+    assert "itself" in response.json()["detail"]
+
+
+def test_a_comparison_needs_both_ends(client):
+    """`left` and `right` are required, so a half-formed request is a 422 from the signature
+    rather than a comparison of something with nothing."""
+    _bank(client.workdir / "banks", "b")
+    assert client.get("/api/banks/b/compare?left=curve_0000").status_code == 422
+
+
+def test_comparing_refuses_the_same_bank_names_the_rest_of_the_bank_api_does(client):
+    _bank(client.workdir / "banks", "b")
+    both = "left=curve_0000&right=curve_0001"
+    assert client.get(f"/api/banks/.hidden/compare?{both}").status_code == 400
+    assert client.get(f"/api/banks/nope/compare?{both}").status_code == 404

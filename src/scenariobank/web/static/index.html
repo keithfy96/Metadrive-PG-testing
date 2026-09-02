@@ -272,6 +272,78 @@ h3.band .facts { font-family: var(--sans); font-weight: 400; font-size: 12px;
 }
 .shot-card .mark.soft { border-color: var(--muted); color: var(--muted); }
 .shot-card.flagged { border-color: var(--bad); }
+
+/* Selecting. A click **selects** rather than opening something, because the question in front of
+   a grid is "how do these two differ", and a second click answering it is one interaction rather
+   than two ways to touch a card. Two is the ceiling: a comparison is a pair, and a third click
+   drops the oldest so a run of comparisons chains without a clear step in between. */
+.shot-card { cursor: pointer; position: relative; }
+.shot-card:hover { border-color: var(--muted); }
+.shot-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* After `.flagged`, so a selected duplicate reads as selected. The red border it loses is
+   restated by its own marker, which is still on the card. */
+.shot-card.picked { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.shot-card .pin {
+  position: absolute; top: -8px; right: -8px; width: 19px; height: 19px;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: 11px; font-weight: 650;
+  color: var(--surface); background: var(--accent); border-radius: 50%;
+}
+
+/* The panel. Pinned to the bottom of the window rather than placed above the grid: the cards you
+   are comparing are the ones you just scrolled to, and a panel that answers off-screen is a panel
+   you have to scroll away from the question to read. */
+#pick-panel {
+  position: sticky; bottom: 0; z-index: 9; margin-top: 1.2rem;
+  max-height: 60vh; overflow-y: auto;
+  padding: 0.85rem 1.1rem 1rem;
+  background: var(--surface); border: 1px solid var(--hair);
+  border-radius: 10px 10px 0 0; box-shadow: 0 -8px 24px rgb(0 0 0 / 12%);
+}
+#pick-panel h3 { margin: 0 0 0.15rem; font-size: 13px; font-weight: 650; }
+#pick-panel .said { margin: 0.35rem 0 0.7rem; font-size: 12.5px; color: var(--ink-2); }
+.picked-head { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.picked-head .spacer { flex: 1; }
+.picked-head .who { font-family: var(--mono); font-size: 13px; font-weight: 600; }
+.picked-head .hint { font-size: 12px; color: var(--muted); }
+/* The verdict, in the colour of how much it should worry you. */
+.call { font-family: var(--mono); font-size: 12px; padding: 0.1rem 0.5rem; border-radius: 5px;
+        border: 1px solid var(--hair); background: var(--inset); color: var(--ink-2); }
+.call.bad  { border-color: var(--bad); color: var(--bad); }
+.call.good { border-color: var(--good); color: var(--good); }
+/* Two pictures at the size a difference is visible at, beside the numbers rather than under
+   them -- the picture is still the unit even when the answer is a table. */
+.side { display: flex; gap: 0.8rem; flex-wrap: wrap; align-items: flex-start; }
+.side figure { margin: 0; width: 190px; }
+.side figure .shot { aspect-ratio: 4 / 3; background: #fff; border: 1px solid var(--hair);
+                     border-radius: 5px; overflow: hidden;
+                     display: flex; align-items: center; justify-content: center; }
+.side figure img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.side figure figcaption { font-family: var(--mono); font-size: 11.5px; margin-top: 0.25rem;
+                          overflow-wrap: anywhere; }
+.side .numbers { flex: 1; min-width: 300px; }
+/* The one-selected panel: every field of the row, which is the whole point of the step -- the
+   manifest was written to explain itself and this is the first thing that reads it back. */
+.facts { display: grid; grid-template-columns: max-content 1fr; gap: 0.15rem 1rem;
+         font-size: 12.5px; margin: 0; }
+/* Two pairs to a row where there is width for it. The panel sits over the grid, so every line it
+   does not need is a card you can still see underneath it. */
+@media (min-width: 720px) {
+  .facts { grid-template-columns: max-content minmax(5rem, 1fr) max-content minmax(5rem, 1fr); }
+}
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; font-family: var(--mono); }
+table.diff { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+table.diff th { text-align: left; font-weight: 600; color: var(--muted); font-size: 11.5px;
+                padding: 0.15rem 0.6rem 0.3rem 0; white-space: nowrap; }
+table.diff td { padding: 0.16rem 0.6rem 0.16rem 0; font-family: var(--mono);
+                border-top: 1px solid var(--hair); }
+table.diff td.field { font-family: var(--sans); color: var(--muted); white-space: nowrap; }
+table.diff td.apart { color: var(--bad); }
+/* Rows that agree are dimmed rather than dropped: "these two share a destination" is half the
+   answer, and a table that showed only differences would hide it. */
+table.diff tr.same td { color: var(--muted); }
+table.diff tr.differs td { color: var(--ink); }
 </style>
 
 <header class="top">
@@ -391,8 +463,8 @@ h3.band .facts { font-family: var(--sans); font-weight: 400; font-size: 12px;
         <li class="done">the gallery — pick a scenario type from pictures</li>
         <li class="done">generate what you picked</li>
         <li class="done">the dataset — every picture in the bank</li>
-        <li class="sub">6b — the statistics: how many are actually different</li>
-        <li>what generated this picture, and how two compare</li>
+        <li class="done sub">6b — the statistics: how many are actually different</li>
+        <li class="done">what generated this picture, and how two compare</li>
         <li>replace the seed behind an image</li>
         <li class="sub">8b — edit, add or remove one item</li>
         <li>four new scenario types</li>
@@ -401,6 +473,10 @@ h3.band .facts { font-family: var(--sans); font-weight: 400; font-size: 12px;
         <li>pick a model and submit a run to the queue</li>
       </ol>
     </div>
+
+    <!-- The selection panel. Empty and hidden until a card is clicked; last in the section so it
+         pins to the bottom of the window over the grid rather than pushing it down. -->
+    <div id="pick-panel" hidden></div>
   </section>
 
   <section id="view-reference" hidden>
@@ -863,18 +939,24 @@ function statChips(one) {
   return el("div", { class: "stats" }, chips);
 }
 
+// The manifest stores the thumbnail's own relative path, so the file name comes from the file
+// the bank recorded rather than from this page re-deriving `<id>.png`. `null` for a bank built
+// with `--no-thumbnails`, which is a real way to build one.
+function thumbUrl(bank, row) {
+  const file = row.thumbnail ? row.thumbnail.split("/").pop().replace(/\.png$/, "") : null;
+  return file
+    ? `/api/banks/${encodeURIComponent(bank)}/thumbs/${encodeURIComponent(file)}.png`
+    : null;
+}
+
 function scenarioCard(bank, row, mark) {
   const shot = el("div", { class: "shot" });
-  // The manifest stores the thumbnail's own relative path, so the file name comes from the file
-  // the bank recorded rather than from this page re-deriving `<id>.png`.
-  const file = row.thumbnail ? row.thumbnail.split("/").pop().replace(/\.png$/, "") : null;
-  if (!file) {
-    // `generate --no-thumbnails` is a real way to build a bank. The row is still worth showing.
+  const src = thumbUrl(bank, row);
+  if (!src) {
     shot.appendChild(el("div", { class: "missing", html: "built without a thumbnail" }));
   } else {
     const picture = el("img", {
-      src: `/api/banks/${encodeURIComponent(bank)}/thumbs/${encodeURIComponent(file)}.png`,
-      alt: `${row.scenario_id}, seed ${row.seed}`, loading: "lazy",
+      src, alt: `${row.scenario_id}, seed ${row.seed}`, loading: "lazy",
     });
     picture.addEventListener("error", () => {
       shot.replaceChildren(el("div", { class: "missing", html: "picture missing from disk" }));
@@ -893,17 +975,44 @@ function scenarioCard(bank, row, mark) {
     }),
   ];
   if (mark) parts.push(el("span", { class: `mark ${mark.kind}`, text: mark.text }));
-  return el("div", { class: `shot-card${mark && !mark.kind ? " flagged" : ""}` }, parts);
+  const node = el("div", {
+    class: `shot-card${mark && !mark.kind ? " flagged" : ""}`,
+    "data-id": row.scenario_id,
+    role: "button", tabindex: "0", "aria-pressed": "false",
+  }, parts);
+  const choose = () => pick(bank, row.scenario_id);
+  node.addEventListener("click", choose);
+  node.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      choose();
+    }
+  });
+  return node;
 }
 
 function renderBank(name, manifest, report) {
   const cards = [];
   const reviewed = Object.fromEntries((report ? report.categories : []).map((one) =>
     [one.category, one]));
+  // One place to look a scenario up from its id, so the panel does not walk the manifest again
+  // every time a card is clicked. Built here because this is where both halves are in hand.
+  dataset.manifest = manifest;
+  dataset.index = {};
 
   for (const [category, entry] of Object.entries(manifest.categories)) {
     const one = reviewed[category];
     const marks = one ? markersFor(one) : {};
+    for (const row of entry.scenarios) {
+      dataset.index[row.scenario_id] = {
+        category, entry, row,
+        mark: marks[row.scenario_id] || null,
+        // `step_budget` rounds, and the rule for how belongs to `categories.py`. A page dividing
+        // metres by a constant would be a second rounding rule; this reads the review's answer,
+        // and says so plainly when there is no review to read.
+        earned: one ? one.budget.earned[row.scenario_id] : null,
+      };
+    }
     const parts = [
       el("h3", { class: "band" }, [
         el("span", { text: category }),
@@ -948,8 +1057,194 @@ function renderBank(name, manifest, report) {
     + ` · metadrive ${commit ? commit.slice(0, 8) : "unrecorded"}`;
 }
 
+// ----------------------------------------------------- one card, or two against each other
+
+// The ids currently selected, oldest first, at most two. Two because a comparison is a pair; the
+// third click drops the oldest rather than being refused, so a run of "and how about this one"
+// chains without a clear step between each answer.
+const picked = [];
+// A comparison is a fetch, and a third click can land while one is still in flight. The stale
+// answer must not overwrite the fresh one.
+let asked = 0;
+
+function pick(bank, id) {
+  const at = picked.indexOf(id);
+  if (at >= 0) picked.splice(at, 1);       // clicking a selected card lets go of it
+  else {
+    picked.push(id);
+    if (picked.length > 2) picked.shift();
+  }
+  markPicked();
+  renderPick(bank);
+}
+
+function clearPicked(bank) {
+  picked.length = 0;
+  markPicked();
+  renderPick(bank);
+}
+
+// Marks the grid in place rather than re-rendering it: re-rendering would rebuild every `<img>`
+// and flash thirty-five thumbnails to answer a click.
+function markPicked() {
+  for (const node of document.querySelectorAll("#bank-body .shot-card")) {
+    const at = picked.indexOf(node.dataset.id);
+    node.classList.toggle("picked", at >= 0);
+    node.setAttribute("aria-pressed", String(at >= 0));
+    const pin = node.querySelector(".pin");
+    if (pin) pin.remove();
+    if (at >= 0) node.appendChild(el("span", { class: "pin", text: "AB"[at] }));
+  }
+}
+
+function pickHead(bank, title, trailing) {
+  return el("div", { class: "picked-head" }, [
+    el("span", { class: "who", text: title }),
+    ...(trailing ? [trailing] : []),
+    el("span", { class: "spacer" }),
+    (() => {
+      const button = el("button", { class: "ghost", text: "clear" });
+      button.addEventListener("click", () => clearPicked(bank));
+      return button;
+    })(),
+  ]);
+}
+
+function figureFor(bank, id, label) {
+  const found = dataset.index[id];
+  const shot = el("div", { class: "shot" });
+  const src = found && thumbUrl(bank, found.row);
+  shot.appendChild(src
+    ? el("img", { src, alt: id })
+    : el("div", { class: "missing", text: "no thumbnail" }));
+  return el("figure", {}, [shot, el("figcaption", { text: `${label} · ${id}` })]);
+}
+
+// Everything the manifest holds about one scenario. **Nothing here is computed** -- the manifest
+// was written to explain itself, and this is the first thing in the product that reads it back
+// to a person.
+function detailPanel(bank, id) {
+  const found = dataset.index[id];
+  if (!found) return [el("p", { class: "failed", text: `${id} is not in this bank` })];
+  const { row, entry, category } = found;
+  const commit = dataset.manifest.metadrive.commit;
+  const facts = [
+    ["scenario type", category],
+    ["seed", row.seed],
+    ["destination", row.destination],
+    ["spawn lane", row.spawn_lane_index],
+    ["route length", `${row.route_length_m.toFixed(1)} m`],
+    ["net rotation",
+      `${row.net_rotation_deg > 0 ? "+" : ""}${row.net_rotation_deg.toFixed(1)}°`],
+    ["turn pairs", row.turn_pairs || "none"],
+    // `step_budget` rounds, and the rule for how belongs to `categories.py`. This reads the
+    // review's answer rather than dividing metres by a constant here, and says so when there is
+    // no review to read.
+    ["step budget", found.earned === null || found.earned === undefined
+      ? "needs the review" : `${found.earned} / ${entry.max_steps}`],
+    ["road", entry.block_seq],
+    ["exit rule", entry.exit_rule],
+    ["built on", commit ? `metadrive ${commit.slice(0, 8)}` : "an unrecorded metadrive"],
+  ];
+  const parts = [
+    pickHead(bank, `A · ${id}`,
+      el("span", { class: "hint", text: "click a second card to compare the two" })),
+  ];
+  if (found.mark) {
+    parts.push(el("p", { class: "said",
+      text: `Marked ${found.mark.text} — this card repeats another of its type.` }));
+  }
+  parts.push(el("div", { class: "side" }, [
+    figureFor(bank, id, "A"),
+    el("div", { class: "numbers" }, [
+      el("dl", { class: "facts" }, facts.flatMap(([key, value]) => [
+        el("dt", { text: key }), el("dd", { text: String(value) }),
+      ])),
+    ]),
+  ]));
+  return parts;
+}
+
+// How much the verdict should worry you, in a colour. `same-drive` is deliberately neither: two
+// rows separated only by the spawn lane are a real difference and a weak one.
+const CALL_TONE = {
+  "identical": "bad", "near-duplicate": "bad", "distinct": "good",
+  "same-drive": "", "incomparable": "",
+};
+
+function comparePanel(bank, answer) {
+  const percent = answer.gap === null
+    ? "no gap between types" : `${Math.round(answer.gap * 100)}% apart`;
+  const rows = answer.fields.map((one) => el("tr", { class: one.same ? "same" : "differs" }, [
+    el("td", { class: "field", text: one.field }),
+    el("td", { text: one.left }),
+    el("td", { text: one.right }),
+    // A quantity where there is one, and `!=` where the difference is a fact rather than a
+    // distance: "differs" written down the column would say nothing the row's own contrast does.
+    el("td", { class: "apart", text: one.same ? "" : (one.apart || "\u2260") }),
+  ]));
+  return [
+    pickHead(bank, `A · ${answer.left}  vs  B · ${answer.right}`,
+      el("span", { class: `call ${CALL_TONE[answer.verdict] || ""}`,
+                   text: `${answer.verdict} · ${percent}` })),
+    // The sentence comes from `review.py`, so this panel cannot describe a pair differently from
+    // the warning the same pair earns in the band above it.
+    el("p", { class: "said", text: answer.summary }),
+    el("div", { class: "side" }, [
+      figureFor(bank, answer.left, "A"),
+      figureFor(bank, answer.right, "B"),
+      el("div", { class: "numbers" }, [
+        el("table", { class: "diff" }, [
+          el("thead", {}, [el("tr", {}, [
+            el("th", { text: "" }), el("th", { text: "A" }), el("th", { text: "B" }),
+            el("th", { text: "apart" }),
+          ])]),
+          el("tbody", {}, rows),
+        ]),
+      ]),
+    ]),
+  ];
+}
+
+async function renderPick(bank) {
+  const panel = $("pick-panel");
+  const token = ++asked;
+  panel.hidden = picked.length === 0;
+  if (!picked.length) {
+    panel.replaceChildren();
+    return;
+  }
+  if (picked.length === 1) {
+    panel.replaceChildren(...detailPanel(bank, picked[0]));
+    return;
+  }
+  const [left, right] = picked;
+  const title = `A · ${left}  vs  B · ${right}`;
+  panel.replaceChildren(
+    pickHead(bank, title),
+    el("p", { class: "said loading", text: "comparing…" }));
+  try {
+    // Compared on the server, with the same `gap` and `verdict` the review and the CLI use. This
+    // page holds every field already; what it must not invent is what they mean together.
+    const answer = await api(`/api/banks/${encodeURIComponent(bank)}/compare`
+      + `?left=${encodeURIComponent(left)}&right=${encodeURIComponent(right)}`);
+    if (token === asked) panel.replaceChildren(...comparePanel(bank, answer));
+  } catch (error) {
+    if (token === asked) {
+      panel.replaceChildren(
+        pickHead(bank, title),
+        el("p", { class: "failed", text: `could not compare these two: ${error.message}` }));
+    }
+  }
+}
+
 async function openBank(name) {
   dataset.name = name;
+  // The selection is of *these* cards. Carrying it into another bank would leave two ids picked
+  // that are no longer on the screen, and a panel comparing scenarios you cannot see.
+  picked.length = 0;
+  $("pick-panel").hidden = true;
+  $("pick-panel").replaceChildren();
   renderBankList();
   $("bank-body").replaceChildren(
     card([el("p", { class: "loading", text: `loading ${name}…` })]));
@@ -1319,6 +1614,12 @@ Promise.all([api("/api/commands"), api("/api/categories"), api("/api/runnable"),
     $("bank-root").textContent = build.root;
     $("bank-find").addEventListener("input", renderBankList);
     $("bank-reload").addEventListener("click", () => loadBanks());
+    // Escape lets go of the selection. The panel covers the bottom of the grid while it is open,
+    // and reaching for the mouse to dismiss something you opened with one click is a step too
+    // many.
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && picked.length) clearPicked(dataset.name);
+    });
     $("build-open").addEventListener("click", async () => {
       // Fetched before the tab is shown, so `showView` finds the list already there and does not
       // start a second one. The bank that was just built is not in a list fetched before it

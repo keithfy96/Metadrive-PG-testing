@@ -222,6 +222,32 @@ def create_app(*, banks_root: Path, state_dir: Path, workdir: Path | None = None
         except (BankError, ValueError) as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
 
+    @app.get("/api/banks/{bank}/compare")
+    def bank_compare(bank: str, left: str, right: str) -> dict:
+        """Two scenarios of this bank, read against each other.
+
+        Its own endpoint rather than a slice of `/review`, because the review reports the pairs
+        that are *worth* reporting -- the near-duplicates and the closest -- and every pair of a
+        35-row category is 595 of them, most of them the same word repeated. This answers the pair
+        a person actually asked about by clicking two cards.
+
+        The measure is `review.compare`, the same one the review and the CLI use. Nothing here
+        builds an environment; the answer is a manifest read and some arithmetic.
+        """
+        from scenariobank.review import compare
+
+        try:
+            manifest = read_manifest(_bank_dir(bank))
+        except (BankError, ValueError) as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        try:
+            return compare(manifest, left, right).model_dump()
+        except LookupError as error:
+            # The bank is fine and the request is well formed; the id names nothing in it.
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
     @app.get("/api/banks/{bank}/thumbs/{name}.png")
     def thumbnail(bank: str, name: str) -> FileResponse:
         """One scenario's picture.

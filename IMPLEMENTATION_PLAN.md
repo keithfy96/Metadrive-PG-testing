@@ -1227,7 +1227,7 @@ ceiling, `t_junction` 4 of 5 naming `0001 = 0004`, `curve` 5 of 5 with all four 
 positional: `test_the_form_and_the_table_describe_the_same_flags` enforces that every parameter has
 a flag, because the studio's run form is built from them and a positional has nothing to render.)*
 
-### Step 7 — what generated this picture, and how does it compare ⬜  ⟵ *feature 4*
+### Step 7 — what generated this picture, and how does it compare ✅  ⟵ *feature 4*
 
 *(Amended 2026-09-02 — Keith: "I should be able to select any 2 maps in a list and see how
 different they are as well... i can select a maximum of 2 pictures at once". Chosen shape: a click
@@ -1244,6 +1244,35 @@ the manifest was designed to explain itself — "declare the intent, store the f
 the first thing that reads it back to a person.
 
 **Test in the page:** click `curve_0004` and read seed 4 and its `turn_pairs` off the panel.
+
+Two decisions the step forced:
+
+- **The comparison is computed on the server, not in the page.** Every field it needs is already
+  in the manifest the page holds, so a JavaScript `gap()` would have worked and saved a round
+  trip. It would also have been a *second* measure: `review.py` writes the warning sentences for
+  exactly this reason, and the panel that describes a pair must not be able to word it differently
+  from the warning the same pair earns in the band above it. `GET /api/banks/{bank}/compare` is its
+  own endpoint rather than a slice of `/review`, because the review reports the pairs worth
+  reporting and every pair of a 35-row category is 595 of them.
+- **Two scenarios of different types are answered rather than refused.** A gap is only defined
+  inside a category, so `compare` returns a fifth verdict, `incomparable`, with the reason and the
+  fields still laid out side by side. The banks on disk say why that is not pedantry:
+  `intersection_left_0000` and `t_junction_0000` share a route length, a net rotation, a spawn lane
+  and a step budget on completely different roads. A measure willing to score across categories
+  would call them identical.
+
+`Budget` gained `earned` — what each route earns from `step_budget`, by id — because the panel
+needs that number per scenario and `categories.py` owns the rounding rule. The page reads it
+rather than dividing metres by a constant, which would have been a second rule to keep in step.
+
+*(Done 2026-09-02. 278 tests pass, ruff clean. Verified in the page against the three real banks:
+`curve_0000` against `curve_0004` reads `near-duplicate · 7% apart` with the length 32.1 m / 7%
+apart and the rotation 14.1°; `t_junction_0000` against `t_junction_0002` reads `distinct · 100%`
+and names the reason — `1T0_1_` against `1T2_1_`, a different exit rather than a near miss — while
+their route lengths sit 5% apart; `intersection_left_0000` against `t_junction_0000` is
+`incomparable`. Selecting a third card drops the oldest, `Esc` and **clear** let go, and opening
+another bank clears the selection rather than leaving two ids picked that are no longer on screen.
+No console errors.)*
 
 ### Step 8 — replace the seed behind an image ⬜  ⟵ *feature 3*
 

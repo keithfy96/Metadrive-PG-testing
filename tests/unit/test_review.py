@@ -17,9 +17,12 @@ from scenariobank.handedness import DRIVE_SIDE_LEFT
 from scenariobank.review import (
     DISTINCT,
     IDENTICAL,
+    INCOMPARABLE,
     NEAR_DUPLICATE,
     NEAR_DUPLICATE_VERDICT,
     SAME_DRIVE,
+    compare,
+    find,
     gap,
     review,
     review_category,
@@ -323,3 +326,134 @@ def test_reviewing_a_bank_never_imports_the_simulator(tmp_path):
         check=True,
     )
     assert done.stdout.strip() == "[]"
+
+
+# ------------------------------------------------------- two scenarios, side by side
+
+
+def two_categories():
+    """A bank holding the two `curve` seeds that are near-duplicates and one `X` scenario."""
+    return Manifest(
+        schema_version="1.0",
+        bank_id="pairs",
+        created_utc="2026-09-02T00:00:00Z",
+        metadrive={"edition": None, "dist_version": None, "commit": None, "asset_version": None},
+        base_config={},
+        drive_side=DRIVE_SIDE_LEFT,
+        categories={
+            "curve": entry(
+                [
+                    row("curve_0000", 0, length=452.06, rotation=239.5, pairs="LL"),
+                    row("curve_0004", 4, length=419.95, rotation=225.45, pairs="LL"),
+                    # Seeds 1 and 3: 5% apart in length and mirrored, the pair a length-only
+                    # measure would have called the near-duplicate.
+                    row("curve_0001", 1, length=336.9, rotation=81.0, pairs="LR"),
+                    row("curve_0003", 3, length=354.7, rotation=-81.0, pairs="RL"),
+                ],
+            ),
+            "intersection_left": entry(
+                [row("intersection_left_0000", 0, dest="1X0_1_", lane=1, length=111.7)],
+                block_seq="X",
+                rule="left",
+                max_steps=320,
+            ),
+        },
+    )
+
+
+def test_a_scenario_is_found_by_its_id_rather_than_by_parsing_it():
+    """The id starts with its category by convention, and a convention is not a lookup."""
+    name, found_entry, found_row = find(two_categories(), "curve_0004")
+    assert (name, found_entry.block_seq, found_row.seed) == ("curve", "CC", 4)
+    assert find(two_categories(), "curve_0099") is None
+
+
+def test_the_comparison_carries_the_reviews_own_verdict_and_gap():
+    answer = compare(two_categories(), "curve_0000", "curve_0004")
+    assert answer.category == "curve"
+    assert answer.verdict == NEAR_DUPLICATE_VERDICT
+    assert answer.gap == pytest.approx(0.071, abs=0.001)
+    assert "same picture" in answer.summary
+
+
+def test_the_mirrored_pair_says_which_field_made_it_100_percent():
+    """The sentence has to name the reason, or `100% apart` on two 5%-apart routes reads as a bug.
+
+    This is the pair that motivated the multi-field measure: `curve` seeds 1 and 3 are closer in
+    length than the real near-duplicates and drive opposite shapes.
+    """
+    answer = compare(two_categories(), "curve_0001", "curve_0003")
+    assert answer.verdict == DISTINCT
+    assert answer.gap == 1.0
+    assert "LR" in answer.summary and "RL" in answer.summary
+    apart = {one.field: one for one in answer.fields}
+    assert apart["turn pairs"].same is False
+    # And the fields still report the truth the verdict flattened: they *are* close in length.
+    assert apart["route length"].apart.endswith("5%")
+
+
+def test_two_categories_are_compared_without_being_scored():
+    """Answered rather than refused. Clicking two cards is a fair thing to do, and "there is no
+    number here, and here is why" beats an error a person cannot act on."""
+    answer = compare(two_categories(), "curve_0000", "intersection_left_0000")
+    assert answer.verdict == INCOMPARABLE
+    assert answer.gap is None
+    assert answer.category is None
+    assert "declaration" in answer.summary
+    fields = [one.field for one in answer.fields]
+    # The three that are the category itself appear only when they differ.
+    assert fields[:3] == ["scenario type", "road", "exit rule"]
+    assert [one for one in answer.fields if one.field == "road"][0].same is False
+
+
+def test_one_category_hides_the_rows_that_would_always_agree():
+    fields = [one.field for one in compare(two_categories(), "curve_0000", "curve_0004").fields]
+    assert "road" not in fields and "scenario type" not in fields
+    assert fields[0] == "seed"
+
+
+def test_the_step_budget_is_reported_per_scenario_against_its_cap():
+    answer = compare(two_categories(), "curve_0000", "curve_0004")
+    budget = [one for one in answer.fields if one.field == "step budget"][0]
+    # 452 m earns more than 420 m does, and both are inside `curve`'s cap of 1200.
+    assert budget.left == "1140 / 1200"
+    assert budget.right == "1060 / 1200"
+
+
+def test_the_review_reports_what_each_route_earns_so_the_page_need_not_round():
+    one = review_category("curve", two_categories().categories["curve"])
+    assert one.budget.earned["curve_0000"] == 1140
+    assert one.budget.worst_earned == max(one.budget.earned.values())
+
+
+def test_a_scenario_the_bank_does_not_hold_is_a_lookup_failure():
+    with pytest.raises(LookupError, match="curve_0099"):
+        compare(two_categories(), "curve_0000", "curve_0099")
+
+
+def test_a_scenario_compared_with_itself_is_refused():
+    """Not a comparison, and answering `0% apart, identical` would be a true statement that
+    misleads: it reads as two scenarios that match."""
+    with pytest.raises(ValueError, match="itself"):
+        compare(two_categories(), "curve_0000", "curve_0000")
+
+
+def test_identical_rows_say_that_no_seed_change_will_separate_them():
+    manifest = two_categories()
+    manifest.categories["intersection_left"].scenarios.append(
+        row("intersection_left_0002", 2, dest="1X0_1_", lane=1, length=111.7),
+    )
+    answer = compare(manifest, "intersection_left_0000", "intersection_left_0002")
+    assert answer.verdict == IDENTICAL
+    assert answer.gap == 0.0
+    assert all(one.same for one in answer.fields if one.field != "seed")
+
+
+def test_a_lane_only_pair_names_both_lanes():
+    manifest = two_categories()
+    manifest.categories["intersection_left"].scenarios.append(
+        row("intersection_left_0001", 1, dest="1X0_1_", lane=0, length=111.7),
+    )
+    answer = compare(manifest, "intersection_left_0000", "intersection_left_0001")
+    assert answer.verdict == SAME_DRIVE
+    assert "lane 1" in answer.summary and "lane 0" in answer.summary
