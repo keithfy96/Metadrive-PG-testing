@@ -12,7 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from scenariobank.categories import Category
-from scenariobank.sockets import resolve_destination, route_rotation
+from scenariobank.sockets import reset_or_explain, resolve_destination, route_rotation
 
 #: How many points each lane centreline is sampled at. Enough for a roundabout's arcs to look
 #: like arcs rather than chords.
@@ -50,7 +50,7 @@ def draw_route(category: Category, seed: int, out_path: Path) -> dict:
         )
     )
     try:
-        env.reset(seed=seed)
+        reset_or_explain(env, seed, category.block_seq)
         return render_route(env, category=category, seed=seed, exit_socket=exit_socket,
                             out_path=out_path)
     finally:

@@ -168,16 +168,25 @@ def inspect_route(
     out: Annotated[
         Path | None, typer.Option("--out", "-o", help="PNG to write. Defaults under docs/.")
     ] = None,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Emit what was drawn as JSON instead of a line.")
+    ] = False,
 ) -> None:
     """Draw the pinned route over the road network, so the turn can be seen rather than trusted.
 
     `--block-seq` draws any sequence at any seed, including ones no category uses -- which is how
-    you look at a candidate seed before committing it to `generate --seeds`. It needs `--rule`,
-    because a bare sequence has no category to say which exit to drive to. Nothing drawn this way
-    reaches a manifest; a bank always holds exactly the seven categories.
+    you look at a candidate seed before committing it to `generate --seeds`, and what the studio's
+    road builder runs. It needs `--rule`, because a bare sequence has no category to say which
+    exit to drive to. Nothing drawn this way reaches a manifest; a bank always holds exactly the
+    eleven categories.
+
+    `--json` adds `earned_max_steps`: the budget a category on this road would be given, from
+    the same `step_budget` the eleven shipped ones were. It is the number to have in hand when
+    deciding whether a road drawn here deserves to become a twelfth.
     """
     _require_simulator()
-    from scenariobank.figures import draw_route
+    from scenariobank.categories import step_budget
+    from scenariobank.figures import FigureError, draw_route
 
     if (block_seq is None) == (category is None):
         raise typer.BadParameter(
@@ -188,9 +197,13 @@ def inspect_route(
         label = category or f"{block_seq}-{entry.exit_rule.value}"
         path = out or Path("docs/reference/figures") / f"{label}-seed{seed}.png"
         result = draw_route(entry, seed, path)
-    except (CategoryError, SocketError, ValueError) as error:
+    except (CategoryError, SocketError, FigureError, ValueError) as error:
         typer.echo(f"inspect failed: {error}", err=True)
         raise typer.Exit(code=1) from error
+    if as_json:
+        result = {**result, "earned_max_steps": step_budget(result["route_length_m"])}
+        typer.echo(json.dumps(result, indent=2, sort_keys=True))
+        return
     typer.echo(
         f"{result['category']} seed {result['seed']} -> {result['destination']} "
         f"({result['net_rotation_deg']:+.1f} deg, {result['route_length_m']} m): {result['path']}"
@@ -596,7 +609,7 @@ def review_bank(
 ) -> None:
     """Say what is actually in a bank: duplicates, coverage, step budgets and spread.
 
-    **A bank of 35 rows is not automatically 35 scenarios.** `intersection_left` resolves every
+    **A bank of 55 rows is not automatically 55 scenarios.** `intersection_left` resolves every
     seed to the same destination, the same route and the same turn -- the `X` junction does not
     vary with the seed -- so five seeds draw two scenarios, one per spawn lane, and the other three
     are padding. Nothing said so until this command.

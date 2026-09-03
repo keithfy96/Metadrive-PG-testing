@@ -94,7 +94,7 @@ choosing between seeds. A scenario *is* a seed, so the line under the button alw
 seeds it is about to build — `each type at seeds 0,1,2` — rather than only the count. Leaving the
 box alone asks for exactly the seeds `generate` uses by default.
 
-The bar counts the CLI's own per-scenario progress lines. `generate` prints `[3/35]` to stderr as
+The bar counts the CLI's own per-scenario progress lines. `generate` prints `[3/55]` to stderr as
 each scenario lands, and the page reads those; the total it shows *before* the first one arrives is
 the types times the count. Importing MetaDrive is twenty silent seconds, and `0 / 10` during them
 is the difference between waiting and wondering.
@@ -110,6 +110,50 @@ way of calling the CLI. A seed list that is not a simple count — `--seeds curv
 category built at its own seeds — is still the **Run** tab's, or the terminal's.
 
 When a build finishes, **Open the bank** takes you straight to it.
+
+## Composing a road by hand
+
+Under the gallery is a second card: a palette of the fifteen blocks MetaDrive can build — the
+letter, then what it is (`$` toll gate, `y` lane merge, `O` roundabout) — a text box the palette
+appends to and you can type in directly, an exit rule, a seed, and **Draw**. The line under the
+row is the command it runs:
+
+```
+scenariobank inspect --block-seq CCX --rule sharpest --seed 0
+```
+
+plus `--json` and an `--out` under `.studio/looks/`, spelled the same way the seed swap draws its
+candidates. The picture comes back beside the facts the drawing measured — the exit the rule
+chose, its angle, the net rotation, the route length, and **would earn**, the step budget a
+category on this road would be given from the same `step_budget` formula as the eleven shipped
+ones. That last number is the one to have in hand when deciding whether a road drawn here
+deserves to become a twelfth type.
+
+**It is a preview and nothing more.** A road drawn here is not a bank row: a row needs a category
+name and a manifest entry, and inventing names for one-offs is how a bank stops meaning
+anything. Nothing on this card touches a bank. It is the escape hatch for everything the eleven
+types left out — a fork, a parking lot, a two-way road, a crossroads with a U-turn — and the
+place to watch them fail honestly.
+
+**Failing honestly** means the command's own words, not a spinner. Two kinds of refusal reach
+the card. The rule can find no exit: `CCX` at rule `left` is refused with `no exit near +90
+degrees: closest is 3X2_1_ at +149.5`, because two curves rotate the crossroads until none of its
+arms is a left turn from where the car starts — try `sharpest`, or another seed. And MetaDrive can
+refuse the road itself. Type `fS` and draw it:
+
+```
+inspect failed: seed 0 does not build for block sequence 'fS': Bug exists in this block, Recommend to use Ramp
+```
+
+That sentence is the simulator's, quoted through `sockets.reset_or_explain`. Map layout is a
+backtracking search, so a sequence can fail at one seed and build at the next; a block MetaDrive
+names as broken is broken at every seed. The palette lists `f` anyway — a palette that quietly
+dropped a block would be asserting something about the simulator that only the simulator can say.
+
+The palette is served by `GET /api/blocks` from `categories.BLOCKS`, the table
+`validate_block_seq` checks sequences against; a test asserts every letter and class name against
+MetaDrive's own registry, so the palette cannot offer a block the CLI would refuse or name one
+differently from the reference.
 
 ## Looking at a bank
 
@@ -164,11 +208,11 @@ Two states that are not errors, and say so:
 
 Under each scenario type is a row of counts, and the first one is the point: **`2 distinct of 5`**.
 
-A bank of 35 rows is not automatically 35 scenarios. `intersection_left` resolves every seed to the
+A bank of 55 rows is not automatically 55 scenarios. `intersection_left` resolves every seed to the
 same destination, the same 111.7 m route and the same +90.0° turn — MetaDrive's `X` junction does
 not vary with the seed — so five seeds draw **two** scenarios, one per spawn lane, and the other
 three are padding. Nothing said so until this screen, and a bank that is 60% repetition would have
-reached the frontend team looking like 35.
+reached the frontend team looking like 55.
 
 Duplicates are marked on the cards too, where you are already looking:
 
@@ -469,6 +513,10 @@ done. Currently live:
 9. the swap — rank candidate seeds for a scenario, look at one, and replace it
 10. the edit — an exact seed, another exit, a scenario's own step budget, and adding or removing
     one; manifest schema 1.1
+11. four more scenario types — `off_ramp_hold`, `lane_merge`, `lane_split` and `tollgate`, so the
+    gallery is eleven cards and a full bank is 55 scenarios
+12. the road builder — any block sequence, an exit rule and a seed, drawn and measured without
+    touching a bank
 
-Still to come are four more scenario types and submitting a run to the queue. See **Phase 2c** in
-`IMPLEMENTATION_PLAN.md`.
+Still to come are the road utilities and submitting a run to the queue. See
+**Phase 2c** in `IMPLEMENTATION_PLAN.md`.

@@ -6,7 +6,7 @@ this one's subject changes often. In two days `--seeds` became repeatable, `insp
 about all of it, and nothing would have said so.
 
 So the flags, their defaults and whether they repeat are read from the Typer app at render time,
-and the values they accept -- the seven categories, the five exit rules, the block ids -- from
+and the values they accept -- the eleven categories, the five exit rules, the block ids -- from
 `categories.py`. `tests/unit/test_docs.py` fails if the checked-in page disagrees with either.
 
 Three things here are hand-written, because none can be introspected: which group a command
@@ -93,7 +93,7 @@ EXAMPLES: dict[str, tuple[tuple[str, str], ...]] = {
     ),
     "destinations": (("uv run scenariobank destinations", ""),),
     "generate": (
-        ("uv run scenariobank generate -o ./banks/b --bank-id b", "all 35 scenarios"),
+        ("uv run scenariobank generate -o ./banks/b --bank-id b", "all 55 scenarios"),
         (
             "uv run scenariobank generate -o ./banks/b --bank-id b \\\n"
             "    --seeds 0,1,2,3,4 --seeds curve=0,1,2,3,22",
@@ -200,16 +200,16 @@ def _rule_meanings() -> dict:
 def _value_notes() -> dict[str, str]:
     """What each value-taking flag accepts, appended to its row in the table.
 
-    Generated, so the seven category names and fifteen block ids in the tables are the ones the
+    Generated, so the eleven category names and fifteen block ids in the tables are the ones the
     code actually accepts. This is the half of a flag table that usually goes missing: knowing a
     flag exists is no use without knowing what may follow it.
     """
-    from scenariobank.categories import CATEGORIES, SEEDS, VALID_BLOCK_IDS, ExitRule
+    from scenariobank.categories import BLOCKS, CATEGORIES, SEEDS, VALID_BLOCK_IDS, ExitRule
 
     seeds = ",".join(str(seed) for seed in SEEDS)
     categories = ", ".join(f"`{name}`" for name in CATEGORIES)
     rules = ", ".join(f"`{rule.value}`" for rule in ExitRule)
-    blocks = " ".join(f"`{block}`" for block in sorted(VALID_BLOCK_IDS))
+    blocks = ", ".join(f"`{block.id}` {block.label}" for block in BLOCKS)
     return {
         "--category": f"One of: {categories}.",
         "--rule": f"One of: {rules}.",
@@ -393,8 +393,19 @@ def _command_section(entry: dict[str, Any]) -> list[str]:
     return lines
 
 
+def block_rows() -> list[dict[str, Any]]:
+    """The fifteen blocks as data: what `--block-seq` is spelled from, with what each letter is.
+
+    The studio's road builder lays its palette out from this, in this order. `categories.BLOCKS`
+    owns the table; the test that asserts it against MetaDrive is what keeps the palette honest.
+    """
+    from scenariobank.categories import BLOCKS
+
+    return [{"id": block.id, "cls": block.cls, "label": block.label} for block in BLOCKS]
+
+
 def category_rows() -> list[dict[str, Any]]:
-    """The seven categories as data. The one description of a category in this package.
+    """The eleven categories as data. The one description of a category in this package.
 
     `summary` is the first sentence of `description`; the tables want a line, not a paragraph.
     """
@@ -414,10 +425,10 @@ def category_rows() -> list[dict[str, Any]]:
 
 
 def _categories_section() -> list[str]:
-    """The seven categories in full. The inline `--category` list gives the names; this gives
+    """The eleven categories in full. The inline `--category` list gives the names; this gives
     the road, the rule and the budget that come with each."""
     lines = [
-        "## The seven categories",
+        "## The eleven categories",
         "",
         "What `--category` selects, beyond the name. `block_seq` is the road, the rule fixes which",
         "exit the route drives to, and `max_steps` is the cap on an episode.",

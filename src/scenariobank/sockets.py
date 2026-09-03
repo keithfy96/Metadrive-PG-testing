@@ -78,10 +78,27 @@ def read_sockets(block_seq: str, seed: int) -> list[SocketReading]:
 
     env = MetaDriveEnv(base_config(map=block_seq, start_seed=seed, num_scenarios=1))
     try:
-        env.reset(seed=seed)
+        reset_or_explain(env, seed, block_seq)
         return read_sockets_from_env(env)
     finally:
         env.close()
+
+
+def reset_or_explain(env, seed: int, block_seq: str) -> None:
+    """Reset onto `seed`, turning a layout failure into a sentence that names what failed.
+
+    Map generation is a backtracking search (`BIG.py:91-103`), so a block sequence can simply
+    fail to plug in at a given seed -- and one block, `InFork`, refuses outright with MetaDrive's
+    own "Bug exists in this block". Either way the simulator's words are quoted, because they are
+    the only account of the refusal there is. `bank._reset` says the same thing as a `BankError`;
+    this is the one for a command answering one question about one road.
+    """
+    try:
+        env.reset(seed=seed)
+    except Exception as error:
+        raise SocketError(
+            f"seed {seed} does not build for block sequence {block_seq!r}: {error}"
+        ) from error
 
 
 def read_sockets_from_env(env) -> list[SocketReading]:

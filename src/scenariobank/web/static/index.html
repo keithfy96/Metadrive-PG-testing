@@ -186,7 +186,34 @@ button.ghost[hidden] { display: none; }
 .type .facts { color: var(--muted); }
 .missing { font-size: 12px; color: var(--muted); text-align: center; padding: 0 0.6rem; }
 
-/* The progress bar. It measures the CLI's own `[3/35]` lines, so it is honest about a job it
+/* The road builder. A palette of the fifteen blocks -- the letter, then what it is -- that
+   appends to a text box you can also just type in, and one picture of the result beside the
+   facts the drawing measured. Preview only; nothing here is a card in the gallery above. */
+.palette { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0 0 0.2rem; }
+.palette button {
+  font: inherit; font-size: 12.5px; padding: 0.28rem 0.6rem 0.28rem 0.45rem; cursor: pointer;
+  border: 1px solid var(--hair); border-radius: 6px; background: transparent; color: var(--ink-2);
+}
+.palette button:hover { border-color: var(--ink-2); color: var(--ink); }
+.palette button code { margin-right: 0.4rem; }
+input#road-seq { width: 11rem; font-family: var(--mono); font-size: 13px; letter-spacing: 0.1em; }
+input#road-seed { width: 4.5rem; font-family: var(--mono); font-size: 12.5px; }
+select#road-rule { width: auto; font-family: var(--mono); font-size: 12.5px; }
+.road { display: grid; grid-template-columns: minmax(0, 26rem) minmax(0, 1fr); gap: 1.2rem;
+        align-items: start; margin-top: 1rem; }
+@media (max-width: 720px) { .road { grid-template-columns: 1fr; } }
+.road .shot { aspect-ratio: 4 / 3; background: #fff; border: 1px solid var(--hair);
+              border-radius: 6px; overflow: hidden; display: flex; align-items: center;
+              justify-content: center; }
+.road .shot img { max-width: 100%; max-height: 100%; object-fit: contain; }
+/* The simulator's refusal, in its own words. A `pre` rather than a note: the sentence is quoted,
+   and quoted text is not re-flowed. */
+.road .shot.refused { aspect-ratio: auto; background: var(--inset); border-color: var(--bad); }
+.road .shot pre.refusal { margin: 0; width: 100%; box-sizing: border-box; white-space: pre-wrap;
+                          word-break: break-word; color: var(--bad); background: transparent; }
+.road .caption { font-size: 12px; color: var(--muted); margin: 0.4rem 0 0; }
+
+/* The progress bar. It measures the CLI's own `[3/55]` lines, so it is honest about a job it
    does not otherwise control. */
 input#bank-name { width: 15rem; font-family: var(--mono); font-size: 12.5px; }
 input#count { width: 4.5rem; font-family: var(--mono); font-size: 12.5px; }
@@ -424,6 +451,38 @@ table.seeds td.gap .dup { color: var(--bad); }
       <p class="argv" id="build-where"></p>
     </div>
 
+    <!-- The road builder. Preview only: a road drawn here is not a bank row -- a row needs a
+         category name and a manifest entry, and inventing names for one-offs is how a bank stops
+         meaning anything. This is where to look at everything the eleven types left out. -->
+    <div class="card" id="road-card">
+      <h2>Or compose a road by hand</h2>
+      <p class="blurb">
+        Any string of the fifteen blocks, an exit rule and a seed, drawn by
+        <code>scenariobank inspect --block-seq</code> exactly as a terminal would. It is a
+        preview and nothing more — the picture goes to the studio's scratch, not to a bank. A road
+        MetaDrive will not build is refused in MetaDrive's own words.
+      </p>
+      <div class="palette" id="palette">
+        <span class="loading">loading the blocks…</span>
+      </div>
+      <div class="row">
+        <label class="lab" for="road-seq">blocks</label>
+        <input type="text" id="road-seq" placeholder="e.g. CCX" spellcheck="false"
+               autocomplete="off" autocapitalize="off">
+        <label class="lab" for="road-rule">exit</label>
+        <select id="road-rule"></select>
+        <label class="lab" for="road-seed">seed</label>
+        <input type="number" id="road-seed" min="0" step="1" value="0">
+        <button class="go" id="road-go" disabled>Draw</button>
+        <button class="ghost" id="road-clear">Clear</button>
+        <span class="spacer"></span>
+        <span class="failed" id="road-check"></span>
+        <span class="pill" id="road-state">idle</span>
+      </div>
+      <p class="argv" id="road-argv"></p>
+      <div class="road" id="road-result" hidden></div>
+    </div>
+
     <div class="card" id="build-progress" hidden>
       <h2>Generating</h2>
       <div class="bar" id="bar"><span id="bar-fill"></span></div>
@@ -483,8 +542,8 @@ table.seeds td.gap .dup { color: var(--bad); }
         <li class="done">what generated this picture, and how two compare</li>
         <li class="done">replace the seed behind an image</li>
         <li class="done sub">8b — edit, add or remove one item</li>
-        <li>four new scenario types</li>
-        <li>the road builder — compose a road by hand</li>
+        <li class="done">four new scenario types</li>
+        <li class="done">the road builder — compose a road by hand</li>
         <li>the road utilities — exits, and the destinations reference</li>
         <li>pick a model and submit a run to the queue</li>
       </ol>
@@ -707,6 +766,160 @@ function renderBuild(rows) {
   pickedLabel();
 }
 
+// ---------------------------------------------------------- the road builder
+//
+// Any string of block ids, an exit rule and a seed, drawn by the same `inspect --block-seq` a
+// terminal would run, into the studio's scratch. Preview only: nothing here has a category name
+// or a manifest entry. It is the escape hatch for everything the eleven types left out -- look at
+// a fork or a parking lot here and watch it fail honestly, in the simulator's own words, rather
+// than have a category invented to accommodate it.
+
+const road = { blocks: [], rules: [], state: "idle", seq: "", rule: null, seed: 0, facts: null,
+               note: null, stamp: 0 };
+
+// A look is served by name, and a name may not hold `$`. Spelled out rather than stripped: the
+// toll gate is the one block whose letter is not a letter, and dropping it would make `$S` and
+// `S` the same picture. No block is spelled with a lower-case t, o or l, so it cannot collide.
+const roadName = () => `road-${road.seq.replace(/\$/g, "toll")}-${road.rule}-seed${road.seed}`;
+
+function paletteButton(block) {
+  const button = el("button", {
+    type: "button", title: `${block.cls} — MetaDrive's ${block.id}`,
+    html: `<code>${escape(block.id)}</code>${escape(block.label)}`,
+  });
+  button.addEventListener("click", () => {
+    const box = $("road-seq");
+    box.value += block.id;
+    box.focus();
+    refreshRoad();
+  });
+  return button;
+}
+
+function renderPalette(blocks, rules) {
+  road.blocks = blocks;
+  road.rules = rules;
+  $("palette").replaceChildren(...blocks.map(paletteButton));
+  $("road-rule").replaceChildren(...rules.map((rule) => el("option", { value: rule, text: rule })));
+  refreshRoad();
+}
+
+// The button is live only for a sequence the CLI would take, and the line under the row is the
+// command it would run. The real check is `invoke.py`'s and then `categories.validate_block_seq`;
+// this only brings the refusal forward to before the click.
+function refreshRoad() {
+  const seq = $("road-seq").value.trim();
+  const unknown = [...new Set([...seq].filter((id) => !road.blocks.some((b) => b.id === id)))];
+  $("road-check").textContent = unknown.length ? `not a block: ${unknown.join(" ")}` : "";
+  $("road-go").disabled = !seq || unknown.length > 0 || road.state === "drawing";
+  $("road-argv").textContent = seq && !unknown.length
+    ? `scenariobank inspect --block-seq ${seq} --rule ${$("road-rule").value}`
+      + ` --seed ${$("road-seed").value.trim() || 0}`
+    : "";
+}
+
+async function drawRoad() {
+  road.seq = $("road-seq").value.trim();
+  road.rule = $("road-rule").value;
+  road.seed = Number($("road-seed").value.trim() || 0);
+  road.state = "drawing";
+  road.facts = null;
+  road.note = null;
+  renderRoad();
+  try {
+    await startJob("inspect", {
+      "--block-seq": road.seq,
+      "--rule": road.rule,
+      "--seed": String(road.seed),
+      "--json": true,
+      // Under `.studio`, where the seed swap draws its candidates too: a picture of a road nobody
+      // committed to anything is not a thumbnail of a scenario.
+      "--out": `${build.looks}/${roadName()}.png`,
+    });
+  } catch (error) {
+    road.state = "refused";
+    road.note = error.message;
+    renderRoad();
+  }
+}
+
+function applyRoad(job) {
+  if (road.state !== "drawing" || job.state === "running") return;
+  if (job.state === "lost" || job.exit_code !== 0) {
+    // `inspect failed: seed 0 does not build for block sequence 'fS': Bug exists in this block,
+    // Recommend to use Ramp` -- one sentence on stderr, and the simulator's words inside it.
+    road.state = "refused";
+    road.note = tail(run.text, 3) || "the drawing ended without saying why";
+  } else {
+    try {
+      road.facts = lastJson(run.text);
+      road.state = "drawn";
+      road.stamp = Date.now();
+    } catch (error) {
+      road.state = "refused";
+      road.note = `the drawing could not be read: ${error.message}`;
+    }
+  }
+  renderRoad();
+}
+
+function renderRoad() {
+  const state = $("road-state");
+  state.className = `pill${{ drawing: " run", drawn: " ok", refused: " bad" }[road.state] || ""}`;
+  state.textContent = { idle: "idle", drawing: `drawing ${road.seq}…`, drawn: "drawn",
+                        refused: "refused" }[road.state];
+  refreshRoad();
+  const result = $("road-result");
+  result.hidden = road.state === "idle";
+  if (road.state === "idle") return;
+
+  const shot = el("div", { class: "shot" });
+  if (road.state === "drawing") {
+    shot.appendChild(el("span", { class: "loading", text: `building ${road.seq}…` }));
+  } else if (road.state === "refused") {
+    shot.classList.add("refused");
+    shot.appendChild(el("pre", { class: "refusal", text: road.note }));
+  } else {
+    const picture = el("img", {
+      src: `/api/looks/${encodeURIComponent(roadName())}.png?v=${road.stamp}`,
+      alt: `${road.seq} at seed ${road.seed}`,
+    });
+    picture.addEventListener("error", () => shot.replaceChildren(
+      el("div", { class: "missing", text: "the drawing is not on disk" })));
+    shot.appendChild(picture);
+  }
+
+  const side = el("div", {});
+  if (road.facts) {
+    const f = road.facts;
+    const pairs = [
+      ["road", road.seq], ["exit rule", road.rule], ["seed", String(road.seed)],
+      ["destination", f.destination], ["exit angle", `${f.angle_deg > 0 ? "+" : ""}${f.angle_deg}°`],
+      ["net rotation", `${f.net_rotation_deg > 0 ? "+" : ""}${f.net_rotation_deg}°`],
+      ["route length", `${f.route_length_m} m`],
+      ["would earn", `${f.earned_max_steps} steps`],
+    ];
+    side.appendChild(el("dl", { class: "facts" }, pairs.flatMap(([key, value]) => [
+      el("dt", { text: key }), el("dd", { text: value }),
+    ])));
+    side.appendChild(el("p", {
+      class: "caption",
+      text: "Preview only — this road is in no bank. \u201cwould earn\u201d is the step budget a "
+        + "category on it would be given, from the same formula as the eleven above.",
+    }));
+  } else if (road.state === "refused") {
+    side.appendChild(el("p", {
+      class: "caption",
+      text: "Declined, and those are the command's own words. A rule that finds no exit is "
+        + "the road's shape at this seed -- try another rule, or another seed, since the last "
+        + "block's rotation follows the curves before it. A sequence that does not lay out can "
+        + "fail at one seed and build at the next; a block MetaDrive names as broken is broken "
+        + "at every seed.",
+    }));
+  }
+  result.replaceChildren(shot, side);
+}
+
 // ---------------------------------------------------------------- generating
 //
 // The selection becomes a `generate` job through the same POST every other command uses, so the
@@ -723,7 +936,7 @@ async function generate() {
   gen.total = 0;
   gen.bank = name;
   // Known before the first line arrives, which matters: importing MetaDrive is twenty silent
-  // seconds, and "0 / 35" during them is the difference between waiting and wondering.
+  // seconds, and "0 / 55" during them is the difference between waiting and wondering.
   gen.expected = build.selected.size * seeds.length;
   $("build-progress").hidden = false;
   $("build-next").hidden = true;
@@ -1976,7 +2189,7 @@ function renderReference(data, categories) {
   ]));
 
   cards.push(card([
-    el("h2", { text: "The seven categories" }),
+    el("h2", { text: "The eleven categories" }),
     el("p", { class: "blurb", html: inline(
       "What `--category` selects, beyond the name. `block_seq` is the road, the rule fixes which " +
       "exit the route drives to, and `max_steps` is the cap on an episode.") }),
@@ -2054,7 +2267,9 @@ const WATCHERS = {
   generate: applyGenerate,
   examples: applyExamples,
   seeds: applySeeds,
-  inspect: applyLook,
+  // Two screens run an `inspect`: the seed swap draws a candidate seed, and the road builder
+  // draws a road by hand. Which of them is waiting decides where the picture lands.
+  inspect: (job) => (road.state === "drawing" ? applyRoad(job) : applyLook(job)),
   // Two screens start a `replace`: the ranked table swaps a seed, and the edit controls under it
   // rebuild at a typed seed or at another exit. The job is the same one either way, so which of
   // them is waiting decides where the answer lands.
@@ -2147,8 +2362,9 @@ api("/api/doctor").then((report) => {
 // One fetch of the reference, and the document is built from it. Every job this page starts is
 // still checked against the same data on the way through `invoke.py`, so the page cannot come to
 // send a flag the CLI does not take.
-Promise.all([api("/api/commands"), api("/api/categories"), api("/api/studio")])
-  .then(([data, categories, studio]) => {
+Promise.all([api("/api/commands"), api("/api/categories"), api("/api/studio"),
+             api("/api/blocks")])
+  .then(([data, categories, studio, blocks]) => {
     // The facts the page needs but may not invent: how many seeds a category is built at (the
     // CLI's default, which reads as `None` in the parameter table), where banks go, and where a
     // job may draw a seed nobody has committed yet.
@@ -2165,6 +2381,21 @@ Promise.all([api("/api/commands"), api("/api/categories"), api("/api/studio")])
 
     renderReference(data, categories);
     renderBuild(categories);
+    // The road builder's palette, and its rules read off the flag `inspect` itself takes.
+    renderPalette(blocks, choicesFor(data, "inspect", "--rule"));
+    $("road-go").addEventListener("click", drawRoad);
+    $("road-clear").addEventListener("click", () => {
+      $("road-seq").value = "";
+      road.state = "idle";
+      renderRoad();
+      $("road-seq").focus();
+    });
+    for (const id of ["road-seq", "road-rule", "road-seed"]) {
+      $(id).addEventListener("input", refreshRoad);
+    }
+    $("road-seq").addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !$("road-go").disabled) drawRoad();
+    });
     $("draw").addEventListener("click", drawExamples);
     // Adopt whatever is already running. A reload is not a new session as far as a job is
     // concerned -- the state was never in this page to begin with.

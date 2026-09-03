@@ -76,8 +76,8 @@ not what you think it is -- stop and look before pinning anything to it.
 
 | flag | | repeats | meaning |
 |---|---|---|---|
-| `--block-seq/-b <str>` | optional |  | Read the exits of this road. Any string of these 15 block ids: `$` `B` `C` `F` `O` `P` `R` `S` `T` `U` `X` `Y` `f` `r` `y`. `I` is prepended automatically and is never written into a sequence. |
-| `--category/-c <str>` | optional |  | Use this category's block sequence. One of: `intersection_left`, `intersection_right`, `intersection_straight`, `t_junction`, `roundabout`, `curve`, `ramp_traffic_merge`. |
+| `--block-seq/-b <str>` | optional |  | Read the exits of this road. Any string of these 15 block ids: `C` curve, `S` straight, `r` on-ramp, `R` off-ramp, `X` crossroads, `T` T junction, `O` roundabout, `f` fork in, `F` fork out, `y` lane merge, `Y` lane split, `P` parking lot, `$` toll gate, `B` two-way road, `U` crossroads with U-turn. `I` is prepended automatically and is never written into a sequence. |
+| `--category/-c <str>` | optional |  | Use this category's block sequence. One of: `intersection_left`, `intersection_right`, `intersection_straight`, `t_junction`, `roundabout`, `curve`, `ramp_traffic_merge`, `off_ramp_hold`, `lane_merge`, `lane_split`, `tollgate`. |
 | `--seed/-s <int>` | default `0` |  | Map seed. Any non-negative integer. |
 | `--json` | default `false` |  | Emit the readings as JSON instead of a table. |
 
@@ -95,17 +95,23 @@ Measure and draw. Still nothing written into a bank.
 Draw the pinned route over the road network, so the turn can be seen rather than trusted.
 
 `--block-seq` draws any sequence at any seed, including ones no category uses -- which is how
-you look at a candidate seed before committing it to `generate --seeds`. It needs `--rule`,
-because a bare sequence has no category to say which exit to drive to. Nothing drawn this way
-reaches a manifest; a bank always holds exactly the seven categories.
+you look at a candidate seed before committing it to `generate --seeds`, and what the studio's
+road builder runs. It needs `--rule`, because a bare sequence has no category to say which
+exit to drive to. Nothing drawn this way reaches a manifest; a bank always holds exactly the
+eleven categories.
+
+`--json` adds `earned_max_steps`: the budget a category on this road would be given, from
+the same `step_budget` the eleven shipped ones were. It is the number to have in hand when
+deciding whether a road drawn here deserves to become a twelfth.
 
 | flag | | repeats | meaning |
 |---|---|---|---|
-| `--category/-c <str>` | optional |  | Use this category's road and exit rule. One of: `intersection_left`, `intersection_right`, `intersection_straight`, `t_junction`, `roundabout`, `curve`, `ramp_traffic_merge`. |
-| `--block-seq/-b <str>` | optional |  | Build this road instead of a category's. Any string of these 15 block ids: `$` `B` `C` `F` `O` `P` `R` `S` `T` `U` `X` `Y` `f` `r` `y`. `I` is prepended automatically and is never written into a sequence. |
+| `--category/-c <str>` | optional |  | Use this category's road and exit rule. One of: `intersection_left`, `intersection_right`, `intersection_straight`, `t_junction`, `roundabout`, `curve`, `ramp_traffic_merge`, `off_ramp_hold`, `lane_merge`, `lane_split`, `tollgate`. |
+| `--block-seq/-b <str>` | optional |  | Build this road instead of a category's. Any string of these 15 block ids: `C` curve, `S` straight, `r` on-ramp, `R` off-ramp, `X` crossroads, `T` T junction, `O` roundabout, `f` fork in, `F` fork out, `y` lane merge, `Y` lane split, `P` parking lot, `$` toll gate, `B` two-way road, `U` crossroads with U-turn. `I` is prepended automatically and is never written into a sequence. |
 | `--rule <str>` | optional |  | Which exit to drive to. Required with --block-seq. One of: `only`, `left`, `right`, `straight`, `sharpest`. |
 | `--seed/-s <int>` | default `0` |  | Map seed. Any non-negative integer. |
 | `--out/-o <path>` | optional |  | PNG to write. Defaults under docs/. |
+| `--json` | default `false` |  | Emit what was drawn as JSON instead of a line. |
 
 ```bash
 uv run scenariobank inspect -c intersection_left -s 0                 # a category at a seed
@@ -124,7 +130,7 @@ the failure is silent.
 | flag | | repeats | meaning |
 |---|---|---|---|
 | `--out/-o <path>` | default `docs/reference/examples` |  | Directory to write the example pictures into. |
-| `--category/-c <str>` | optional |  | Redraw one category instead of all of them. One of: `intersection_left`, `intersection_right`, `intersection_straight`, `t_junction`, `roundabout`, `curve`, `ramp_traffic_merge`. |
+| `--category/-c <str>` | optional |  | Redraw one category instead of all of them. One of: `intersection_left`, `intersection_right`, `intersection_straight`, `t_junction`, `roundabout`, `curve`, `ramp_traffic_merge`, `off_ramp_hold`, `lane_merge`, `lane_split`, `tollgate`. |
 | `--seed/-s <int>` | default `0` |  | Map seed. Any non-negative integer. |
 
 ```bash
@@ -147,7 +153,7 @@ first. Look at the top of the list with `inspect --block-seq`, then commit what 
 
 | flag | | repeats | meaning |
 |---|---|---|---|
-| `--category/-c <str>` | **required** |  | The category to scan. One of: `intersection_left`, `intersection_right`, `intersection_straight`, `t_junction`, `roundabout`, `curve`, `ramp_traffic_merge`. |
+| `--category/-c <str>` | **required** |  | The category to scan. One of: `intersection_left`, `intersection_right`, `intersection_straight`, `t_junction`, `roundabout`, `curve`, `ramp_traffic_merge`, `off_ramp_hold`, `lane_merge`, `lane_split`, `tollgate`. |
 | `--keep <str>` | optional |  | The seeds you are keeping, which candidates are measured against. A comma-separated list. Defaults to the bank's seeds, `0,1,2,3,4`. |
 | `--scan <str>` | default `0-30` |  | The candidate seeds to consider. A comma-separated list, or an inclusive range like `0-30`. |
 | `--json` | default `false` |  | Emit the ranking as JSON instead of an aligned table. |
@@ -161,7 +167,7 @@ uv run scenariobank seeds -c roundabout --scan 0,7,22          # score three nam
 
 Say what is actually in a bank: duplicates, coverage, step budgets and spread.
 
-**A bank of 35 rows is not automatically 35 scenarios.** `intersection_left` resolves every
+**A bank of 55 rows is not automatically 55 scenarios.** `intersection_left` resolves every
 seed to the same destination, the same route and the same turn -- the `X` junction does not
 vary with the seed -- so five seeds draw two scenarios, one per spawn lane, and the other three
 are padding. Nothing said so until this command.
@@ -215,12 +221,12 @@ minutes of silence otherwise.
 |---|---|---|---|
 | `--out/-o <path>` | **required** |  | Bank directory to write. Created if absent. |
 | `--bank-id <str>` | **required** |  | Name recorded in the manifest, e.g. pg-bank-2026-08. |
-| `--category/-c <str>` | optional | yes | Repeatable. Defaults to every category. One of: `intersection_left`, `intersection_right`, `intersection_straight`, `t_junction`, `roundabout`, `curve`, `ramp_traffic_merge`. |
+| `--category/-c <str>` | optional | yes | Repeatable. Defaults to every category. One of: `intersection_left`, `intersection_right`, `intersection_straight`, `t_junction`, `roundabout`, `curve`, `ramp_traffic_merge`, `off_ramp_hold`, `lane_merge`, `lane_split`, `tollgate`. |
 | `--seeds <str>` | optional | yes | Which seeds to build each category at. A comma-separated list. Also takes `category=list` to override one category, and repeats, so later flags win. Omitted, every category uses `0,1,2,3,4`. |
 | `--thumbnails/--no-thumbnails` | default `true` |  | Draw a route figure per scenario: road, route, spawn arrow, destination. |
 
 ```bash
-uv run scenariobank generate -o ./banks/b --bank-id b                        # all 35 scenarios
+uv run scenariobank generate -o ./banks/b --bank-id b                        # all 55 scenarios
 uv run scenariobank generate -o ./banks/b --bank-id b \
     --seeds 0,1,2,3,4 --seeds curve=0,1,2,3,22                               # one category on its own seeds
 uv run scenariobank generate -o /tmp/b --bank-id b -c curve --no-thumbnails  # one category, no PNGs
@@ -277,7 +283,7 @@ edit you can undo.
 | flag | | repeats | meaning |
 |---|---|---|---|
 | `--bank <path>` | **required** |  | Bank directory holding the manifest to edit. |
-| `--category/-c <str>` | **required** |  | Which category to add a scenario to. One of: `intersection_left`, `intersection_right`, `intersection_straight`, `t_junction`, `roundabout`, `curve`, `ramp_traffic_merge`. |
+| `--category/-c <str>` | **required** |  | Which category to add a scenario to. One of: `intersection_left`, `intersection_right`, `intersection_straight`, `t_junction`, `roundabout`, `curve`, `ramp_traffic_merge`, `off_ramp_hold`, `lane_merge`, `lane_split`, `tollgate`. |
 | `--seed/-s <int>` | **required** |  | Seed to build it at. Any non-negative integer. |
 | `--thumbnails/--no-thumbnails` | default `true` |  | Draw the new scenario's PNG. |
 
@@ -373,7 +379,7 @@ uv run --group web scenariobank studio                                # then ope
 uv run --group web scenariobank studio --banks-root /tmp --port 9000  # look at banks somewhere else
 ```
 
-## The seven categories
+## The eleven categories
 
 What `--category` selects, beyond the name. `block_seq` is the road, the rule fixes which
 exit the route drives to, and `max_steps` is the cap on an episode.
@@ -387,6 +393,10 @@ exit the route drives to, and `max_steps` is the cap on an episode.
 | `roundabout` | `O` | `right` | 700 | Roundabout, leaving by the right-hand exit -- the longest way round, and so the most time spent in the circulating lanes |
 | `curve` | `CC` | `only` | 1200 | Two consecutive curves, each followed by a straight |
 | `ramp_traffic_merge` | `rS` | `only` | 700 | Holds the through lane of a carriageway while an on-ramp joins from the left |
+| `off_ramp_hold` | `RS` | `only` | 660 | Holds the through lane while an off-ramp leaves it to the left -- the mirror of `ramp_traffic_merge`, a lane departing rather than joining |
+| `lane_merge` | `yS` | `only` | 480 | The carriageway itself narrows: `Merge` takes the three lanes down to one on seeds 0, 1 and 4 and to two on seeds 2 and 3, and the lanes that end have to merge into the ones that do not |
+| `lane_split` | `YS` | `only` | 480 | The carriageway widens: `Split` takes the three lanes up to five on seeds 0, 1 and 4 and to four on seeds 2 and 3, and the ego holds its lane while they open beside it |
+| `tollgate` | `$S` | `only` | 540 | A toll plaza on a straight |
 
 The exit rules, which `--rule` also takes:
 

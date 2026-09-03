@@ -1,4 +1,4 @@
-"""The seven categories, and the rule that fixes each one's exit.
+"""The eleven categories, and the rule that fixes each one's exit.
 
 The point of this module is that MetaDrive never chooses the route. `auto_assign_task`
 (`node_network_navigation.py:72-91`) draws a destination socket at random when
@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-#: The **default** seeds every category is built at. The same five for all seven, so the three
+#: The **default** seeds every category is built at. The same five for all eleven, so the three
 #: intersection categories are the same junction driven three ways.
 #:
 #: A default, not a constant: `scenariobank generate --seeds` overrides it, per category if
@@ -29,13 +29,51 @@ from enum import Enum
 #: uses is a decision for whoever builds it. `scenariobank seeds` ranks the alternatives.
 SEEDS: tuple[int, ...] = (0, 1, 2, 3, 4)
 
+@dataclass(frozen=True)
+class Block:
+    """One of the pieces a road is spelled from: the letter, MetaDrive's class, and what it is."""
+
+    #: The character written into a block sequence -- the class's `ID` attribute.
+    id: str
+    #: The MetaDrive class registered under that ID. Asserted against the simulator by
+    #: `tests/unit/test_categories.py`, so a renamed block fails a test rather than a palette.
+    cls: str
+    #: What the block is, in words. Ours, not MetaDrive's: the class names say `InRampOnStraight`
+    #: and `Bidirection`, and a palette button has to say on-ramp and two-way road.
+    label: str
+
+
 #: Every block ID `BLOCK_TYPE_DISTRIBUTION_V2` can produce (`blocks_prob_dist.py:22-41`), by the
 #: `ID` attribute of each registered class rather than by the class name the dict is keyed on.
 #:
 #: `I` (`FirstPGBlock`) is deliberately absent: it is prepended to every map automatically and is
 #: never written into a sequence. Held as a literal so this module stays importable without the
 #: `sim` group; `tests/unit/test_categories.py` asserts it against MetaDrive so it cannot drift.
-VALID_BLOCK_IDS: frozenset[str] = frozenset("CSrRXTOfFyYP$BU")
+#:
+#: In MetaDrive's own registration order, which is the order the studio's palette lays them out
+#: in: the plain pieces first, the junctions, then the odd ones. `f` (`InFork`) is listed even
+#: though MetaDrive refuses to build it ("Bug exists in this block, Recommend to use Ramp"):
+#: the refusal is the simulator's to make and its to quote, and a palette that quietly dropped
+#: a block would be asserting something about the simulator that only the simulator can say.
+BLOCKS: tuple[Block, ...] = (
+    Block("C", "Curve", "curve"),
+    Block("S", "Straight", "straight"),
+    Block("r", "InRampOnStraight", "on-ramp"),
+    Block("R", "OutRampOnStraight", "off-ramp"),
+    Block("X", "StdInterSection", "crossroads"),
+    Block("T", "StdTInterSection", "T junction"),
+    Block("O", "Roundabout", "roundabout"),
+    Block("f", "InFork", "fork in"),
+    Block("F", "OutFork", "fork out"),
+    Block("y", "Merge", "lane merge"),
+    Block("Y", "Split", "lane split"),
+    Block("P", "ParkingLot", "parking lot"),
+    Block("$", "TollGate", "toll gate"),
+    Block("B", "Bidirection", "two-way road"),
+    Block("U", "StdInterSectionWithUTurn", "crossroads with U-turn"),
+)
+
+VALID_BLOCK_IDS: frozenset[str] = frozenset(block.id for block in BLOCKS)
 
 
 class CategoryError(RuntimeError):
@@ -118,22 +156,25 @@ def validate_block_seq(block_seq: str, *, category: str | None = None) -> None:
 
 
 #: **A seed does not always mean a different road.** Measured by `lane_geometry_digest` over
-#: seeds 0-4: `X` produces **one** road, `T` produces **two**, and `O`, `CC` and `rS` produce
-#: five each -- 18 distinct roads across the 35 scenarios. `StdInterSection` has a fixed radius
-#: and the map pins `lane_num=3` and `lane_width=3.5`, so the junction has no seeded degree of
-#: freedom left. Accepted deliberately: the five seeds of an intersection category vary the
-#: *scene* -- traffic and hazard placement, which the option axes drive -- on a controlled road.
-#: Phase 2 must therefore not assert 35 distinct roads. `scenariobank destinations` re-measures
-#: it.
+#: seeds 0-4: `X` produces **one** road, `T` produces **two**, and the other seven sequences
+#: produce five each -- 38 distinct roads across the 55 scenarios. `StdInterSection` has a fixed
+#: radius and the map pins `lane_num=3` and `lane_width=3.5`, so the junction has no seeded
+#: degree of freedom left. Accepted deliberately: the five seeds of an intersection category vary
+#: the *scene* -- traffic and hazard placement, which the option axes drive -- on a controlled
+#: road. Phase 2 must therefore not assert 55 distinct roads. `scenariobank destinations`
+#: re-measures it.
 #:
-#: **And 18 flatters the bank**, because it counts roads that are not *identical*. Measured by
+#: **And 38 flatters the bank**, because it counts roads that are not *identical*. Measured by
 #: `fingerprint.shape_gap` instead -- total lane length and map extent -- the closest pair of
-#: every sequence is a near-duplicate: `CC` seeds 0 and 4 are 7% apart, `rS` seeds 0 and 4 are
-#: 2% apart, and `O` seeds 0 and 4 are not measurably apart at all. Only `CC` has real spread
-#: available (median pair gap 40% over seeds 0-25, against 12% for `O` and under 14% for every
-#: `rS` pair); `X` and `T` have none by construction. **The bank's variety is in the scene the
-#: Phase 4 options build, not in the road** -- already the accepted position for `X`, and true
-#: of the bank as a whole. `scenariobank seeds` is how you find a seed that would add more.
+#: **every** sequence is a near-duplicate: `CC` seeds 0 and 4 are 7% apart, `$S` and `YS` 4%,
+#: `yS` 3%, `rS` and `RS` 2%, and `O`, `T` and `X` are not measurably apart at all. The four
+#: sequences added at Step 9 are all straights of drawn length, so their seeds differ in how long
+#: the road is and in nothing else -- a wider spread than `X` has, and a narrower one than a
+#: turn. Only `CC` has real spread available (median pair gap 40% over seeds 0-25, against 12%
+#: for `O` and under 14% for every `rS` pair); `X` and `T` have none by construction. **The
+#: bank's variety is in the scene the Phase 4 options build, not in the road** -- already the
+#: accepted position for `X`, and true of the bank as a whole. `scenariobank seeds` is how you
+#: find a seed that would add more.
 #:
 #: Those five runs are still not identical: `random_spawn_lane_index` is left on (see
 #: `config.base_config`), so the ego starts in lane 0, 1, 0, 1, 1 across seeds 0-4. Until Phase 4's
@@ -143,9 +184,13 @@ def validate_block_seq(block_seq: str, *, category: str | None = None) -> None:
 #:
 #: Route lengths measured on this simulator at seeds 0-4, in metres, longest of the five, and
 #: **measured on the mirrored, left-side-traffic map** (`scenariobank.handedness`):
-#: intersection 122.5, t_junction 117.2, roundabout 268.5, curve 452.1, ramp_traffic_merge 275.0.
-#: `max_steps` is `step_budget()` of those. Provisional until Phase 4b measures what a policy
-#: actually needs -- the house rule is to re-measure a figure, never to quote one.
+#: intersection 122.5, t_junction 117.2, roundabout 268.5, curve 452.1, ramp_traffic_merge 275.0,
+#: off_ramp_hold 260.0, lane_merge 188.6, lane_split 188.6, tollgate 168.6.
+#: `max_steps` is `step_budget()` of those, with one exception: `tollgate` holds its own lanes to
+#: 3 m/s (`tollgate.py:68`), half the speed the budget assumes, so its toll section is charged
+#: for twice and the cap is `step_budget(route + toll)` at the worst seed -- 168.6 + 43.5 m, not
+#: 168.6. Provisional until Phase 4b measures what a policy actually needs -- the house rule is
+#: to re-measure a figure, never to quote one.
 CATEGORIES: dict[str, Category] = {
     category.name: category
     for category in (
@@ -226,6 +271,63 @@ CATEGORIES: dict[str, Category] = {
                 "Holds the through lane of a carriageway while an on-ramp joins from the "
                 "left. The ego does not itself merge: it spawns on the main road and the "
                 "route never enters the ramp."
+            ),
+        ),
+        Category(
+            name="off_ramp_hold",
+            block_seq="RS",
+            exit_rule=ExitRule.ONLY,
+            max_steps=660,
+            description=(
+                "Holds the through lane while an off-ramp leaves it to the left -- the mirror "
+                "of `ramp_traffic_merge`, a lane departing rather than joining. The ego does "
+                "not take the exit, and could not be asked to: `OutRampOnStraight` puts the "
+                "ramp on a one-lane road of its own that dead-ends at `1R1_4_`, and that node "
+                "is not a socket, so a route down the ramp is not expressible as a "
+                "destination. The three through lanes survive the block intact."
+            ),
+        ),
+        Category(
+            name="lane_merge",
+            block_seq="yS",
+            exit_rule=ExitRule.ONLY,
+            max_steps=480,
+            description=(
+                "The carriageway itself narrows: `Merge` takes the three lanes down to one on "
+                "seeds 0, 1 and 4 and to two on seeds 2 and 3, and the lanes that end have to "
+                "merge into the ones that do not. Not the same manoeuvre as "
+                "`ramp_traffic_merge`, where the ego holds a through lane and somebody else "
+                "joins -- here the ego's own lane is one of the ones that may run out."
+            ),
+        ),
+        Category(
+            name="lane_split",
+            block_seq="YS",
+            exit_rule=ExitRule.ONLY,
+            max_steps=480,
+            description=(
+                "The carriageway widens: `Split` takes the three lanes up to five on seeds 0, "
+                "1 and 4 and to four on seeds 2 and 3, and the ego holds its lane while they "
+                "open beside it. Its route is the same length as `lane_merge`'s at every seed "
+                "-- `Merge` and `Split` are one block drawn in either direction, and "
+                "`total_length` is measured on the reference lane, which survives both. The "
+                "road is not the same, and neither is the drive: what changes is how many "
+                "lanes are alongside."
+            ),
+        ),
+        Category(
+            name="tollgate",
+            block_seq="$S",
+            exit_rule=ExitRule.ONLY,
+            max_steps=540,
+            description=(
+                "A toll plaza on a straight. `TollGate` caps its own lanes at 3 m/s "
+                "(`tollgate.py:68`) and parks a `TollGateBuilding` in every second lane, "
+                "which on a three-lane road is the middle one -- so the block is both slower "
+                "and partly blocked. The budget is charged for it: at 3 m/s the toll section "
+                "costs twice the time its length earns at the reference speed, so `max_steps` "
+                "is `step_budget(route + toll section)` at the worst seed rather than "
+                "`step_budget(route)`."
             ),
         ),
     )

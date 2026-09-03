@@ -1,13 +1,13 @@
 """What is actually in a bank, read off the manifest without building anything.
 
-A bank of 35 rows is not automatically 35 scenarios, and until this module there was nothing that
+A bank of 55 rows is not automatically 55 scenarios, and until this module there was nothing that
 said so. `banks/t-junction-left-intersection` holds five `intersection_left` scenarios and **two**
 distinct ones: every seed resolves to the same destination, the same 111.7 m route and the same
 +90.0 degree turn, and the only thing separating any of them is the spawn lane. That is a property
 of the category rather than a defect -- MetaDrive's `X` junction does not vary with the seed
 (`bank.py`, `spawn_lane_index`: *"for the `X` categories it is the only thing separating the five
 seeds -- the road is identical at all five"*) -- so five seeds *cannot* draw five scenarios. A bank
-that is 60% padding would otherwise reach the frontend team looking like 35.
+that is 60% padding would otherwise reach the frontend team looking like 55.
 
 **Nothing here builds an environment.** Every field the comparison needs is already in
 `ScenarioRow`, because the manifest was written to explain itself, so a whole bank is reviewable

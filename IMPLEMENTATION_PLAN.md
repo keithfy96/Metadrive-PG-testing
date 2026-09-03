@@ -1450,7 +1450,7 @@ scenario of a one-category bank: refused on the panel with `remove failed: curve
 scenario in this bank…`. No console errors. The scratch banks were removed; the three real banks
 were never opened for writing and are still 1.0.)*
 
-### Step 9 — four new scenario types ⬜
+### Step 9 — four new scenario types ✅
 
 Measured 2026-09-02 against the installed MetaDrive, because "which blocks could be categories" is
 a question with an answer rather than an opinion:
@@ -1464,7 +1464,7 @@ a question with an answer rather than an opinion:
 | U-turn junction | `U` | builds, but its exits are +90 / 0 / −90 — the same shape as `X`. The U-turn arm is **not** a destination socket, so it cannot be a category distinct from the three intersections |
 | in-fork, out-fork | `f`, `F` | MetaDrive refuses: `ValueError: Bug exists in this block, Recommend to use Ramp` |
 | parking lot | `P` | refuses: `Lane number of previous block must be 1 in each direction`, and `base_config` pins `lane_num=3` |
-| `B` | `BS` | builds, but `B` is the abstract `PGBlock` base class, not a block |
+| `B` | `BS` | builds, one exit — rule `only`. *(The note here first said `B` was the abstract `PGBlock` base class. It is not: `B` is `Bidirection`, a two-way road block, re-checked at Step 9. Left out anyway — oncoming traffic on an undivided road is a hazard axis, which is Phase 4's business, not an eleventh turn)* |
 
 So: **`off_ramp_hold` (`RS`), `lane_merge` (`yS`), `lane_split` (`YS`), `tollgate` (`$S`)**, all
 rule `only`. Eleven candidates, four survivors — recorded here with the errors so nobody re-tries
@@ -1481,7 +1481,38 @@ example drawn. They appear in the gallery automatically, because the gallery is 
 
 **Test in the page:** eleven cards in the gallery; generate `lane_merge` and look at it.
 
-### Step 10 — the road builder ⬜
+**Three things the measurement decided that the table above did not.**
+
+- **`tollgate` is the only category whose cap is deliberately above `step_budget(longest route)`.**
+  `step_budget` assumes 6 m/s everywhere; `TollGate._add_building_and_speed_limit` calls
+  `lane.set_speed_limit(3)` on every lane it lays and parks a `TollGateBuilding` in every second
+  one. So the toll section is driven at half the reference speed and costs twice the time its
+  length earns. The cap is `step_budget(route + toll section)` at the worst seed — 168.6 + 43.5 m,
+  giving 540 where the route alone earns 440. Recorded in `categories.py` and in the generated
+  `destinations.md`, because a number that disagrees with the stated formula has to say why.
+- **`lane_merge` and `lane_split` measure the same route at every seed**, to the tenth of a metre.
+  `Merge` and `Split` are one block drawn in either direction and `navigation.total_length` reads
+  the reference lane, which survives both. They are still two categories: the roads differ (five
+  distinct each, and different from each other's), and what changes is how many lanes are beside
+  the ego — three narrowing to one or two, against three widening to four or five. Asserted, so a
+  later edit cannot quietly collapse them.
+- **All four are thin at the default seeds, and both measures say so.** Each is a straight of
+  drawn length, so a seed varies how long the road is and nothing else. By road shape the closest
+  pair of each is 2–4% apart; by route, which is what `review` compares, `off_ramp_hold` seeds 1
+  and 3 are 0.9% apart and each of the four earns four to seven near-duplicate warnings on a
+  default bank. Nothing is wrong: all four still report `5 distinct of 5`, and this is exactly
+  what `scenariobank seeds` and `replace` exist for. The bank's distinct-road count went from
+  18-of-35 to **38-of-55**, and the closest pair of *every* sequence is now a near-duplicate.
+
+*(Done 2026-09-03. 11 categories, 55 scenarios, `destinations.md` and all eleven example pictures
+regenerated on this simulator. Measured longest routes: `off_ramp_hold` 260.0 m, `lane_merge` and
+`lane_split` 188.6 m, `tollgate` 168.6 m; caps 660, 480, 480, 540. A full bank is 55 scenarios in
+about 7 seconds. 322 tests pass, ruff clean. Checked in a running studio against a scratch bank:
+eleven cards in the gallery with their fact lines inside their borders, the bank header reading
+`55 scenarios · 45 distinct · 11 types`, and `lane_merge` reading `5 distinct of 5`, `150-189 m`,
+`budget 480/480`. The scratch bank was removed; the three real banks were never opened.)*
+
+### Step 10 — the road builder ✅
 
 Compose a sequence from the fifteen block ids, pick an exit rule, pick a seed, and draw it.
 
@@ -1492,6 +1523,37 @@ honestly, rather than having a category invented to accommodate it.
 
 **Test in the page:** build `CCX`, rule `left`, seed 0, and see the road. Build `fS` and see
 MetaDrive's own refusal quoted back rather than a spinner.
+
+*(Decided 2026-09-03, Keith: a second card on the **Build** tab rather than a fourth tab, and a
+named palette plus a text box rather than a bare text box.)*
+
+- **Almost no new backend.** `inspect --block-seq --rule --seed --out` already drew any sequence
+  through `cli._ad_hoc_category`, and the studio already had a place for a picture that is in no
+  bank (`.studio/looks`, from Step 8's seed swap). The step is a form, a picture, `--json` on
+  `inspect` so the page reads facts instead of parsing a prose line, and `GET /api/blocks`.
+- **The palette is a table, not a list of letters.** `categories.BLOCKS` holds id, MetaDrive
+  class and a label in words, in MetaDrive's registration order; `VALID_BLOCK_IDS` is now derived
+  from it, and a `needs_sim` test asserts every `(id, class)` pair and the order against
+  `PGBlockDistConfig.all_blocks("v2")`. `f` (`InFork`) is listed although MetaDrive refuses it —
+  the refusal is the simulator's to make and its to quote.
+- **The refusal is a sentence.** `sockets.reset_or_explain` wraps the reset the way
+  `bank._reset` does, so a seed that does not lay out reads `seed 0 does not build for block
+  sequence 'fS': Bug exists in this block, Recommend to use Ramp` and exits 1, rather than a
+  traceback. `read_sockets` and `figures.draw_route` both go through it.
+- **`would earn`.** `inspect --json` adds `earned_max_steps = step_budget(route_length_m)`: the
+  number to have in hand when deciding whether a road drawn here deserves to become a twelfth
+  category. It is computed in the CLI, not the page — the formula lives in one place.
+- **Two screens run `inspect`.** The seed swap and the road builder both start one; `WATCHERS`
+  routes by which screen is waiting, the same way `replace` already did for the swap and the
+  edit panel.
+
+*(Done 2026-09-03. The test above was written without measuring, and the builder's first job
+was to correct it: `CCX` at rule `left`, seed 0 is **refused** -- `no exit near +90 degrees:
+closest is 3X2_1_ at +149.5` -- because two curves rotate the crossroads so far that none of its
+arms is a left turn from the spawn heading. At rule `sharpest` it draws: exit `3X2_1_` at
++149.5 deg, 519.3 m, and would earn 1300 steps. `fS` is refused on the card in MetaDrive's
+words. The palette shows fifteen named blocks. 327 tests pass, ruff clean; checked in a running
+studio with a scratch banks root, no bank opened, the scratch removed afterwards.)*
 
 ### Step 11 — the road utilities ⬜
 

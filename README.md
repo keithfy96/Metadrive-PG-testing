@@ -129,7 +129,7 @@ wrong side.
 uv run scenariobank categories
 ```
 
-Lists the seven categories with block sequence, exit rule, step budget and description. The only
+Lists the eleven categories with block sequence, exit rule, step budget and description. The only
 command that does not need the `sim` group.
 
 **Writes:** nothing.
@@ -168,7 +168,13 @@ Flags: [`docs/reference/commands.md`](docs/reference/commands.md#inspect).
 uv run scenariobank inspect --category intersection_left --seed 0
 uv run scenariobank inspect -c t_junction -s 2 -o /tmp/t2.png
 uv run scenariobank inspect --block-seq CC --seed 22 --rule only    # any sequence, any seed
+uv run scenariobank inspect -b CCX --rule left --json -o /tmp/ccx.png  # what was drawn, as data
 ```
+
+`--block-seq` is also what the studio's road builder runs: the card under the gallery is a palette
+of the fifteen blocks, and **Draw** is this command with `--json`, whose output adds
+`earned_max_steps` — the budget a category on that road would be given. Nothing drawn this way
+reaches a bank. A road MetaDrive will not build (`fS`, say) is refused in MetaDrive's own words.
 
 Draws the road network in grey with the **pinned route in red**, a blue arrow at the spawn pose
 and a green star at the destination. Headless — no display, no window, no image buffer. The route
@@ -193,19 +199,19 @@ uv run scenariobank destinations
 
 Resolves every category at every seed, proves each destination is reachable by running the
 shortest path, measures the route, and fingerprints each block sequence's drivable surface. Two
-env builds per category per seed plus one per sequence — about a minute.
+env builds per category per seed plus one per sequence — about 17 seconds.
 
 The document it writes has seven sections: the resolved destination and angle per category and
 seed; route length against the earned step budget; the turn actually taken; the **spawn lane**;
 the **curve direction pairs**; **distinct roads per block sequence** — `X` builds one identical
-road at all five seeds, `T` builds two, and the other three build five each, so **18 distinct
-roads across the 35 scenarios** — and **how alike the closest two are**, which is the section that
+road at all five seeds, `T` builds two, and the other seven build five each, so **38 distinct
+roads across the 55 scenarios** — and **how alike the closest two are**, which is the section that
 stops the first number being read as more than it is.
 
-**18 flatters the bank.** It counts roads that are not *identical*, and a hash cannot see a
-near-twin. Measured by shape instead, the closest pair of every sequence is a near-duplicate:
-`CC` seeds 0 and 4 are 7% apart, `rS` 2%, `O` not measurably apart at all. Only `CC` has real
-spread available. **The bank's variety is in the scene the Phase 4 options build, not in the
+**38 flatters the bank.** It counts roads that are not *identical*, and a hash cannot see a
+near-twin. Measured by shape instead, the closest pair of **every** sequence is a near-duplicate:
+`CC` seeds 0 and 4 are 7% apart, `$S` and `YS` 4%, `yS` 3%, `rS` and `RS` 2%, and `O`, `T` and `X`
+not measurably apart at all. Only `CC` has real spread available. **The bank's variety is in the scene the Phase 4 options build, not in the
 road** — the position already accepted for `X`, and true of the bank as a whole. Use `seeds` to
 find a seed that would add more.
 
@@ -233,8 +239,8 @@ uv run scenariobank generate -o ./banks/b --bank-id b \
 ```
 
 Builds every category at every seed and writes `manifest.json` plus one PNG per scenario. The
-full 35-scenario bank takes about **5 seconds** (6 on the first run after an install, which also
-builds matplotlib's font cache). Progress goes to stderr, one line per scenario.
+full 55-scenario bank takes about **7 seconds** (a little more on the first run after an install,
+which also builds matplotlib's font cache). Progress goes to stderr, one line per scenario.
 
 A thumbnail is the same route figure `inspect` draws (`figures.render_route`): road in grey, the
 driven route in red, a blue arrow at the spawn, a green star at the destination. It is **per
@@ -293,7 +299,7 @@ Flags: [`docs/reference/commands.md`](docs/reference/commands.md#replace).
 uv run scenariobank replace --bank ./banks/b --scenario curve_0004 --seed 22
 ```
 
-Rebuilds one scenario at a different seed rather than regenerating all thirty-five. **The bank never
+Rebuilds one scenario at a different seed rather than regenerating all fifty-five. **The bank never
 changes size and never renumbers** — the scenario keeps its id and its position, and only the seed
 and what was measured from it change. A seed already used in that category is refused, and a route
 that would overrun the category's `max_steps` is written with a warning on stderr.

@@ -113,7 +113,7 @@ def _minimal_manifest() -> Manifest:
 @needs_sim
 def test_generate_writes_a_bank_the_runner_can_read(tmp_path):
     # Two categories on one block sequence, two seeds: enough to exercise the shared reset and
-    # the per-seed loop without paying for all 35.
+    # the per-seed loop without paying for all 55.
     manifest = generate(
         tmp_path,
         bank_id="test-bank",

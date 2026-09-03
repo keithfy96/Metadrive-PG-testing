@@ -437,7 +437,7 @@ def replace_scenario(
 
     The correction loop. A bank is generated, someone looks at it, and one scenario turns out to
     be a poor draw -- `curve` seed 4 builds a road 7% from seed 0's, near enough that the two
-    thumbnails are the same picture. This swaps that one row rather than regenerating 35.
+    thumbnails are the same picture. This swaps that one row rather than regenerating 55.
 
     **The bank never changes size and never renumbers.** `scenario_id` and the row's position are
     kept; only the seed and what was measured from it change.

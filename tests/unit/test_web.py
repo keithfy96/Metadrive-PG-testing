@@ -12,7 +12,7 @@ import time
 
 import pytest
 
-from scenariobank.categories import CATEGORIES, ExitRule
+from scenariobank.categories import BLOCKS, CATEGORIES, ExitRule
 from scenariobank.docs import reference
 
 fastapi = pytest.importorskip(
@@ -741,6 +741,45 @@ def test_a_look_name_that_is_not_a_name_never_becomes_a_path(client, name):
     # The same guard a thumbnail gets, for the same reason: the shape of the name is checked
     # before it is joined to anything, so a traversal is not filtered out -- it cannot be spelled.
     assert client.get(f"/api/looks/{name}.png").status_code == 400
+
+
+# ------------------------------------------------------------- the road builder (step 10)
+
+
+def test_blocks_serves_the_fifteen_pieces_a_road_is_spelled_from(client):
+    rows = client.get("/api/blocks").json()
+    assert [row["id"] for row in rows] == [block.id for block in BLOCKS]
+    for row in rows:
+        # A letter alone is not a palette: the button says what the block is, and the tooltip
+        # says what MetaDrive calls it.
+        assert row["label"] and row["cls"]
+
+
+def test_the_road_builder_sends_only_flags_inspect_takes(client):
+    """The form is `inspect --block-seq --rule --seed --json --out`, and every one of those is a
+    flag the CLI declares -- read back through the same reference the page builds from."""
+    from scenariobank.web.invoke import catalog
+
+    commands, _ = catalog()
+    params = commands["inspect"]["params"]
+    assert {"--block-seq", "--rule", "--seed", "--json", "--out"} <= set(params)
+    assert params["--json"]["type"] == "boolean"
+    # The rule dropdown is the closed set `categories.py` owns, not a text box.
+    assert params["--rule"]["choices"] == [rule.value for rule in ExitRule]
+    assert params["--out"]["type"] == "path"
+
+
+def test_a_road_drawn_by_hand_may_only_land_in_the_studio_scratch(client):
+    # The same containment every job gets, spelled for the one flag the road builder fills in
+    # from the studio's own answer: an `--out` outside the working directory is refused before
+    # a subprocess exists.
+    answer = client.post("/api/jobs", json={
+        "command": "inspect",
+        "options": {"--block-seq": "CCX", "--rule": "left", "--seed": "0", "--json": True,
+                    "--out": "/tmp/road-CCX-left-seed0.png"},
+    })
+    assert answer.status_code == 400
+    assert "--out" in answer.json()["detail"]
 
 
 # ------------------------------------------------- the one write that is not a job (step 8b)

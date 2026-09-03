@@ -252,8 +252,11 @@ def render(
 
     lines += [
         "",
-        "`max_steps` is `step_budget(longest route)`: length / (6 m/s x 0.1 s per step) x 1.5,",
-        "rounded up to 20. Provisional until Phase 4b measures what a policy actually needs.",
+        "**budget at longest** is `step_budget(longest route)`: length / (6 m/s x 0.1 s per step)",
+        "x 1.5, rounded up to 20. `max_steps` is never below it and may sit above it where the",
+        "category has a reason -- `tollgate` caps its own lanes at 3 m/s (`tollgate.py:68`), so",
+        "the toll section is driven at half the reference speed and is charged for twice. A cap",
+        "is provisional until Phase 4b measures what a policy actually needs.",
         "",
         "## Turn taken",
         "",
@@ -302,7 +305,7 @@ def render(
             "`X` has no seeded degree of freedom left: `StdInterSection` fixes its radius and the",
             "map pins `lane_num=3` and `lane_width=3.5`. Accepted deliberately -- the five seeds",
             "of an intersection category vary the scene, not the road. Phase 2 must therefore not",
-            "assert 35 distinct roads.",
+            f"assert {len(CATEGORIES) * len(seeds)} distinct roads.",
             "",
             "Those five runs are still not identical, though: the ego starts in a different lane",
             "(see **Spawn lane**), which is the only thing distinguishing them until Phase 4's",

@@ -3,6 +3,7 @@
 import pytest
 
 from scenariobank.categories import (
+    BLOCKS,
     CATEGORIES,
     SEEDS,
     VALID_BLOCK_IDS,
@@ -56,8 +57,8 @@ def test_every_shipped_category_is_keyed_on_its_own_name():
     assert all(name == category.name for name, category in CATEGORIES.items())
 
 
-def test_the_bank_is_seven_categories_at_five_seeds():
-    assert len(CATEGORIES) == 7
+def test_the_bank_is_eleven_categories_at_five_seeds():
+    assert len(CATEGORIES) == 11
     assert len(SEEDS) == 5
 
 
@@ -85,16 +86,49 @@ def test_the_step_budget_rounds_up_so_a_route_is_never_short_of_its_own_estimate
 def test_every_category_budget_covers_the_longest_route_it_was_measured_at():
     # The measured longest route per category, from docs/reference/destinations.md.
     longest = {
-        "intersection_left": 117.2,
-        "intersection_right": 111.7,
+        "intersection_left": 111.7,
+        "intersection_right": 117.2,
         "intersection_straight": 122.5,
         "t_junction": 117.2,
         "roundabout": 268.5,
         "curve": 452.1,
         "ramp_traffic_merge": 275.0,
+        "off_ramp_hold": 260.0,
+        "lane_merge": 188.6,
+        "lane_split": 188.6,
+        "tollgate": 168.6,
     }
+    assert set(longest) == set(CATEGORIES), "a new category needs its measured route here"
     for name, category in CATEGORIES.items():
         assert category.max_steps >= step_budget(longest[name]), name
+
+
+def test_the_tollgate_budget_pays_for_the_speed_limit_the_block_imposes():
+    """`step_budget` assumes 6 m/s everywhere. The `$` block does not allow it.
+
+    `TollGate._add_building_and_speed_limit` calls `lane.set_speed_limit(3)` on every lane it
+    lays, so the toll section costs twice the time its length earns. The cap is the only one in
+    `CATEGORIES` that is deliberately above `step_budget(longest route)`, and this is the
+    arithmetic that says by how much -- 168.6 m of route and 43.5 m of toll at the worst seed.
+    """
+    assert CATEGORIES["tollgate"].max_steps == step_budget(168.6 + 43.5)
+    assert CATEGORIES["tollgate"].max_steps > step_budget(168.6)
+
+
+def test_the_two_bottleneck_categories_are_one_block_drawn_each_way():
+    # `Merge` and `Split` measure the same route -- `total_length` is read off the reference
+    # lane, which survives both -- so the pair is only two scenarios because the roads differ.
+    # Asserted so that a future edit cannot quietly collapse them into one category.
+    merge, split = CATEGORIES["lane_merge"], CATEGORIES["lane_split"]
+    assert (merge.block_seq, split.block_seq) == ("yS", "YS")
+    assert merge.max_steps == split.max_steps
+
+
+def test_the_four_step_9_categories_all_take_the_only_exit_their_road_offers():
+    # Each is a straight carriageway with one downstream socket. A rule that has to choose
+    # between arms would be a claim their roads cannot support.
+    added = ["off_ramp_hold", "lane_merge", "lane_split", "tollgate"]
+    assert {CATEGORIES[name].exit_rule for name in added} == {ExitRule.ONLY}
 
 
 @needs_sim
@@ -143,3 +177,29 @@ def test_the_curve_seeds_cover_every_combination_of_two_turn_directions():
         for seed in SEEDS
     }
     assert signatures == {"LL", "LR", "RL", "RR"}
+
+
+# ------------------------------------------------------------------ the blocks table (step 10)
+
+
+def test_the_valid_ids_are_the_blocks_table_and_every_block_says_what_it_is():
+    # The palette is laid out from this table and `validate_block_seq` checks against it, so the
+    # two cannot disagree about which letters are roads. Fifteen, each named in words.
+    assert len(BLOCKS) == 15
+    assert len({block.id for block in BLOCKS}) == len(BLOCKS)
+    assert {block.id for block in BLOCKS} == VALID_BLOCK_IDS
+    assert all(block.cls and block.label for block in BLOCKS)
+
+
+@needs_sim
+def test_every_block_names_the_class_metadrive_registers_under_its_id():
+    # The literal exists so the module imports without MetaDrive. This is what stops the class
+    # column drifting from the simulator it describes -- and the order is MetaDrive's own, so the
+    # palette lays the blocks out the way `blocks_prob_dist.py` lists them.
+    from metadrive.component.algorithm.blocks_prob_dist import PGBlockDistConfig
+    from metadrive.utils.registry import get_metadrive_class
+
+    registered = [get_metadrive_class(name) for name in PGBlockDistConfig.all_blocks("v2")]
+    assert [(block.id, block.cls) for block in BLOCKS] == [
+        (cls.ID, cls.__name__) for cls in registered
+    ]

@@ -25,6 +25,10 @@ seed 0 turns +239.5 degrees left and its final heading reads -120.5.
 | `roundabout` | `O` | `right` | `1O2_3_` -90deg | `1O2_3_` -90deg | `1O2_3_` -90deg | `1O2_3_` -90deg | `1O2_3_` -90deg |
 | `curve` | `CC` | `only` | `2C0_1_` -120deg | `2C0_1_` +81deg | `2C0_1_` -141deg | `2C0_1_` +68deg | `2C0_1_` -135deg |
 | `ramp_traffic_merge` | `rS` | `only` | `2S0_0_` +0deg | `2S0_0_` +0deg | `2S0_0_` +0deg | `2S0_0_` +0deg | `2S0_0_` +0deg |
+| `off_ramp_hold` | `RS` | `only` | `2S0_0_` +0deg | `2S0_0_` +0deg | `2S0_0_` +0deg | `2S0_0_` +0deg | `2S0_0_` +0deg |
+| `lane_merge` | `yS` | `only` | `2S0_0_` +0deg | `2S0_0_` +0deg | `2S0_0_` +0deg | `2S0_0_` +0deg | `2S0_0_` +0deg |
+| `lane_split` | `YS` | `only` | `2S0_0_` +0deg | `2S0_0_` +0deg | `2S0_0_` +0deg | `2S0_0_` +0deg | `2S0_0_` +0deg |
+| `tollgate` | `$S` | `only` | `2S0_0_` +0deg | `2S0_0_` +0deg | `2S0_0_` +0deg | `2S0_0_` +0deg | `2S0_0_` +0deg |
 
 ## Route length and step budget
 
@@ -37,9 +41,16 @@ seed 0 turns +239.5 degrees left and its final heading reads -120.5.
 | `roundabout` | 192.6 m | 268.5 m | 700 | 680 |
 | `curve` | 221.1 m | 452.1 m | 1200 | 1140 |
 | `ramp_traffic_merge` | 231.2 m | 275.0 m | 700 | 700 |
+| `off_ramp_hold` | 216.2 m | 260.0 m | 660 | 660 |
+| `lane_merge` | 149.9 m | 188.6 m | 480 | 480 |
+| `lane_split` | 149.9 m | 188.6 m | 480 | 480 |
+| `tollgate` | 129.9 m | 168.6 m | 540 | 440 |
 
-`max_steps` is `step_budget(longest route)`: length / (6 m/s x 0.1 s per step) x 1.5,
-rounded up to 20. Provisional until Phase 4b measures what a policy actually needs.
+**budget at longest** is `step_budget(longest route)`: length / (6 m/s x 0.1 s per step)
+x 1.5, rounded up to 20. `max_steps` is never below it and may sit above it where the
+category has a reason -- `tollgate` caps its own lanes at 3 m/s (`tollgate.py:68`), so
+the toll section is driven at half the reference speed and is charged for twice. A cap
+is provisional until Phase 4b measures what a policy actually needs.
 
 ## Turn taken
 
@@ -54,6 +65,10 @@ Total rotation along the route, unwrapped -- see the note above.
 | `roundabout` | right -90.0deg | right -90.0deg | right -90.0deg | right -90.0deg | right -90.0deg |
 | `curve` | left +239.5deg | left +81.3deg | right -140.8deg | left +67.5deg | left +225.4deg |
 | `ramp_traffic_merge` | straight +0.0deg | straight +0.0deg | straight +0.0deg | straight +0.0deg | straight +0.0deg |
+| `off_ramp_hold` | straight +0.0deg | straight +0.0deg | straight +0.0deg | straight +0.0deg | straight +0.0deg |
+| `lane_merge` | straight +0.0deg | straight +0.0deg | straight +0.0deg | straight +0.0deg | straight +0.0deg |
+| `lane_split` | straight +0.0deg | straight +0.0deg | straight +0.0deg | straight +0.0deg | straight +0.0deg |
+| `tollgate` | straight +0.0deg | straight +0.0deg | straight +0.0deg | straight +0.0deg | straight +0.0deg |
 
 ## Spawn lane
 
@@ -103,16 +118,20 @@ carries `map_config.seed` and would make every road look unique.
 
 | block_seq | distinct roads | seed 0 | seed 1 | seed 2 | seed 3 | seed 4 |
 |---|---|---|---|---|---|---|
+| `$S` | 5/5 | `fddf81e5bf` | `dbd99eb053` | `f8fb7b59fc` | `32f3c6443b` | `b8f60b3c6c` |
 | `CC` | 5/5 | `588a7ec8ae` | `7f3b1a4c01` | `0aaf4027c0` | `2faa72a23f` | `5c77e3d37d` |
 | `O` | 5/5 | `f77695949b` | `133d65262a` | `d482483871` | `b412e4ee7a` | `3e60b0f370` |
+| `RS` | 5/5 | `293d42fcb6` | `b87cd1d446` | `9dd3d5cc8f` | `6f85c9b970` | `87025371ce` |
 | `T` | 2/5  **<** | `72730b4be4` | `72730b4be4` | `3b6f0ec879` | `3b6f0ec879` | `72730b4be4` |
 | `X` | 1/5  **<** | `fcc8a2d982` | `fcc8a2d982` | `fcc8a2d982` | `fcc8a2d982` | `fcc8a2d982` |
+| `YS` | 5/5 | `98be437500` | `f3fdff5664` | `315659a318` | `a924c89d31` | `6e878abc1e` |
 | `rS` | 5/5 | `2df423ebfd` | `28cc31a83f` | `46be5471c7` | `384bce0f1f` | `fd55db7b64` |
+| `yS` | 5/5 | `1a0d7a7586` | `7ecdc6d3ed` | `06a998537e` | `445b675f27` | `7b69ea119f` |
 
-**18 distinct roads across the 35 scenarios --
-and that number flatters the bank.** It counts roads that are not *identical*. Two
-seeds can draw roads a few percent apart, near enough that their thumbnails are the
-same picture, and a digest calls them two roads. The next table is the honest one.
+**38 distinct roads across the 55 scenarios, and that number flatters the bank.**
+It counts roads that are not *identical*. Two seeds can draw roads a few percent
+apart -- near enough that their thumbnails are the same picture -- and a digest
+calls them two roads. The next table is the honest one.
 
 ### How alike are the closest two?
 
@@ -122,11 +141,15 @@ above cannot do.
 
 | block_seq | closest pair | gap | |
 |---|---|---|---|
+| `$S` | seeds 0 and 4 | 4% | **near-duplicate** |
 | `CC` | seeds 0 and 4 | 7% | **near-duplicate** |
 | `O` | seeds 0 and 4 | 0% | **near-duplicate** |
+| `RS` | seeds 0 and 4 | 2% | **near-duplicate** |
 | `T` | seeds 0 and 1 | 0% | **near-duplicate** |
 | `X` | seeds 0 and 1 | 0% | **near-duplicate** |
+| `YS` | seeds 0 and 4 | 4% | **near-duplicate** |
 | `rS` | seeds 0 and 4 | 2% | **near-duplicate** |
+| `yS` | seeds 0 and 4 | 3% | **near-duplicate** |
 
 A gap under 10% means those two seeds are the same drive
 however different their hashes are. `scenariobank seeds --category <name>` ranks
@@ -136,7 +159,7 @@ other seeds by how much they would actually add, and `generate --seeds` and
 `X` has no seeded degree of freedom left: `StdInterSection` fixes its radius and the
 map pins `lane_num=3` and `lane_width=3.5`. Accepted deliberately -- the five seeds
 of an intersection category vary the scene, not the road. Phase 2 must therefore not
-assert 35 distinct roads.
+assert 55 distinct roads.
 
 Those five runs are still not identical, though: the ego starts in a different lane
 (see **Spawn lane**), which is the only thing distinguishing them until Phase 4's

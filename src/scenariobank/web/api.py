@@ -121,7 +121,7 @@ def create_app(*, banks_root: Path, state_dir: Path, workdir: Path | None = None
 
     @app.get("/api/categories")
     def categories() -> list[dict]:
-        """The seven categories: what `--category` selects, beyond the name.
+        """The eleven categories: what `--category` selects, beyond the name.
 
         Served separately from `/api/commands` because the forms in later steps need the list of
         categories without the whole reference behind it.
@@ -129,6 +129,17 @@ def create_app(*, banks_root: Path, state_dir: Path, workdir: Path | None = None
         from scenariobank.docs import category_rows
 
         return category_rows()
+
+    @app.get("/api/blocks")
+    def blocks() -> list[dict]:
+        """The fifteen block ids a road is spelled from, each with what it is.
+
+        The road builder's palette. Served from `categories.BLOCKS` so the page cannot offer a
+        letter the CLI would refuse, or name one differently from the reference.
+        """
+        from scenariobank.docs import block_rows
+
+        return block_rows()
 
     @app.get("/api/commands")
     def commands() -> dict:
@@ -262,7 +273,7 @@ def create_app(*, banks_root: Path, state_dir: Path, workdir: Path | None = None
 
         Its own endpoint rather than a slice of `/review`, because the review reports the pairs
         that are *worth* reporting -- the near-duplicates and the closest -- and every pair of a
-        35-row category is 595 of them, most of them the same word repeated. This answers the pair
+        five-row category is ten of them, most of them the same word repeated. This answers the pair
         a person actually asked about by clicking two cards.
 
         The measure is `review.compare`, the same one the review and the CLI use. Nothing here
