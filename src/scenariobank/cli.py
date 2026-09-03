@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 
@@ -177,15 +177,17 @@ def inspect_route(
     `--block-seq` draws any sequence at any seed, including ones no category uses -- which is how
     you look at a candidate seed before committing it to `generate --seeds`, and what the studio's
     road builder runs. It needs `--rule`, because a bare sequence has no category to say which
-    exit to drive to. Nothing drawn this way reaches a manifest; a bank always holds exactly the
-    eleven categories.
+    exit to drive to. Drawing writes no manifest: a road reaches a bank only through `add
+    --block-seq`, which files it under a name derived from the road and the rule. `generate`
+    still builds the eleven and only the eleven.
 
     `--json` adds `earned_max_steps`: the budget a category on this road would be given, from
     the same `step_budget` the eleven shipped ones were. It is the number to have in hand when
-    deciding whether a road drawn here deserves to become a twelfth.
+    deciding whether a road drawn here deserves to become a twelfth. With `--block-seq` it also
+    adds `composed_name`, the category `add --block-seq` would file this road under.
     """
     _require_simulator()
-    from scenariobank.categories import step_budget
+    from scenariobank.categories import composed_name, step_budget
     from scenariobank.figures import FigureError, draw_route
 
     if (block_seq is None) == (category is None):
@@ -202,6 +204,11 @@ def inspect_route(
         raise typer.Exit(code=1) from error
     if as_json:
         result = {**result, "earned_max_steps": step_budget(result["route_length_m"])}
+        if block_seq is not None:
+            # The name `add --block-seq` would file this road under. Reported rather than
+            # spelled out again by whoever asks, so the studio's card and the manifest cannot
+            # come to different conclusions about what a road is called.
+            result["composed_name"] = composed_name(block_seq, entry.exit_rule)
         typer.echo(json.dumps(result, indent=2, sort_keys=True))
         return
     typer.echo(
@@ -400,25 +407,39 @@ def replace(
 @app.command("add")
 def add_scenario_cmd(
     bank: BankDir,
-    category: Annotated[
-        str, typer.Option("--category", "-c", help="Which category to add a scenario to.")
-    ],
     seed: Annotated[int, typer.Option("--seed", "-s", help="Seed to build it at.")],
+    category: Annotated[
+        str | None, typer.Option("--category", "-c", help="Which category to add a scenario to.")
+    ] = None,
+    block_seq: Annotated[
+        str | None,
+        typer.Option("--block-seq", "-b", help="Compose a road instead of naming a category."),
+    ] = None,
+    rule: Annotated[
+        str | None,
+        typer.Option("--rule", help="Which exit to drive to. Required with --block-seq."),
+    ] = None,
     thumbnails: Annotated[
         bool,
         typer.Option("--thumbnails/--no-thumbnails", help="Draw the new scenario's PNG."),
     ] = True,
 ) -> None:
-    """Add one more scenario to a category of an existing bank.
+    """Add one more scenario to a bank: to a category it holds, or to a road you compose.
 
     **The id is one past the highest, never the row count.** Removing leaves a gap, and re-using
     an id would make every result already keyed on it ambiguous. So a `t_junction` holding
     `_0000` to `_0004` gains `t_junction_0005` even if one of those five is missing.
 
-    The road and the rule come from the bank's own manifest, so a bank generated before a code
-    change grows the way it was built. A category this bank no longer holds is re-created from
-    this build's `categories.py`, which is what makes removing a category's last scenario an
-    edit you can undo.
+    With `--category`, the road and the rule come from the bank's own manifest, so a bank
+    generated before a code change grows the way it was built. A category this bank no longer
+    holds is re-created from this build's `categories.py`, which is what makes removing a
+    category's last scenario an edit you can undo.
+
+    With `--block-seq` and `--rule` the road is composed here, and **its category is named after
+    it**: `CCX` driven to the `sharpest` exit is `CCX_sharpest`, always, so the same road never
+    arrives twice under two names. A category created this way is capped at what its first route
+    earns -- `step_budget` of the length just measured, the number `inspect --json` reports as
+    `earned_max_steps`. This is what the studio's road builder runs behind **Add to bank**.
     """
     _require_simulator()
     from scenariobank.bank import BankError, add_scenario
@@ -428,6 +449,8 @@ def add_scenario_cmd(
             bank,
             category,
             seed,
+            block_seq=block_seq,
+            rule=rule,
             thumbnails=thumbnails,
             progress=lambda message: typer.echo(message, err=True),
         )
@@ -503,6 +526,81 @@ def budget_cmd(
         raise typer.Exit(code=1) from error
     whose = "its own" if row.max_steps is not None else "its category's"
     typer.echo(f"{row.scenario_id} runs on {whose} budget: {bank / 'manifest.json'}")
+
+
+#: One axis's flag, declared six times because a flag is what the reference, the studio's form and
+#: `invoke.build_argv` all key on -- a single `--option axis=level` would be one flag with six
+#: meanings, and none of the three could offer a dropdown for it.
+def _axis(axis: str, label: str) -> Any:
+    return Annotated[
+        str | None,
+        typer.Option(f"--{axis}", help=f"{label} level runs of this bank default to."),
+    ]
+
+
+@app.command("options")
+def options_cmd(
+    bank: BankDir,
+    traffic: _axis("traffic", "Moving traffic") = None,
+    cones: _axis("cones", "Coned-off lanes") = None,
+    barriers: _axis("barriers", "Barriers and breakdowns") = None,
+    pedestrians: _axis("pedestrians", "People on foot") = None,
+    cyclists: _axis("cyclists", "People on bikes") = None,
+    lights: _axis("lights", "Traffic lights") = None,
+    show: Annotated[
+        bool, typer.Option("--show", help="Print the levels this bank pins and change nothing.")
+    ] = False,
+) -> None:
+    """Pin the option levels runs of this bank default to. Builds nothing.
+
+    **These are applied when a run happens, not when the bank was built.** The roads, the routes
+    and the thumbnails are the same at every level -- the map is generated before any object is
+    placed, and the thumbnail draws lanes rather than objects -- so what is set here is *declared
+    intent* and changing it is a manifest edit, in the same class as `budget`. Pinning options at
+    generation time instead would mean regenerating 35 scenarios to change a traffic level.
+
+    Set once, here, rather than typed into every run. A run flag still overrides what is pinned,
+    and the result records the levels it actually used, so an override stays visible afterwards.
+    """
+    from scenariobank.bank import BankError, read_manifest, set_options
+    from scenariobank.review import describe_options
+
+    chosen = {
+        axis: level
+        for axis, level in (
+            ("traffic", traffic),
+            ("cones", cones),
+            ("barriers", barriers),
+            ("pedestrians", pedestrians),
+            ("cyclists", cyclists),
+            ("lights", lights),
+        )
+        if level is not None
+    }
+    if show and chosen:
+        raise typer.BadParameter(
+            "--show reads the levels; drop it to set them", param_hint="--show"
+        )
+    if not show and not chosen:
+        raise typer.BadParameter(
+            "name at least one axis to set, or pass --show to read them", param_hint="--show"
+        )
+
+    try:
+        options = (
+            read_manifest(bank).options
+            if show
+            else set_options(bank, chosen, progress=lambda m: typer.echo(m, err=True))
+        )
+    except (BankError, ValueError) as error:
+        typer.echo(f"options failed: {error}", err=True)
+        raise typer.Exit(code=1) from error
+
+    for axis, level in options.model_dump().items():
+        typer.echo(f"  {axis:<12} {level}")
+    typer.echo(describe_options(options))
+    if not show:
+        typer.echo(f"pinned in {bank / 'manifest.json'}; nothing was rebuilt")
 
 
 @app.command()
@@ -672,6 +770,10 @@ def review_bank(
         )
         for line in one.warnings:
             typer.echo(f"  ! {line}")
+
+    # Last, and about the whole bank rather than one category: what is pinned here applies to every
+    # run of every scenario above, and it is the one line on this page that no road was read for.
+    typer.echo(f"\n{report.options_line}")
 
 
 @app.command()

@@ -11,6 +11,7 @@ from scenariobank.bank import (
     BankError,
     CategoryEntry,
     Manifest,
+    OptionLevels,
     ScenarioRow,
     _exit_intent,
     _next_index,
@@ -23,9 +24,10 @@ from scenariobank.bank import (
     replace_scenario,
     scenario_id,
     set_max_steps,
+    set_options,
     write_manifest,
 )
-from scenariobank.categories import CATEGORIES, SEEDS
+from scenariobank.categories import CATEGORIES, SEEDS, ExitRule, composed_name, step_budget
 from scenariobank.doctor import has_simulator
 from scenariobank.handedness import DRIVE_SIDE_LEFT
 
@@ -405,6 +407,57 @@ def test_a_scenario_can_carry_its_own_step_budget_without_a_rebuild(tmp_path):
     assert read_manifest(tmp_path).categories["curve"].budget_for(cleared) == 1200
 
 
+def test_a_manifest_without_options_reads_as_a_bank_that_pins_nothing(tmp_path):
+    """A 1.1 bank is a 1.2 one with every axis at `none`, which is why the banks on disk keep
+    opening. `none` is the floor rather than an absence -- the same reasoning that keeps
+    `traffic_density` in `base_config` at `0.0` rather than leaving the key out."""
+    raw = json.loads(_minimal_manifest().model_dump_json())
+    raw["schema_version"] = "1.1"
+    del raw["options"]
+
+    manifest = Manifest.model_validate(raw)
+    assert manifest.options == OptionLevels()
+    assert manifest.options.traffic == "none"
+    assert "1.1" in READABLE_VERSIONS and SCHEMA_VERSION in READABLE_VERSIONS
+
+
+def test_pinning_an_option_level_changes_the_manifest_and_nothing_else(tmp_path):
+    """The whole point of storing intent separately from generation truth.
+
+    `base_config` records what generation actually used and stays at zero; `options` records what
+    runs of this bank should default to. So changing a traffic level is a manifest write in
+    `set_max_steps`'s class -- no road is built, and every row and every picture is untouched.
+    """
+    before = _bank_on_disk(tmp_path, count=3)
+    said = []
+
+    options = set_options(tmp_path, {"traffic": "medium", "pedestrians": "low"},
+                          progress=said.append)
+    after = read_manifest(tmp_path)
+
+    assert options.traffic == "medium" and options.pedestrians == "low"
+    assert options.cones == "none", "an axis nobody named keeps what it had"
+    assert after.categories == before.categories, "no scenario moved"
+    assert after.base_config == before.base_config, "generation truth is not run intent"
+    assert after.schema_version == SCHEMA_VERSION, "a 1.0 bank comes back stamped 1.2"
+    assert said == ["traffic pinned at medium", "pedestrians pinned at low"]
+
+    # Only the axes named the second time move; the first edit is still there.
+    again = set_options(tmp_path, {"cones": "high"})
+    assert again.traffic == "medium" and again.cones == "high"
+
+
+def test_an_unknown_axis_or_level_is_refused_by_name(tmp_path):
+    # A typo that silently pinned nothing would be indistinguishable from a bank somebody
+    # deliberately left alone, which is the one thing this file exists to tell apart.
+    _bank_on_disk(tmp_path, count=1)
+    with pytest.raises(BankError, match="not an option axis"):
+        set_options(tmp_path, {"weather": "high"})
+    with pytest.raises(BankError, match="none, low, medium, high"):
+        set_options(tmp_path, {"traffic": "enormous"})
+    assert read_manifest(tmp_path).options == OptionLevels()
+
+
 def test_a_budget_that_ends_the_episode_before_it_begins_is_refused(tmp_path):
     _bank_on_disk(tmp_path, count=2)
     with pytest.raises(BankError, match="before it began"):
@@ -461,6 +514,78 @@ def test_add_numbers_past_the_highest_id_even_over_a_gap(tmp_path):
     assert [one.seed for one in after.categories["curve"].scenarios] == [1, 22]
     with pytest.raises(BankError, match="already used by curve"):
         add_scenario(tmp_path, "curve", 22, thumbnails=False)
+
+
+def test_add_needs_exactly_one_of_a_category_and_a_road(tmp_path):
+    """Both or neither is a question with two answers, and it is asked before a simulator is."""
+    _bank_on_disk(tmp_path, count=1)
+
+    with pytest.raises(BankError, match="not both, and not neither"):
+        add_scenario(tmp_path, "curve", 9, block_seq="CC", rule="only")
+    with pytest.raises(BankError, match="not both, and not neither"):
+        add_scenario(tmp_path, None, 9)
+    with pytest.raises(BankError, match="needs a block sequence"):
+        add_scenario(tmp_path, "curve", 9, rule="left")
+    with pytest.raises(BankError, match="needs a rule"):
+        add_scenario(tmp_path, None, 9, block_seq="CC")
+    with pytest.raises(BankError, match="unknown exit rule"):
+        add_scenario(tmp_path, None, 9, block_seq="CC", rule="sideways")
+
+
+def test_an_unknown_category_name_points_at_composing_one_instead(tmp_path):
+    # Before this, the only answer was "that is not a category". It is now one of two ways in.
+    _bank_on_disk(tmp_path, count=1)
+
+    with pytest.raises(BankError, match="block sequence and a rule"):
+        add_scenario(tmp_path, "hairpin", 0)
+
+
+@needs_sim
+def test_a_road_composed_by_hand_becomes_a_category_named_after_it(tmp_path):
+    """The road builder's Add to bank, end to end.
+
+    Three things have to hold for a composed category to be an ordinary one: it is named after
+    the road and the rule, it is capped by what its own first route earns, and every later seed
+    of it comes from the manifest rather than from `categories.py` -- which has never heard of it.
+    """
+    generate(tmp_path, bank_id="test-bank", category_names=["curve"], seeds=(0,),
+             thumbnails=False)
+
+    row = add_scenario(tmp_path, None, 0, block_seq="CC", rule="only", thumbnails=False)
+    entry = read_manifest(tmp_path).categories["CC_only"]
+
+    assert row.scenario_id == "CC_only_0000"
+    assert entry.block_seq == "CC" and entry.exit_rule == "only"
+    # Capped by its own measurement, not by a number nobody chose.
+    assert entry.max_steps == step_budget(row.route_length_m)
+    assert "Composed by hand" in entry.description
+    assert composed_name("CC", ExitRule.ONLY) == "CC_only"
+
+    # A second seed of it, by name: the road now comes from the manifest.
+    second = add_scenario(tmp_path, "CC_only", 1, thumbnails=False)
+    assert second.scenario_id == "CC_only_0001"
+    # And by road again, which resolves to the same category rather than a second one.
+    third = add_scenario(tmp_path, None, 2, block_seq="CC", rule="only", thumbnails=False)
+    assert third.scenario_id == "CC_only_0002"
+    assert list(read_manifest(tmp_path).categories) == ["curve", "CC_only"]
+
+    with pytest.raises(BankError, match="already used by CC_only"):
+        add_scenario(tmp_path, None, 2, block_seq="CC", rule="only", thumbnails=False)
+
+
+@needs_sim
+def test_composing_the_same_road_again_is_how_a_composed_category_comes_back(tmp_path):
+    """`categories.py` cannot re-create one, so the derived name is what makes removal an undo."""
+    generate(tmp_path, bank_id="test-bank", category_names=["curve"], seeds=(0,),
+             thumbnails=False)
+    add_scenario(tmp_path, None, 0, block_seq="CC", rule="only", thumbnails=False)
+
+    remove_scenario(tmp_path, "CC_only_0000")
+    assert "CC_only" not in read_manifest(tmp_path).categories
+
+    again = add_scenario(tmp_path, None, 0, block_seq="CC", rule="only", thumbnails=False)
+    assert again.scenario_id == "CC_only_0000"
+    assert "CC_only" in read_manifest(tmp_path).categories
 
 
 @needs_sim

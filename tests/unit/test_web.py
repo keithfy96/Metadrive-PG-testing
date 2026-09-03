@@ -443,11 +443,14 @@ def _bank(root, name, *, categories=("curve",), seeds=(0, 1), thumbnails=True,
                     thumbnail=f"{THUMBNAIL_DIR}/{row_id}.png" if thumbnails else None,
                 )
             )
+        # A name this build ships is described by it; anything else is a category composed by
+        # hand, which the manifest describes for itself -- the same two sources `add` has.
+        known = CATEGORIES.get(category)
         entries[category] = CategoryEntry(
-            description=CATEGORIES[category].description,
-            block_seq=CATEGORIES[category].block_seq,
-            exit_rule=str(CATEGORIES[category].exit_rule),
-            max_steps=CATEGORIES[category].max_steps,
+            description=known.description if known else f"Composed by hand: {category}.",
+            block_seq=known.block_seq if known else "CCX",
+            exit_rule=str(known.exit_rule) if known else "sharpest",
+            max_steps=known.max_steps if known else 1300,
             scenarios=rows,
         )
     write_manifest(
@@ -769,6 +772,48 @@ def test_the_road_builder_sends_only_flags_inspect_takes(client):
     assert params["--out"]["type"] == "path"
 
 
+def test_adding_a_drawn_road_sends_only_flags_add_takes(client):
+    """`Add to bank` is the same `add` the edit panel runs, with a road instead of a name."""
+    from scenariobank.web.invoke import catalog
+
+    commands, _ = catalog()
+    params = commands["add"]["params"]
+    assert {"--bank", "--block-seq", "--rule", "--seed"} <= set(params)
+    assert params["--rule"]["choices"] == [rule.value for rule in ExitRule]
+    assert params["--bank"]["type"] == "path"
+    # `--category` stopped being required when a road became the other way in. Both optional is
+    # what lets one form send either.
+    assert not params["--category"]["required"]
+
+
+def test_a_road_may_only_be_added_to_a_bank_inside_the_studio(client):
+    # `--bank` is a path like every other, so the containment check is the same one. Named here
+    # because this is the flag the road builder fills in from the studio's own answer.
+    answer = client.post("/api/jobs", json={
+        "command": "add",
+        "options": {"--bank": "/tmp/elsewhere", "--block-seq": "CCX", "--rule": "sharpest",
+                    "--seed": "0"},
+    })
+    assert answer.status_code == 400
+    assert "--bank" in answer.json()["detail"]
+
+
+def test_a_bank_holding_a_composed_category_is_served_and_reviewed(client):
+    """A composed category is an ordinary entry, so nothing downstream needs to know about it."""
+    _bank(client.workdir / "banks", "b", categories=("curve", "CCX_sharpest"))
+
+    manifest = client.get("/api/banks/b").json()
+    report = client.get("/api/banks/b/review").json()
+
+    assert set(manifest["categories"]) == {"curve", "CCX_sharpest"}
+    assert manifest["categories"]["CCX_sharpest"]["scenarios"][0]["scenario_id"] == (
+        "CCX_sharpest_0000"
+    )
+    assert {one["category"] for one in report["categories"]} == {"curve", "CCX_sharpest"}
+    # And its pictures are servable, which is the reason the name is spelled the way it is.
+    assert client.get("/api/banks/b/thumbs/CCX_sharpest_0000.png").status_code == 200
+
+
 def test_a_road_drawn_by_hand_may_only_land_in_the_studio_scratch(client):
     # The same containment every job gets, spelled for the one flag the road builder fills in
     # from the studio's own answer: an `--out` outside the working directory is refused before
@@ -838,6 +883,54 @@ def test_a_budget_that_would_end_the_episode_before_it_began_is_refused(client):
     answer = client.post("/api/banks/b/scenarios/curve_0001/budget", json={"max_steps": 0})
     assert answer.status_code == 400
     assert "before it began" in answer.json()["detail"]
+
+
+def test_option_levels_are_pinned_without_starting_a_job(client):
+    """The second write on this page with no job behind it, for the same reason as the first.
+
+    A level is applied when a run happens, not when the bank was built, so nothing is measured
+    and no road is driven -- the roads, the routes and the pictures are the same afterwards. The
+    test says so by checking that no job was ever created and that `base_config` did not move.
+    """
+    _bank(client.workdir / "banks", "b")
+    before = client.get("/api/banks/b").json()
+    assert before["options"] == {axis: "none" for axis in
+                                 ["traffic", "cones", "barriers", "pedestrians", "cyclists",
+                                  "lights"]}
+
+    answer = client.post("/api/banks/b/options", json={"traffic": "medium"})
+
+    assert answer.status_code == 200
+    assert answer.json()["traffic"] == "medium"
+    assert client.get("/api/jobs").json() == []
+
+    after = client.get("/api/banks/b").json()
+    assert after["options"]["traffic"] == "medium"
+    assert after["categories"] == before["categories"], "no scenario moved"
+    assert after["base_config"] == before["base_config"], "generation truth is not run intent"
+
+    # The sentence comes from `review.py`, so the page does not write a second description of it.
+    line = client.get("/api/banks/b/review").json()["options_line"]
+    assert line == "runs at traffic=medium, everything else none"
+
+
+def test_a_level_the_cli_would_refuse_is_a_400_naming_the_axis(client):
+    _bank(client.workdir / "banks", "b")
+    answer = client.post("/api/banks/b/options", json={"traffic": "enormous"})
+    assert answer.status_code == 400
+    assert "traffic" in answer.json()["detail"]
+    # An axis that is not one is caught before it reaches the manifest: `extra="forbid"` on the
+    # request model, so the page cannot invent a seventh dropdown.
+    assert client.post("/api/banks/b/options", json={"weather": "high"}).status_code == 422
+    assert client.post("/api/banks/b/options", json={}).status_code == 400
+
+
+@pytest.mark.parametrize("bank", ["..", "../etc", ".hidden"])
+def test_a_bank_name_that_is_not_a_name_never_becomes_a_path_on_the_options_write(client, bank):
+    # Same guard as every other bank-addressed route: the shape of the name is checked before it
+    # touches the filesystem, rather than checking where the path landed afterwards.
+    answer = client.post(f"/api/banks/{bank}/options", json={"traffic": "low"})
+    assert answer.status_code in (400, 404)
 
 
 @pytest.mark.parametrize("scenario", [".ssh", "-lead", "a b"])

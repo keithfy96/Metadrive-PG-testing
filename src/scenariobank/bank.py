@@ -38,12 +38,16 @@ from scenariobank.categories import (
     CATEGORIES,
     SEEDS,
     Category,
+    CategoryError,
     ExitRule,
+    composed_name,
     get_category,
     step_budget,
+    validate_block_seq,
 )
 from scenariobank.config import base_config
 from scenariobank.handedness import DRIVE_SIDE_LEFT
+from scenariobank.options import AXES, LEVEL_NAMES, Level
 from scenariobank.sockets import (
     SocketError,
     read_sockets_from_env,
@@ -53,14 +57,15 @@ from scenariobank.sockets import (
 )
 
 #: Bumped when a reader would break. The runner validates against it rather than duck-typing.
-SCHEMA_VERSION = "1.1"
+SCHEMA_VERSION = "1.2"
 
 #: Every version this build can read. 1.1 added the three optional per-scenario overrides below,
 #: so a 1.0 manifest is a 1.1 one that overrides nothing and the banks already on disk keep
-#: opening. The reverse does not hold -- `extra="forbid"` means a 1.0 reader refuses a row that
-#: declares its own budget -- which is why the number moved rather than the fields being slipped
-#: in quietly under the old one.
-READABLE_VERSIONS = ("1.0", "1.1")
+#: opening; 1.2 added `options`, so a 1.1 manifest is a 1.2 one that pins nothing. The reverse
+#: does not hold -- `extra="forbid"` means a 1.0 reader refuses a row that declares its own
+#: budget, and a 1.1 reader refuses a manifest that declares option levels -- which is why the
+#: number moved rather than the fields being slipped in quietly under the old one.
+READABLE_VERSIONS = ("1.0", "1.1", "1.2")
 
 #: Where thumbnails go, relative to the bank root. Stored in the manifest as a relative path so
 #: a bank directory can be moved or mounted anywhere.
@@ -161,6 +166,32 @@ class CategoryEntry(BaseModel):
         return self.max_steps if row.max_steps is None else row.max_steps
 
 
+class OptionLevels(BaseModel):
+    """The six option axes at their declared levels. All `none` is a bank that pins nothing.
+
+    **Declared run intent, not generation truth.** `base_config` records what generation actually
+    used -- `traffic_density: 0.0`, `accident_prob: 0.0`, and they stay there at zero -- because a
+    thumbnail and a route are what generation produced and no option changes either: the map
+    renderer draws no objects, and object placement runs at a lower priority than the map. This
+    block records what *runs* of this bank should use, which is why setting it is a manifest write
+    and not a rebuild. Pinning options at generation time would mean regenerating a bank to change
+    a traffic level, which is the cost this exists to avoid.
+
+    **A default, not a lock.** A run flag overrides what is pinned here, and the result records the
+    expanded options, so an override is visible in the artifact afterwards. Phase 4b's calibration
+    sweeps one axis across one bank, which a manifest that refused overrides would make impossible.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    traffic: Level = "none"
+    cones: Level = "none"
+    barriers: Level = "none"
+    pedestrians: Level = "none"
+    cyclists: Level = "none"
+    lights: Level = "none"
+
+
 class SimulatorInfo(BaseModel):
     """Which MetaDrive built this bank. Information only -- nothing refuses on it."""
 
@@ -177,7 +208,7 @@ class Manifest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["1.0", "1.1"]
+    schema_version: Literal["1.0", "1.1", "1.2"]
     bank_id: str
     created_utc: str
     metadrive: SimulatorInfo
@@ -188,6 +219,9 @@ class Manifest(BaseModel):
     #: Recorded so the drive side is a stated fact in the file rather than an assumption. It is
     #: also *measured* from every map during generation; a bank that says `left` was checked.
     drive_side: str
+    #: The option levels runs of this bank default to. Absent from a 1.0 or 1.1 manifest, which
+    #: reads as every axis at `none` -- the same state as a bank that was asked and pinned nothing.
+    options: OptionLevels = OptionLevels()
     categories: dict[str, CategoryEntry]
 
 
@@ -407,6 +441,10 @@ def generate(
         metadrive=_simulator_info(),
         base_config=_stored_config(),
         drive_side=DRIVE_SIDE_LEFT,
+        # A new bank pins nothing. Generation stays option-free on purpose: no flag here sets an
+        # axis, so what `base_config` records is what was actually built, and the levels are set
+        # afterwards by an edit that constructs no environment.
+        options=OptionLevels(),
         categories={
             name: CategoryEntry(
                 description=category.description,
@@ -537,23 +575,37 @@ def replace_scenario(
 
 def add_scenario(
     bank_dir: Path,
-    category_name: str,
+    category_name: str | None,
     seed: int,
     *,
+    block_seq: str | None = None,
+    rule: str | None = None,
     thumbnails: bool = True,
     progress: Callable[[str], None] | None = None,
 ) -> ScenarioRow:
-    """Build one more scenario for a category and append it to an existing bank.
+    """Build one more scenario and append it to an existing bank.
 
     **The new id is one past the highest, never `len(scenarios)`.** Removing leaves a gap, so a
     bank that counted rows would eventually re-issue `curve_0002` for a different road -- and an
     id is how a run refers to a scenario and how Phase 5's results are keyed. A re-used id makes
     every recorded one ambiguous; a gap costs nothing, because `_locate` already searches by id.
 
-    A category still in the manifest is built from the **manifest's own entry**, the way
-    `replace_scenario` is. A category the manifest no longer holds -- removed with its last
-    scenario -- is re-created from `categories.py`, because otherwise that removal would be the
-    one edit this tool cannot undo.
+    Three ways to know which road to build, in the order they are tried:
+
+    1. **`block_seq` and `rule`** -- a road composed by hand, filed under `composed_name`, which
+       is the sequence and the rule and nothing else. This is what the studio's road builder
+       sends. A category that does not exist yet is created here, and its `max_steps` is the
+       budget its **first route earns** -- `step_budget` of the length that was just measured,
+       the same number the builder showed as *would earn*.
+    2. **A `category_name` the manifest holds** -- built from the manifest's own entry, the way
+       `replace_scenario` is, so a bank generated before a code change grows the way it was built.
+    3. **A `category_name` this build knows** -- re-created from `categories.py`, because
+       otherwise removing a category's last scenario would be the one edit this tool cannot undo.
+
+    Removing a composed category's last scenario removes it too, and `categories.py` has never
+    heard of it -- so the way back is to compose the same road again. The name is derived, so the
+    same road and rule land in the same category, which is what keeps that an undo rather than a
+    second spelling.
     """
     from metadrive.envs.metadrive_env import MetaDriveEnv
 
@@ -561,36 +613,20 @@ def add_scenario(
     manifest = read_manifest(bank_dir)
     say = progress or (lambda _message: None)
 
-    entry = manifest.categories.get(category_name)
-    if entry is None:
-        known = get_category(category_name)
-        entry = CategoryEntry(
-            description=known.description,
-            block_seq=known.block_seq,
-            exit_rule=known.exit_rule.value,
-            max_steps=known.max_steps,
-            scenarios=[],
-        )
-        manifest.categories[known.name] = entry
-        category_name = known.name
-        say(
-            f"{category_name} was not in this bank, so its road and rule come from this build: "
-            f"{entry.block_seq} / {entry.exit_rule}."
-        )
+    category_name, entry, category = _road_to_add(manifest, category_name, block_seq, rule, say)
 
-    taken = sorted(row.seed for row in entry.scenarios)
+    taken = sorted(row.seed for row in (entry.scenarios if entry else []))
     if seed in taken:
         raise BankError(
             f"seed {seed} is already used by {category_name}: each seed builds one scenario. "
             f"{category_name} currently holds seeds {taken}."
         )
 
-    name = scenario_id(category_name, _next_index(entry))
-    category = _category_for(category_name, entry)
-    env = MetaDriveEnv(base_config(map=entry.block_seq, start_seed=seed, num_scenarios=1))
+    name = scenario_id(category_name, _next_index(entry) if entry else 0)
+    env = MetaDriveEnv(base_config(map=category.block_seq, start_seed=seed, num_scenarios=1))
     try:
-        _reset(env, seed, entry.block_seq)
-        _assert_drive_side(env, entry.block_seq, seed)
+        _reset(env, seed, category.block_seq)
+        _assert_drive_side(env, category.block_seq, seed)
         row, chosen = _measure(
             env, category, seed, read_sockets_from_env(env), int(env.agent.lane_index[2]), name,
         )
@@ -605,6 +641,24 @@ def add_scenario(
     finally:
         env.close()
 
+    if entry is None:
+        # The cap is set *after* measuring, so a composed category is capped by what its own road
+        # earns rather than by a number nobody chose. Every later seed of it is then warned about
+        # against this one, exactly as the eleven shipped categories are.
+        entry = CategoryEntry(
+            description=category.description,
+            block_seq=category.block_seq,
+            exit_rule=category.exit_rule.value,
+            max_steps=step_budget(row.route_length_m),
+            scenarios=[],
+        )
+        manifest.categories[category_name] = entry
+        say(
+            f"{category_name} is new to this bank: {entry.block_seq} driven to the "
+            f"{entry.exit_rule} exit, capped at {entry.max_steps} steps, which is what its "
+            f"first route earns."
+        )
+
     _warn_budget(entry, row, category_name, say)
     entry.scenarios.append(row)
     write_manifest(bank_dir, manifest)
@@ -613,6 +667,97 @@ def add_scenario(
         f"{row.route_length_m:.1f} m  {row.net_rotation_deg:+.1f} deg"
     )
     return row
+
+
+def _road_to_add(
+    manifest: Manifest,
+    category_name: str | None,
+    block_seq: str | None,
+    rule: str | None,
+    say: Callable[[str], None],
+) -> tuple[str, CategoryEntry | None, Category]:
+    """Resolve what `add_scenario` is about to build: its name, its entry, and its road.
+
+    The entry comes back `None` for a category this bank does not hold yet **and** whose road was
+    given here rather than looked up -- the one case whose `max_steps` cannot be known until the
+    route has been measured. Every other case has an entry, and building against it is what makes
+    an edit reproduce the bank rather than this build.
+    """
+    if (block_seq is None) == (category_name is None):
+        raise BankError(
+            "name a category to add to, or give a block sequence and a rule to compose one -- "
+            "not both, and not neither"
+        )
+
+    if block_seq is None:
+        if rule is not None:
+            raise BankError(
+                f"a rule composes a road, so {rule!r} needs a block sequence with it. To point "
+                f"an existing scenario at another exit, that is `replace --exit-rule`."
+            )
+        assert category_name is not None
+        entry = manifest.categories.get(category_name)
+        if entry is not None:
+            return category_name, entry, _category_for(category_name, entry)
+        try:
+            known = get_category(category_name)
+        except CategoryError as error:
+            raise BankError(
+                f"{error}. A road this build does not ship can still be added by composing it: "
+                f"give a block sequence and a rule instead of a name."
+            ) from error
+        # Re-created whole, cap included, from this build's own declaration of it -- not from
+        # what the route happens to earn. A shipped category's `max_steps` is a number somebody
+        # chose, and losing it here would make removing its last scenario a lossy edit.
+        entry = CategoryEntry(
+            description=known.description,
+            block_seq=known.block_seq,
+            exit_rule=known.exit_rule.value,
+            max_steps=known.max_steps,
+            scenarios=[],
+        )
+        manifest.categories[known.name] = entry
+        say(
+            f"{known.name} was not in this bank, so its road and rule come from this build: "
+            f"{known.block_seq} / {known.exit_rule.value}."
+        )
+        return known.name, entry, known
+
+    validate_block_seq(block_seq)
+    if rule is None:
+        raise BankError(
+            f"composing {block_seq!r} needs a rule, because a bare sequence has no category to "
+            f"say which exit to drive to: choose one of "
+            f"{', '.join(member.value for member in ExitRule)}"
+        )
+    try:
+        chosen = ExitRule(rule)
+    except ValueError as error:
+        raise BankError(
+            f"unknown exit rule {rule!r}: choose one of "
+            f"{', '.join(member.value for member in ExitRule)}"
+        ) from error
+
+    name = composed_name(block_seq, chosen)
+    entry = manifest.categories.get(name)
+    if entry is None:
+        return name, None, Category(
+            name=name,
+            block_seq=block_seq,
+            exit_rule=chosen,
+            # Provisional. Replaced by what the first route earns, once there is a route.
+            max_steps=0,
+            description=f"Composed by hand: {block_seq} driven to the {chosen.value} exit.",
+        )
+    # The name is derived from the road and the rule, so these can only disagree in a manifest
+    # somebody edited. Said plainly rather than silently building on the other road.
+    if entry.block_seq != block_seq or entry.exit_rule != chosen.value:
+        raise BankError(
+            f"this bank's {name} is {entry.block_seq} / {entry.exit_rule}, and you asked for "
+            f"{block_seq} / {chosen.value}. A composed category is named after its road and its "
+            f"rule, so those should not differ -- the manifest has been edited by hand."
+        )
+    return name, entry, _category_for(name, entry)
 
 
 def remove_scenario(
@@ -698,6 +843,49 @@ def set_max_steps(
         f"{row.route_length_m:.1f} m route earns {step_budget(row.route_length_m)}."
     )
     return row
+
+
+def set_options(
+    bank_dir: Path,
+    levels: Mapping[str, str],
+    *,
+    progress: Callable[[str], None] | None = None,
+) -> OptionLevels:
+    """Pin some of the bank's option levels. Builds nothing.
+
+    The second edit here in `set_max_steps`'s class: what it changes is *declared* rather than
+    measured off a road, so it is a manifest read and a manifest write and no environment is
+    constructed. Every scenario row, every thumbnail and `base_config` come through untouched --
+    changing a traffic level is not a reason to build 35 roads again, and the whole point of
+    storing intent separately from generation truth is that it never becomes one.
+
+    Only the axes named in `levels` move; the rest keep what the manifest already says. An unknown
+    axis or an unknown level is refused by name, because a typo that silently pinned nothing would
+    be indistinguishable from a bank somebody deliberately left alone.
+    """
+    bank_dir = Path(bank_dir)
+    manifest = read_manifest(bank_dir)
+    say = progress or (lambda _message: None)
+
+    chosen = dict(levels)
+    for axis, level in chosen.items():
+        if axis not in AXES:
+            raise BankError(
+                f"{axis!r} is not an option axis. The six are: {', '.join(AXES)}."
+            )
+        if level not in LEVEL_NAMES:
+            raise BankError(
+                f"{level!r} is not a level for {axis}. The four are: {', '.join(LEVEL_NAMES)}."
+            )
+
+    options = manifest.options.model_copy(update=chosen)
+    manifest = manifest.model_copy(update={"options": options})
+    write_manifest(bank_dir, manifest)
+
+    for axis in AXES:
+        if axis in chosen:
+            say(f"{axis} pinned at {chosen[axis]}")
+    return options
 
 
 def _next_index(entry: CategoryEntry) -> int:
@@ -991,6 +1179,7 @@ __all__ = [
     "BankError",
     "CategoryEntry",
     "Manifest",
+    "OptionLevels",
     "ScenarioNotFound",
     "ScenarioRow",
     "SimulatorInfo",
@@ -1003,5 +1192,6 @@ __all__ = [
     "replace_scenario",
     "scenario_id",
     "set_max_steps",
+    "set_options",
     "write_manifest",
 ]

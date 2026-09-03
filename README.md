@@ -173,8 +173,10 @@ uv run scenariobank inspect -b CCX --rule left --json -o /tmp/ccx.png  # what wa
 
 `--block-seq` is also what the studio's road builder runs: the card under the gallery is a palette
 of the fifteen blocks, and **Draw** is this command with `--json`, whose output adds
-`earned_max_steps` — the budget a category on that road would be given. Nothing drawn this way
-reaches a bank. A road MetaDrive will not build (`fS`, say) is refused in MetaDrive's own words.
+`earned_max_steps` — the budget a category on that road would be given — and `composed_name`, the
+category the road would be filed under if it were added. Drawing reaches no bank; `add
+--block-seq` is what does. A road MetaDrive will not build (`fS`, say) is refused in MetaDrive's
+own words.
 
 Draws the road network in grey with the **pinned route in red**, a blue arrow at the spawn pose
 and a green star at the destination. Headless — no display, no window, no image buffer. The route
@@ -226,6 +228,24 @@ Regenerate it after any MetaDrive bump. That is how a change in block geometry b
 instead of silently changing what the bank means.
 
 **Writes:** `docs/reference/destinations.md` (or `--out`). Overwrites in place.
+
+### `add` — one more scenario, or a road of your own
+
+```bash
+uv run scenariobank add --bank ./banks/b -c t_junction -s 7
+uv run scenariobank add --bank ./banks/b -b CCX --rule sharpest -s 0
+```
+
+Appends one scenario to an existing bank. With `--category` the road and the rule come from the
+bank's own manifest, so a bank grows the way it was built. With `--block-seq` and `--rule` the
+road is composed on the spot and **its category is named after it** — `CCX` at `sharpest` is
+`CCX_sharpest`, always, so the same road never arrives twice under two names and nothing has to
+be invented for a one-off. A category created that way is capped at what its first route earns.
+
+The new id is one past the highest, never the row count: removing leaves a gap, and re-using an
+id would make every result already keyed on it ambiguous.
+
+**Writes:** the bank's `manifest.json`, and one thumbnail unless `--no-thumbnails`.
 
 ### `generate` — write a bank
 
@@ -308,6 +328,31 @@ that would overrun the category's `max_steps` is written with a warning on stder
 `categories.py`, so a bank generated before a code change is still correctable afterwards.
 
 **Writes:** `<bank>/manifest.json`, and that scenario's thumbnail.
+
+### `options` — pin the levels runs of this bank use
+
+Flags: [`docs/reference/commands.md`](docs/reference/commands.md#options).
+
+```bash
+uv run scenariobank options --bank ./banks/b --traffic medium --pedestrians low
+uv run scenariobank options --bank ./banks/b --show
+```
+
+Six axes — `traffic`, `cones`, `barriers`, `pedestrians`, `cyclists`, `lights` — each at `none`,
+`low`, `medium` or `high`. **They are applied when a run happens, not when the bank was built.**
+The map is generated before any object is placed and a thumbnail draws lanes rather than objects,
+so the roads, the routes and the pictures are identical at every level. What is stored here is
+*declared intent*, and changing it is a manifest edit in the same class as `budget` — nothing is
+rebuilt, no scenario row moves, and `base_config` keeps recording what generation actually used
+(`traffic_density: 0.0`, `accident_prob: 0.0`).
+
+That separation is the whole point. Pinned at generation time instead, changing a traffic level
+would mean regenerating every scenario in the bank. Pinned as intent, it is one field.
+
+The pin is a **default, not a lock**: a run flag still overrides it, and the result records the
+levels actually used, so an override stays visible in the artifact afterwards.
+
+**Writes:** `<bank>/manifest.json`. Nothing else.
 
 ### `scripts/bank-check.sh` — the one command CI and a human both run
 

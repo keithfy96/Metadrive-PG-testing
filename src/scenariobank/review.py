@@ -27,8 +27,9 @@ from collections.abc import Sequence
 
 from pydantic import BaseModel, ConfigDict
 
-from scenariobank.bank import CategoryEntry, Manifest, ScenarioRow
+from scenariobank.bank import CategoryEntry, Manifest, OptionLevels, ScenarioRow
 from scenariobank.categories import step_budget
+from scenariobank.options import AXES
 
 #: Below this gap, two scenarios of one category are reported as near-duplicates rather than as two
 #: scenarios. Measured, not chosen: `curve` seeds 0 and 4 sit at 0.071 and are visibly the same
@@ -229,6 +230,10 @@ class Report(BaseModel):
     bank_id: str
     total: int
     distinct: int
+    #: What runs of this bank default to, as a sentence. Written here rather than in the CLI and
+    #: the page separately, for the same reason the warnings are: two renderers describing one
+    #: manifest would be two places for the description to go wrong.
+    options_line: str
     categories: list[CategoryReview]
 
 
@@ -451,6 +456,22 @@ def review_category(name: str, entry: CategoryEntry) -> CategoryReview:
     )
 
 
+def describe_options(options: OptionLevels) -> str:
+    """The bank's pinned option levels, as one line.
+
+    Names only what is set. A bank with five axes at `none` and one at `medium` is a bank with one
+    interesting fact about it, and listing the five zeroes would bury it.
+    """
+    levels = options.model_dump()
+    pinned = [(axis, levels[axis]) for axis in AXES if levels[axis] != "none"]
+    if not pinned:
+        return "pins no option levels: every axis is none"
+    named = [f"{axis}={level}" for axis, level in pinned]
+    if len(pinned) < len(AXES):
+        named.append("everything else none")
+    return f"runs at {', '.join(named)}"
+
+
 def review(manifest: Manifest) -> Report:
     """Review a whole bank. Pure: no filesystem, no environment, no simulator."""
     categories = [review_category(name, entry) for name, entry in manifest.categories.items()]
@@ -461,6 +482,7 @@ def review(manifest: Manifest) -> Report:
         # declaration -- different road, different exit rule -- so a cross-category gap would be a
         # number with no meaning behind it.
         distinct=sum(one.duplicates.distinct for one in categories),
+        options_line=describe_options(manifest.options),
         categories=categories,
     )
 

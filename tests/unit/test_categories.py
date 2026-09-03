@@ -9,6 +9,7 @@ from scenariobank.categories import (
     VALID_BLOCK_IDS,
     CategoryError,
     ExitRule,
+    composed_name,
     get_category,
     step_budget,
     validate_block_seq,
@@ -66,6 +67,43 @@ def test_the_three_intersection_categories_share_one_road_and_differ_only_in_rul
     intersections = [c for name, c in CATEGORIES.items() if name.startswith("intersection_")]
     assert {c.block_seq for c in intersections} == {"X"}
     assert len({c.exit_rule for c in intersections}) == 3
+
+
+def test_a_composed_road_is_named_after_the_road_and_the_rule():
+    """The name has to be derivable, because that is what makes it not an invented name.
+
+    Composed twice by two people, `CCX` at `sharpest` has to be one category rather than two
+    spellings of one -- so the name is a function of the road and the rule and of nothing else.
+    """
+    assert composed_name("CCX", ExitRule.SHARPEST) == "CCX_sharpest"
+    assert composed_name("CCX", "sharpest") == "CCX_sharpest"
+    # Case carries meaning: `r` is the on-ramp and `R` the off-ramp. Folding them together would
+    # file two different roads under one name.
+    assert composed_name("rS", ExitRule.ONLY) != composed_name("RS", ExitRule.ONLY)
+    with pytest.raises(CategoryError, match="unknown block id"):
+        composed_name("Z", ExitRule.ONLY)
+
+
+def test_the_toll_gate_is_spelled_out_rather_than_dropped_from_a_name():
+    # `$` is the one id that is not a letter, and a name is a directory-safe key. Removing it
+    # would make `$S` and `S` the same category.
+    assert composed_name("$S", ExitRule.ONLY) == "tollS_only"
+    assert composed_name("$S", ExitRule.ONLY) != composed_name("S", ExitRule.ONLY)
+
+
+def test_every_composed_name_is_one_the_studio_can_serve():
+    """A scenario id becomes a URL segment and a PNG filename, so the name has to survive both."""
+    from scenariobank.web.api import _NAME
+
+    for block in BLOCKS:
+        for rule in ExitRule:
+            name = composed_name(block.id, rule)
+            assert _NAME.match(name), name
+            assert _NAME.match(f"{name}_0000")
+    # And it can never collide with a shipped category: those are words, these end in `_<rule>`
+    # after a run of block ids.
+    assert not any(name in CATEGORIES for name in
+                   (composed_name(b.id, r) for b in BLOCKS for r in ExitRule))
 
 
 def test_asking_for_a_category_that_does_not_exist_lists_the_ones_that_do():

@@ -155,6 +155,28 @@ def validate_block_seq(block_seq: str, *, category: str | None = None) -> None:
         )
 
 
+#: The one block id that is not a letter. Spelled out rather than dropped, because a name with the
+#: character removed would make `$S` and `S` the same category. No block is spelled with a
+#: lower-case `t`, `o` or `l`, so the substitution cannot collide with a real sequence.
+_SPELLED: dict[str, str] = {"$": "toll"}
+
+
+def composed_name(block_seq: str, rule: ExitRule) -> str:
+    """The category name a road composed by hand is filed under: the sequence, then the rule.
+
+    Derived rather than typed, so the name **is** the road and the rule and cannot drift from
+    what it describes: the same road composed twice, by two people, gets one category rather
+    than two spellings of one. It is also why nothing has to be invented for a one-off.
+
+    Case is kept: `r` is the on-ramp and `R` the off-ramp, and folding them together would file
+    two different roads under one name. The result always matches the studio's name pattern, so
+    a scenario id built from it stays servable as a URL segment.
+    """
+    validate_block_seq(block_seq)
+    spelled = "".join(_SPELLED.get(char, char) for char in block_seq)
+    return f"{spelled}_{ExitRule(rule).value}"
+
+
 #: **A seed does not always mean a different road.** Measured by `lane_geometry_digest` over
 #: seeds 0-4: `X` produces **one** road, `T` produces **two**, and the other seven sequences
 #: produce five each -- 38 distinct roads across the 55 scenarios. `StdInterSection` has a fixed

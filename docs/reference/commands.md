@@ -20,6 +20,7 @@ Every command is `uv run scenariobank <command>`.
 | see which exits a road offers | [`sockets`](#sockets) |
 | check which simulator this is | [`doctor`](#doctor) |
 | re-measure the destinations reference | [`destinations`](#destinations) |
+| set the traffic level once instead of on every run | [`options`](#options) |
 | do all of that by looking rather than typing | [`studio`](#studio) |
 
 **Changing one scenario does not mean rebuilding the bank.** `replace` rebuilds exactly
@@ -97,12 +98,14 @@ Draw the pinned route over the road network, so the turn can be seen rather than
 `--block-seq` draws any sequence at any seed, including ones no category uses -- which is how
 you look at a candidate seed before committing it to `generate --seeds`, and what the studio's
 road builder runs. It needs `--rule`, because a bare sequence has no category to say which
-exit to drive to. Nothing drawn this way reaches a manifest; a bank always holds exactly the
-eleven categories.
+exit to drive to. Drawing writes no manifest: a road reaches a bank only through `add
+--block-seq`, which files it under a name derived from the road and the rule. `generate`
+still builds the eleven and only the eleven.
 
 `--json` adds `earned_max_steps`: the budget a category on this road would be given, from
 the same `step_budget` the eleven shipped ones were. It is the number to have in hand when
-deciding whether a road drawn here deserves to become a twelfth.
+deciding whether a road drawn here deserves to become a twelfth. With `--block-seq` it also
+adds `composed_name`, the category `add --block-seq` would file this road under.
 
 | flag | | repeats | meaning |
 |---|---|---|---|
@@ -269,26 +272,35 @@ uv run scenariobank replace --bank ./banks/b --scenario t_junction_0002 --destin
 
 ### `add`
 
-Add one more scenario to a category of an existing bank.
+Add one more scenario to a bank: to a category it holds, or to a road you compose.
 
 **The id is one past the highest, never the row count.** Removing leaves a gap, and re-using
 an id would make every result already keyed on it ambiguous. So a `t_junction` holding
 `_0000` to `_0004` gains `t_junction_0005` even if one of those five is missing.
 
-The road and the rule come from the bank's own manifest, so a bank generated before a code
-change grows the way it was built. A category this bank no longer holds is re-created from
-this build's `categories.py`, which is what makes removing a category's last scenario an
-edit you can undo.
+With `--category`, the road and the rule come from the bank's own manifest, so a bank
+generated before a code change grows the way it was built. A category this bank no longer
+holds is re-created from this build's `categories.py`, which is what makes removing a
+category's last scenario an edit you can undo.
+
+With `--block-seq` and `--rule` the road is composed here, and **its category is named after
+it**: `CCX` driven to the `sharpest` exit is `CCX_sharpest`, always, so the same road never
+arrives twice under two names. A category created this way is capped at what its first route
+earns -- `step_budget` of the length just measured, the number `inspect --json` reports as
+`earned_max_steps`. This is what the studio's road builder runs behind **Add to bank**.
 
 | flag | | repeats | meaning |
 |---|---|---|---|
 | `--bank <path>` | **required** |  | Bank directory holding the manifest to edit. |
-| `--category/-c <str>` | **required** |  | Which category to add a scenario to. One of: `intersection_left`, `intersection_right`, `intersection_straight`, `t_junction`, `roundabout`, `curve`, `ramp_traffic_merge`, `off_ramp_hold`, `lane_merge`, `lane_split`, `tollgate`. |
 | `--seed/-s <int>` | **required** |  | Seed to build it at. Any non-negative integer. |
+| `--category/-c <str>` | optional |  | Which category to add a scenario to. One of: `intersection_left`, `intersection_right`, `intersection_straight`, `t_junction`, `roundabout`, `curve`, `ramp_traffic_merge`, `off_ramp_hold`, `lane_merge`, `lane_split`, `tollgate`. |
+| `--block-seq/-b <str>` | optional |  | Compose a road instead of naming a category. Any string of these 15 block ids: `C` curve, `S` straight, `r` on-ramp, `R` off-ramp, `X` crossroads, `T` T junction, `O` roundabout, `f` fork in, `F` fork out, `y` lane merge, `Y` lane split, `P` parking lot, `$` toll gate, `B` two-way road, `U` crossroads with U-turn. `I` is prepended automatically and is never written into a sequence. |
+| `--rule <str>` | optional |  | Which exit to drive to. Required with --block-seq. One of: `only`, `left`, `right`, `straight`, `sharpest`. |
 | `--thumbnails/--no-thumbnails` | default `true` |  | Draw the new scenario's PNG. |
 
 ```bash
-uv run scenariobank add --bank ./banks/b -c t_junction -s 7  # a sixth t_junction, numbered past the highest id
+uv run scenariobank add --bank ./banks/b -c t_junction -s 7           # a sixth t_junction, numbered past the highest id
+uv run scenariobank add --bank ./banks/b -b CCX --rule sharpest -s 0  # a road composed by hand, filed as CCX_sharpest
 ```
 
 ### `remove`
@@ -332,6 +344,35 @@ the one setting here that can leave a scenario unfinishable, and the warning say
 ```bash
 uv run scenariobank budget --bank ./banks/b --scenario curve_0003 --max-steps 500  # a tighter cap on one scenario, no rebuild
 uv run scenariobank budget --bank ./banks/b --scenario curve_0003 --inherit        # back to the category's cap
+```
+
+### `options`
+
+Pin the option levels runs of this bank default to. Builds nothing.
+
+**These are applied when a run happens, not when the bank was built.** The roads, the routes
+and the thumbnails are the same at every level -- the map is generated before any object is
+placed, and the thumbnail draws lanes rather than objects -- so what is set here is *declared
+intent* and changing it is a manifest edit, in the same class as `budget`. Pinning options at
+generation time instead would mean regenerating 35 scenarios to change a traffic level.
+
+Set once, here, rather than typed into every run. A run flag still overrides what is pinned,
+and the result records the levels it actually used, so an override stays visible afterwards.
+
+| flag | | repeats | meaning |
+|---|---|---|---|
+| `--bank <path>` | **required** |  | Bank directory holding the manifest to edit. |
+| `--traffic <str>` | optional |  | Moving traffic level runs of this bank default to. One of: `none`, `low`, `medium`, `high`. Applied when a run happens, not when the bank was built. |
+| `--cones <str>` | optional |  | Coned-off lanes level runs of this bank default to. One of: `none`, `low`, `medium`, `high`. Applied when a run happens, not when the bank was built. |
+| `--barriers <str>` | optional |  | Barriers and breakdowns level runs of this bank default to. One of: `none`, `low`, `medium`, `high`. Applied when a run happens, not when the bank was built. |
+| `--pedestrians <str>` | optional |  | People on foot level runs of this bank default to. One of: `none`, `low`, `medium`, `high`. Applied when a run happens, not when the bank was built. |
+| `--cyclists <str>` | optional |  | People on bikes level runs of this bank default to. One of: `none`, `low`, `medium`, `high`. Applied when a run happens, not when the bank was built. |
+| `--lights <str>` | optional |  | Traffic lights level runs of this bank default to. One of: `none`, `low`, `medium`, `high`. Applied when a run happens, not when the bank was built. |
+| `--show` | default `false` |  | Print the levels this bank pins and change nothing. |
+
+```bash
+uv run scenariobank options --bank ./banks/b --traffic medium --pedestrians low  # pin two axes; nothing is rebuilt
+uv run scenariobank options --bank ./banks/b --show                              # what this bank pins
 ```
 
 ### `commands`

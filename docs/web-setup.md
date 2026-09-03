@@ -129,11 +129,38 @@ category on this road would be given from the same `step_budget` formula as the 
 ones. That last number is the one to have in hand when deciding whether a road drawn here
 deserves to become a twelfth type.
 
-**It is a preview and nothing more.** A road drawn here is not a bank row: a row needs a category
-name and a manifest entry, and inventing names for one-offs is how a bank stops meaning
-anything. Nothing on this card touches a bank. It is the escape hatch for everything the eleven
-types left out — a fork, a parking lot, a two-way road, a crossroads with a U-turn — and the
-place to watch them fail honestly.
+**Drawing writes nothing. Adding does.** Under the facts is a bank to add to and an **Add to
+bank** button, which runs the same `add` a terminal would:
+
+```
+scenariobank add --bank banks/pg-bank-2026-09 --block-seq CCX --rule sharpest --seed 0
+```
+
+**The category is named after the road and the rule**, never typed: `CCX` driven to the
+`sharpest` exit is `CCX_sharpest`, always. That is what keeps "no invented names for one-offs"
+true while still letting a road in — the same road composed twice by two people is one category
+rather than two spellings of one. The toll gate's `$` is spelled `toll`, because a name is also a
+directory entry and a URL segment, and dropping the character would make `$S` and `S` the same
+category. `categories.composed_name` owns that spelling and `inspect --json` reports it, so the
+card never guesses at it.
+
+**One press adds one scenario**, the seed on screen. The category it creates is capped at what
+that first route earns — the *would earn* number, from `step_budget` — and after that it is an
+ordinary category: it appears in the bank, in `review`, in the comparison panel, and the Bank
+tab's **Add another** grows it a seed at a time. Two things it does not get, both because
+`categories.py` has never heard of it: a picture in the Build gallery, and a seed ranking. **Find
+a better seed** says so rather than ranking against the wrong road.
+
+One caution the `tollgate` category already records: `step_budget` assumes 6 m/s, and a toll
+plaza holds its lanes to 3 m/s. A composed `$S` is therefore capped optimistically, and its own
+cap can be raised on the Bank tab without rebuilding anything.
+
+Removing a composed category's last scenario removes the category, and this build cannot re-create
+it from `categories.py`. Composing the same road again is the way back, and lands under the same
+name — which is the point of deriving it.
+
+It is still the escape hatch for everything the eleven shipped types left out — a fork, a parking
+lot, a two-way road, a crossroads with a U-turn — and the place to watch them fail honestly.
 
 **Failing honestly** means the command's own words, not a spinner. Two kinds of refusal reach
 the card. The rule can find no exit: `CCX` at rule `left` is refused with `no exit near +90
@@ -187,7 +214,8 @@ Three endpoints behind it, and nothing else:
 | `GET /api/banks/{bank}/review` | what is in it: duplicates, coverage, step budgets and spread — computed, never stored |
 | `GET /api/banks/{bank}/compare?left=&right=` | two of its scenarios read against each other |
 | `GET /api/looks/{name}.png` | a candidate seed drawn by `inspect`, before it is committed to anything |
-| `POST /api/banks/{bank}/scenarios/{id}/budget` | set or clear one scenario's own `max_steps` — the only write here that is not a job |
+| `POST /api/banks/{bank}/scenarios/{id}/budget` | set or clear one scenario's own `max_steps` — one of the two writes here that are not jobs |
+| `POST /api/banks/{bank}/options` | pin some of the bank's option levels — the other |
 
 The manifest is returned unshaped. It was written to explain itself — "declare the intent, store
 the fact" — so a studio that reformatted it here would be inventing a second description of a bank
@@ -203,6 +231,29 @@ Two states that are not errors, and say so:
 
 `generate --no-thumbnails` is a supported way to build a bank, so a card with no picture says
 "built without a thumbnail" rather than showing a broken image.
+
+## The option levels, above the scenarios
+
+The first card on an open bank is six dropdowns: `traffic`, `cones`, `barriers`, `pedestrians`,
+`cyclists`, `lights`, each at `none`, `low`, `medium` or `high`. They save the moment you change
+one, and the equivalent `scenariobank options` line is printed underneath, as every other screen
+here prints the command it is a way of typing.
+
+**Nothing on this screen changes when you change one**, and that is not a bug in the page. These
+are applied when a run happens, not when the bank was built: the map is generated before any
+object is placed, and a thumbnail draws lanes rather than objects, so the pictures and the routes
+are identical at every level. What is stored is *declared intent*, which is why setting it writes
+one field of the manifest and starts no job — the same class of edit as a step budget, and for the
+same reason. Pinned at generation time instead, changing a traffic level would mean rebuilding
+every scenario in the bank.
+
+The card's heading carries the sentence `review.py` writes — *runs at traffic=medium,
+pedestrians=low, everything else none* — rather than one this page composes, so `scenariobank
+review` and the studio cannot describe one bank two different ways. The six axes and their four
+levels are read off the `options` command's own flags through `/api/commands`, so the page cannot
+offer an axis the CLI does not have.
+
+It is a **default, not a lock**: a run flag still overrides it.
 
 ## What is actually in a bank
 
@@ -423,14 +474,34 @@ reader forbids extra keys — which is why the number moved rather than the fiel
 quietly. A 1.0 bank that this build edits is written back as 1.1: the version describes the shape
 of the file, not the history of the bank.
 
+### Schema 1.2
+
+`options` joined the manifest at its top level — six axes, all `none` on a bank that pins nothing:
+
+```json
+{ "options": { "traffic": "medium", "cones": "none", "barriers": "none",
+               "pedestrians": "low", "cyclists": "none", "lights": "none" } }
+```
+
+It sits beside `base_config` rather than inside it, and the difference between the two is the
+design: `base_config` records what generation **used** — `traffic_density: 0.0`,
+`accident_prob: 0.0`, and they stay at zero — while `options` records what runs of this bank
+should **default to**. Changing the first would mean rebuilding the bank; changing the second is
+one field.
+
+**1.1 banks still open**, and read as every axis at `none` — the floor rather than an absence, so
+"never set" and "set to zero" are one state. A 1.1 bank this build edits comes back stamped 1.2,
+for the reason 1.0 banks come back 1.1.
+
 ## What it will and will not do to your files
 
 - **Reads** `--banks-root` for directories holding a `manifest.json`, and serves thumbnails from
   inside them.
 - **Writes** under `.studio/` (job logs, and the candidate seeds **Look** draws), and into
   whatever a command you ran was told to write — `generate -o ./banks/b` writes a bank, exactly as
-  it would from a terminal, and **Use this seed** rewrites one row of one manifest and redraws its
-  thumbnail. `.studio/` is gitignored and disposable: a job is re-runnable, so nothing in it is
+  it would from a terminal, **Use this seed** rewrites one row of one manifest and redraws its
+  thumbnail, **Add to bank** appends one scenario to the bank you picked from the list, and the
+  option dropdowns rewrite one field of one manifest and rebuild nothing. `.studio/` is gitignored and disposable: a job is re-runnable, so nothing in it is
   worth keeping.
 - **Deletes** exactly two things, both of them yours to ask for: **Remove this one** deletes a
   scenario's thumbnail with its row, and a rebuild deletes a thumbnail it did not redraw. A picture
@@ -515,8 +586,8 @@ done. Currently live:
     one; manifest schema 1.1
 11. four more scenario types — `off_ramp_hold`, `lane_merge`, `lane_split` and `tollgate`, so the
     gallery is eleven cards and a full bank is 55 scenarios
-12. the road builder — any block sequence, an exit rule and a seed, drawn and measured without
-    touching a bank
+12. the road builder — any block sequence, an exit rule and a seed, drawn and measured, and
+    added to a bank under a name derived from the road and the rule
 
 Still to come are the road utilities and submitting a run to the queue. See
 **Phase 2c** in `IMPLEMENTATION_PLAN.md`.

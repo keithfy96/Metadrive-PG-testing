@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from scenariobank.bank import CategoryEntry, Manifest, ScenarioRow
+from scenariobank.bank import CategoryEntry, Manifest, OptionLevels, ScenarioRow
 from scenariobank.handedness import DRIVE_SIDE_LEFT
 from scenariobank.review import (
     DISTINCT,
@@ -22,6 +22,7 @@ from scenariobank.review import (
     NEAR_DUPLICATE_VERDICT,
     SAME_DRIVE,
     compare,
+    describe_options,
     find,
     gap,
     review,
@@ -457,3 +458,37 @@ def test_a_lane_only_pair_names_both_lanes():
     answer = compare(manifest, "intersection_left_0000", "intersection_left_0001")
     assert answer.verdict == SAME_DRIVE
     assert "lane 1" in answer.summary and "lane 0" in answer.summary
+
+
+# ------------------------------------------------- what the bank pins, as a sentence
+
+
+def test_a_bank_that_pins_nothing_says_so_rather_than_listing_six_zeroes():
+    assert describe_options(OptionLevels()) == "pins no option levels: every axis is none"
+
+
+def test_the_option_line_names_only_what_is_set():
+    """A bank with one axis above `none` has one interesting fact about it, and five zeroes
+    around it would bury it. Written here rather than in the CLI and the page separately, so the
+    two cannot describe one manifest differently."""
+    line = describe_options(OptionLevels(traffic="medium", pedestrians="low"))
+    assert line == "runs at traffic=medium, pedestrians=low, everything else none"
+    assert "cones" not in line
+
+    every = OptionLevels(traffic="high", cones="low", barriers="low",
+                         pedestrians="low", cyclists="low", lights="low")
+    assert describe_options(every).endswith("lights=low"), "nothing is left over to mention"
+
+
+def test_the_review_carries_the_line_so_the_page_does_not_write_its_own():
+    manifest = Manifest(
+        schema_version="1.2",
+        bank_id="b",
+        created_utc="2026-09-04T00:00:00Z",
+        metadrive={"edition": None, "dist_version": None, "commit": None, "asset_version": None},
+        base_config={},
+        drive_side=DRIVE_SIDE_LEFT,
+        options=OptionLevels(traffic="medium"),
+        categories={"curve": entry([row("c0", 0, pairs="LL")])},
+    )
+    assert review(manifest).options_line == "runs at traffic=medium, everything else none"

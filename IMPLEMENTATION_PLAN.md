@@ -303,7 +303,25 @@ A run is one permutation of that form applied across whichever maps are ticked.
 **Bank (35 rows per batch):** `category`, `seed`, `block_seq`, `destination`,
 `spawn_lane_index`, `max_steps`, thumbnail. Written once per batch, then disposable.
 
-**Options (per run):** the six axes. They are never part of a bank row.
+**Options (per run):** the six axes. They are never part of a bank **row** — and since
+2026-09-04 a bank *does* carry them, once, at the top of its manifest (`manifest.options`, schema
+1.2, `scenariobank options`).
+
+The reversal is narrower than it looks, and rests on a distinction this section had not drawn:
+
+| | what it is | changing it costs |
+|---|---|---|
+| `manifest.base_config` | generation **truth**: `traffic_density: 0.0`, `accident_prob: 0.0`, and they stay there | rebuilding every scenario and every thumbnail |
+| `manifest.options` | declared **intent** for runs of this bank | one field of one JSON file |
+
+Pinning options at *generation* time would bake the cross-product this section rejects below, and
+would make changing a traffic level a reason to regenerate 35 scenarios. Pinned as intent, it is a
+manifest edit in `budget`'s class: nothing is built, no row moves, and `base_config` still records
+what generation actually used. The pin is a **default, not a lock** — a run flag overrides it, and
+the result records the expanded levels, which is what keeps Phase 4b's single-axis sweep possible.
+Per-category and per-scenario overrides are deliberately not built, for the cross-product reason
+below; the resolver is `options_for(entry, row)` from the start so adding one later changes no
+call site.
 
 **Results:** each row carries the map row *and* the options fully expanded — level name *and*
 resolved numeric — so a result is self-describing without the options file beside it.
@@ -323,6 +341,19 @@ It holds structurally — `Randomizable.__init__` hands every manager its *own* 
 One coupling to preserve: `traffic_manager.py:253` excludes `object_manager.accident_lanes` from
 vehicle spawning. Our obstacle manager must publish the same attribute and carry `PRIORITY = 9`
 (mirroring `TrafficObjectManager`), so traffic still avoids spawning on top of an obstacle field.
+
+**Corrected 2026-09-04, after reading the pinned commit:** "our obstacle manager" is mostly not
+ours. `TrafficObjectManager` (`metadrive/manager/object_manager.py`) already *is* it — `PRIORITY =
+9`, driven by `accident_prob`, drawing every choice from `self.np_random`, publishing
+`accident_lanes`, placing `TrafficCone`/`TrafficBarrier`/`TrafficWarning`, with `get_state`/
+`set_state` for record-replay — and `metadrive_env.py:296-300` already registers it only when
+`accident_prob > 1e-2`. Traffic is likewise `PGTrafficManager` entire. So the reproducibility
+argument above rests on MetaDrive's code at the pinned commit for four of the six axes, exactly as
+the map does. **`actors.py` is the only placement code that is ours**, because MetaDrive ships
+`Pedestrian` and `Cyclist` as objects but nothing that decides where they walk on a PG map: there
+is no pedestrian policy in `policy/`, and the only manager that spawns them replays a logged
+trajectory from a recorded dataset, which a procedural road does not have. See `options.py` for
+the full survey.
 
 ### The levels
 
@@ -393,18 +424,54 @@ full of it collides." That matters for Phase 4b.
 
 ### New modules
 
-**`src/scenariobank/obstacles.py` — `ObstacleManager(BaseManager)`** (cones, barriers)
+**`src/scenariobank/obstacles.py`** (cones, barriers) — *rewritten 2026-09-04. Do not write a
+manager from scratch: MetaDrive already ships this one, and the description below was a restatement
+of it.*
 
-- `PRIORITY = 9`; publishes `accident_lanes`.
-- Spawn in `reset()` via `self.spawn_object(...)` so the inherited `before_reset` cleans up. Going
-  through `engine.spawn_object` directly trips `_object_clean_check` (`base_engine.py:645-657`) with
-  `AssertionError: You should clear all generated objects...` on the next reset.
-- Draw from **`self.np_random`**, never `engine.np_random` — the engine stream is consumed by every
-  other manager's `spawn_object` call and is therefore sensitive to spawn ordering.
-- `accident_prob` stays `0.0` permanently, so `TrafficObjectManager` is never registered and cannot
-  compete for the `object_manager` name.
+`TrafficObjectManager` (`metadrive/manager/object_manager.py`) is `PRIORITY = 9`, is driven by
+`global_config["accident_prob"]`, draws every choice from `self.np_random`, publishes
+`accident_lanes`, places `TrafficCone` / `TrafficBarrier` / `TrafficWarning`, and has
+`get_state`/`set_state`. `metadrive_env.py:296-300` already registers it **only** when
+`accident_prob > 1e-2` — the conditional registration Phase 4's build list proposed to invent. So
+the cones and barriers axes are a number, not a manager.
+
+The one thing to write is a **subclass**, and only to separate the two axes: stock MetaDrive drives
+both from `accident_prob` and splits internally at `PROHIBIT_SCENE_PROB = 0.67` between a cone
+corridor and a barrier/breakdown scene. Override `reset()` to choose `prohibit_scene` (cones) or
+`barrier_scene` (barriers) per axis; the placement maths is reused whole.
+
+Three facts to carry in rather than rediscover:
+
+- `break_down_scene` **spawns a vehicle**, so `cones` above `none` puts cars on the road even at
+  `traffic=none`. Phase 4b's calibration has to account for that or the axes are not independent.
+- Accidents are placed only on `Straight`, `Curve`, `InRampOnStraight`, `OutRampOnStraight`
+  (`object_manager.py:51-53`) — the cause of the `X`/`T`/`O` trap already recorded in **Traps**.
+- Its own floor is `abs(accident_prob) < 1e-2`, the same shape as the traffic one.
+
+The old note that `accident_prob` "stays `0.0` permanently, so `TrafficObjectManager` is never
+registered" is reversed: it stays `0.0` in **`base_config`**, which is generation truth, and a run
+sets it from the resolved level.
 
 **`src/scenariobank/actors.py` — `VRUManager(BaseManager)`** (pedestrians, cyclists)
+
+**The only placement code in this project that is ours**, confirmed 2026-09-04. MetaDrive ships the
+objects — `Pedestrian` and `Cyclist` (`component/traffic_participants/`), with physics bodies,
+models and `set_velocity` — and nothing that decides where they walk on a PG map: `policy/` holds
+no pedestrian policy, and `ScenarioTrafficManager.spawn_pedestrian` attaches
+`ReplayTrafficParticipantPolicy` to a logged `track` from a recorded dataset, which a procedural
+road does not have. (MetaUrban's `humanoid_manager.py` does have ORCA-planned crowds, but it is a
+hard fork under its own namespace pulling torch, stable_baselines3, cv2, scipy and skimage —
+adopting it means swapping simulators, not adding a manager.)
+
+Two consequences for reproducibility, which for this axis alone rests on code we can change:
+
+- **A determinism test ships with the manager**: two envs at the same seed and level produce
+  identical actor spawn positions and patrol endpoints. The actor-side twin of the map's existing
+  test, and the thing that catches a reordered draw in `reset()` moving every actor silently.
+- **The result row carries an actor-layout digest** — `fingerprint.sha256_hex` over the sorted
+  spawn positions, a sibling of `lane_geometry_digest`. In the **result**, never in the bank: it is
+  a measurement of a run, and it turns "the actors were the same" into something checkable months
+  later, for the same reason `drive_side` is measured rather than asserted.
 
 - Spawns in `reset()`; steers in `after_step()` via
   `obj.set_velocity([1,0], speed, in_local_frame=True)` — the API MetaDrive's own
@@ -1519,7 +1586,8 @@ Compose a sequence from the fifteen block ids, pick an exit rule, pick a seed, a
 **Preview only.** An ad-hoc road is not a bank row: a row needs a category name and a manifest
 entry, and inventing names for one-offs is how a bank stops meaning anything. This is the escape
 hatch for everything Step 9 excluded — look at a fork or a parking lot here and watch it fail
-honestly, rather than having a category invented to accommodate it.
+honestly, rather than having a category invented to accommodate it. *(Superseded by Step 10b: a
+road can now be added, under a name **derived** from the road and the rule rather than invented.)*
 
 **Test in the page:** build `CCX`, rule `left`, seed 0, and see the road. Build `fS` and see
 MetaDrive's own refusal quoted back rather than a spinner.
@@ -1554,6 +1622,95 @@ arms is a left turn from the spawn heading. At rule `sharpest` it draws: exit `3
 +149.5 deg, 519.3 m, and would earn 1300 steps. `fS` is refused on the card in MetaDrive's
 words. The palette shows fifteen named blocks. 327 tests pass, ruff clean; checked in a running
 studio with a scratch banks root, no bank opened, the scratch removed afterwards.)*
+
+### Step 10b — and put it in a bank ✅
+
+*(Asked for 2026-09-04, Keith: "after drawing it, i need to add the option to add it to the
+current banks". Decided the same day: **one seed** -- the one on screen, more added afterwards
+from the Bank tab's "Add another" -- and **named automatically** from the road and the rule
+rather than typed.)*
+
+**This reverses Step 10's stance, and auto-naming is what keeps that stance honest.** "Inventing
+names for one-offs is how a bank stops meaning anything" stays true when the name is not
+invented: `categories.composed_name` derives it from the road and the rule, so `CCX` at
+`sharpest` is `CCX_sharpest` for everyone, and a road composed twice is one category rather than
+two spellings of one. `$` is spelled `toll` -- a name is also a directory entry and a URL
+segment, and dropping the character would make `$S` and `S` the same category. A `needs_sim`
+test asserts every derived name against the studio's own `_NAME` pattern.
+
+- **`add` grew the road, not a new command.** `--category` became optional beside `--block-seq`
+  and `--rule`; `bank._road_to_add` resolves the three ways to know a road (a composed one, an
+  entry the manifest holds, a category this build ships) and is the only place that decides.
+  Nothing else in the pipeline learned a new concept: a composed category is an ordinary
+  `CategoryEntry`, so the manifest schema did not move, and `review`, the comparison panel,
+  `replace`, `remove` and `budget` all worked on one without being touched.
+- **The cap is measured, not chosen.** A new composed category is capped at `step_budget` of the
+  route just built -- the number the card shows as *would earn* -- set after the measurement
+  rather than before it. Every later seed of it is then warned against that cap exactly as the
+  eleven shipped ones are.
+- **The page reads the name rather than spelling it.** `inspect --json` now reports
+  `composed_name`, so the card can say what the road would be called without a second copy of the
+  rule in JavaScript. `WATCHERS.add` routes by which screen is waiting, as `inspect` and
+  `replace` already did.
+- **Two things a composed category does not get**, both because `categories.py` has never heard
+  of it: a picture in the Build gallery, and a seed ranking -- **Find a better seed** already said
+  so in its own words (`roadDrift`), which turned out to be the right sentence unchanged.
+
+**Test in the page:** draw `CCX` at `sharpest`, press **Add to bank**, then **Open the bank**.
+
+*(Done 2026-09-04. Measured on a scratch bank: `CCX_sharpest` is created capped at 1300 steps,
+which is `step_budget(519.3)`, and seed 1 of it earns 1020 against that cap. Adding the same seed
+twice is refused in the CLI's words on the card -- `seed 0 is already used by CCX_sharpest`.
+`$S` at `only` lands as `tollS_only`, 168.6 m, cap 440 -- **optimistically**, because
+`step_budget` assumes 6 m/s and a toll plaza holds its lanes to 3 m/s, the same exception the
+shipped `tollgate` records; its cap is raisable on the Bank tab without a rebuild. Removing a
+composed category's last scenario removes the category, and composing the same road again brings
+it back under the same name, which is what makes that an undo. 337 tests pass, ruff clean;
+checked in a running studio, scratch removed afterwards, no bank in `banks/` opened.)*
+
+### Step 10c — pin the option levels in the bank ✅
+
+*(Asked for 2026-09-04, Keith: "i want them pinned in the bank, because i don't want them to be
+regenerated everytime, people might make mistakes". That is an argument about **retyping**, not
+about baking a cross-product, and the design follows from the difference.)*
+
+**Amends the standing rule under "Stored normalized, applied at run time" rather than deleting
+it.** Options are still never part of a bank *row*; a bank now carries them once, at the top of
+its manifest. What made that safe was separating two things this plan had been calling one:
+`base_config` is generation **truth** and stays at `traffic_density: 0.0`, while `options` is
+declared **intent** for runs. Changing the first would rebuild 35 scenarios; changing the second
+is one field of one JSON file, in `budget`'s class of edit.
+
+- **Schema 1.2.** `Manifest.options` is an `OptionLevels` model — the six axes, each defaulting to
+  `none`. The number moved for the reason it moved at 1.1: `extra="forbid"` means a 1.1 reader
+  refuses a manifest carrying a field it does not know. A 1.1 bank reads as all-`none` and comes
+  back stamped 1.2 when edited.
+- **`options.py` ships names, not numbers.** `AXES` and `LEVEL_NAMES` only; `LEVELS` stays Phase
+  4b's, because a level name is schema and a number is a calibration, and they change at different
+  rates. The module docstring carries the survey of what MetaDrive already provides.
+- **Three surfaces, no new concept.** `bank.set_options`, `scenariobank options --bank X --traffic
+  medium`, and `POST /api/banks/{bank}/options` — copied from `set_max_steps`, `budget_cmd` and
+  the budget endpoint respectively, including the refusal while a job holds the manifest. The
+  studio's six dropdowns read their axes and levels off the `options` command's own flags through
+  `/api/commands`, so the page cannot offer an axis the CLI does not have.
+- **A default, not a lock.** A run flag overrides the pin and the result records the expanded
+  levels, which is what keeps Phase 4b's single-axis sweep possible. An `options_locked` flag is
+  available if enforcement is ever wanted; it was not built.
+- **Per-category and per-scenario overrides deliberately not built** — that is how a bank quietly
+  becomes the cross-product this plan says can never be collapsed back. The resolver is
+  `options_for(entry, row)` from the start so adding one later changes no call site.
+
+**The survey that came out of it changed Phase 4 more than this step changed the code.** Reading
+the pinned commit showed `TrafficObjectManager` already is the `ObstacleManager` this plan
+described writing, registered conditionally by `metadrive_env.py:296-300`; and that `actors.py` is
+the only placement code that is ours. Both notes are rewritten under **New modules**, along with
+two reproducibility items now scoped to actors alone.
+
+*(Done 2026-09-04. Verified on a scratch copy of `banks/curve`: after `options --traffic medium
+--pedestrians low` the `categories` and `base_config` blocks are byte-identical to the original,
+`base_config.traffic_density` is still `0.0`, no thumbnail was rewritten, and the schema moved
+1.1 -> 1.2. `review` ends with `runs at traffic=medium, pedestrians=low, everything else none`.
+353 tests pass, ruff clean; no bank in `banks/` was opened for writing.)*
 
 ### Step 11 — the road utilities ⬜
 
@@ -1688,9 +1845,12 @@ renumbered.
   and checks callability, and `ConstantPolicy` / `ExpertPolicy` still take
   `(observation: np.ndarray) -> Sequence[float]`. They are CLI-only floor and ceiling checks, never
   the thing under evaluation.
-- **Options resolution:** `resolve_options()` expands tiers, applies explicit flag overrides, and
-  returns level names *and* numerics. Registers `ObstacleManager`, `VRUManager` and (Phase 8)
-  `PGTrafficLightManager` only when their axis is above `none`.
+- **Options resolution:** `resolve_options()` reads `manifest.options` as its defaults, expands
+  tiers, applies explicit flag overrides, and returns level names *and* numerics. The axis names
+  and levels already exist in `options.py` (schema 1.2, `scenariobank options`); only the `LEVELS`
+  numerics and this resolver are new. Registers `VRUManager` and (Phase 8)
+  `PGTrafficLightManager` only when their axis is above `none` — the obstacle manager is
+  MetaDrive's own and `metadrive_env.py:296-300` already registers it conditionally.
 - **Env construction:** `start_seed = min(seeds)`, `num_scenarios = max(seeds) - min(seeds) + 1`,
   because `base_env.py:926` asserts `start_index <= seed < start_index + num_scenarios`. Group
   scenarios by category so one env serves a category and `horizon` = that category's `max_steps`.

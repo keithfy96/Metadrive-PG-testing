@@ -28,6 +28,7 @@ from scenariobank.bank import (
     ScenarioNotFound,
     read_manifest,
     set_max_steps,
+    set_options,
 )
 from scenariobank.cli import EXAMPLES_DIR
 from scenariobank.web.invoke import NOT_RUNNABLE, InvokeError, build_argv, catalog
@@ -74,6 +75,25 @@ class BudgetRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     max_steps: int | None = None
+
+
+class OptionsRequest(BaseModel):
+    """The option axes to pin on a bank, and the levels to pin them at.
+
+    Every axis is optional and only the ones named move, so the six dropdowns on the page can save
+    one at a time as they are changed rather than posting the whole block back each time. Like
+    `BudgetRequest` this runs no command, so there is no flag to validate against
+    `docs.reference()`; `bank.set_options` owns the rule about what is a level.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    traffic: str | None = None
+    cones: str | None = None
+    barriers: str | None = None
+    pedestrians: str | None = None
+    cyclists: str | None = None
+    lights: str | None = None
 
 
 def create_app(*, banks_root: Path, state_dir: Path, workdir: Path | None = None) -> FastAPI:
@@ -325,6 +345,37 @@ def create_app(*, banks_root: Path, state_dir: Path, workdir: Path | None = None
             return set_max_steps(directory, scenario, request.max_steps).model_dump()
         except ScenarioNotFound as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
+        except (BankError, ValueError) as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+    @app.post("/api/banks/{bank}/options")
+    def set_bank_options(bank: str, request: OptionsRequest) -> dict:
+        """Pin some of a bank's option levels. **The second write here that is not a job.**
+
+        Same class as the budget write above and for the same reason: what changes is declared
+        rather than measured off a road, so no environment is built and no subprocess starts.
+        What the levels mean is not this endpoint's business -- it carries them to
+        `bank.set_options`, which owns the rule.
+
+        Refused while a job is running, for the reason the budget write is: `replace` holds a
+        manifest in memory and writes it back when it finishes, so an edit slipped in beside it
+        would be lost without a word.
+        """
+        directory = _bank_dir(bank)
+        chosen = request.model_dump(exclude_none=True)
+        if not chosen:
+            raise HTTPException(status_code=400, detail="name at least one axis to set")
+        busy = jobs.running()
+        if busy is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"{busy['command']} is still running, and it will write this manifest when "
+                    "it finishes. Wait for it, then set the options."
+                ),
+            )
+        try:
+            return set_options(directory, chosen).model_dump()
         except (BankError, ValueError) as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
 

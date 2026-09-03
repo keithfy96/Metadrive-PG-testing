@@ -13,6 +13,7 @@ import typer
 
 from scenariobank.categories import SEEDS, get_category
 from scenariobank.cli import _ad_hoc_category, _parse_scan, _parse_seed_options, _parse_seeds
+from scenariobank.options import AXES
 
 
 def test_a_bare_seed_list_becomes_the_shared_default():
@@ -144,3 +145,94 @@ def test_a_kept_seed_is_never_a_near_duplicate_of_itself():
     )
     assert kept.is_near_duplicate is False
     assert kept.as_dict()["near_duplicate"] is False
+
+
+def _bank_for_options(tmp_path):
+    """A written bank with one curve row. No simulator, and no thumbnail is needed: `options`
+    reads the manifest and writes the manifest."""
+    from scenariobank.bank import CategoryEntry, Manifest, ScenarioRow, write_manifest
+    from scenariobank.handedness import DRIVE_SIDE_LEFT
+
+    write_manifest(
+        tmp_path,
+        Manifest(
+            schema_version="1.1",
+            bank_id="b",
+            created_utc="2026-09-04T00:00:00Z",
+            metadrive={
+                "edition": None, "dist_version": None, "commit": None, "asset_version": None,
+            },
+            base_config={"traffic_density": 0.0},
+            drive_side=DRIVE_SIDE_LEFT,
+            categories={
+                "curve": CategoryEntry(
+                    description="two curves",
+                    block_seq="CC",
+                    exit_rule="only",
+                    max_steps=1200,
+                    scenarios=[
+                        ScenarioRow(
+                            scenario_id="curve_0000",
+                            seed=0,
+                            destination="2C0_1_",
+                            spawn_lane_index=0,
+                            route_length_m=340.0,
+                            net_rotation_deg=90.0,
+                            turn_pairs="LL",
+                            thumbnail="thumbs/curve_0000.png",
+                        )
+                    ],
+                )
+            },
+        ),
+    )
+    return tmp_path
+
+
+def _options_run(tmp_path, *flags):
+    from click.testing import CliRunner
+
+    from scenariobank import cli
+
+    return CliRunner().invoke(
+        typer.main.get_command(cli.app),
+        ["options", "--bank", str(tmp_path), *flags],
+    )
+
+
+def test_options_show_reads_the_levels_without_changing_them(tmp_path):
+    _bank_for_options(tmp_path)
+    result = _options_run(tmp_path, "--show")
+
+    assert result.exit_code == 0, result.output
+    listed = [line.split() for line in result.stdout.splitlines() if line.startswith("  ")]
+    assert listed == [[axis, "none"] for axis in AXES], "six axes, all at the floor"
+    assert "pins no option levels" in result.stdout
+    assert "pinned in" not in result.stdout, "--show writes nothing, so it names no manifest"
+
+
+def test_options_pins_the_axes_it_is_given_and_says_nothing_was_rebuilt(tmp_path):
+    _bank_for_options(tmp_path)
+    result = _options_run(tmp_path, "--traffic", "medium", "--pedestrians", "low")
+
+    assert result.exit_code == 0, result.output
+    assert "runs at traffic=medium, pedestrians=low, everything else none" in result.stdout
+    assert "nothing was rebuilt" in result.stdout
+
+    read_back = _options_run(tmp_path, "--show")
+    assert "traffic=medium" in read_back.stdout
+
+
+def test_options_needs_something_to_do(tmp_path):
+    # Naming no axis and not asking to read is a command with no effect, which is more likely a
+    # flag that was typed wrong than a thing anyone meant.
+    _bank_for_options(tmp_path)
+    assert _options_run(tmp_path).exit_code != 0
+    assert _options_run(tmp_path, "--show", "--traffic", "low").exit_code != 0
+
+
+def test_a_level_the_bank_would_refuse_leaves_the_command_at_exit_one(tmp_path):
+    _bank_for_options(tmp_path)
+    result = _options_run(tmp_path, "--traffic", "enormous")
+    assert result.exit_code == 1
+    assert "options failed" in result.output

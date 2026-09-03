@@ -212,6 +212,14 @@ select#road-rule { width: auto; font-family: var(--mono); font-size: 12.5px; }
 .road .shot pre.refusal { margin: 0; width: 100%; box-sizing: border-box; white-space: pre-wrap;
                           word-break: break-word; color: var(--bad); background: transparent; }
 .road .caption { font-size: 12px; color: var(--muted); margin: 0.4rem 0 0; }
+.road-add { margin-top: 0.8rem; border-top: 1px solid var(--hair); padding-top: 0.6rem; }
+.road-add .row { margin-top: 0; }
+/* The generic `select` is full-width, which is right in a form column and wrong in a row
+   of controls -- the same correction `#road-rule` needed. */
+.road-add select { width: auto; }
+.road-add .argv { margin: 0.4rem 0 0; }
+.road-add pre.refusal { margin: 0.5rem 0 0; white-space: pre-wrap; word-break: break-word;
+                        color: var(--bad); background: var(--inset); }
 
 /* The progress bar. It measures the CLI's own `[3/55]` lines, so it is honest about a job it
    does not otherwise control. */
@@ -414,6 +422,19 @@ table.seeds td.gap .dup { color: var(--bad); }
 /* Removing is the one control here that cannot be undone by pressing the other one, so it says
    so in a colour and asks twice. */
 .edit button.danger { color: var(--bad); border-color: var(--bad); }
+
+/* The bank's option levels. Six dropdowns and nothing else: what they change is declared rather
+   than measured off a road, so there is no job here, no progress bar and nothing to wait for. */
+.bank-options .grid { display: flex; gap: 0.55rem 1.4rem; flex-wrap: wrap; margin: 0.2rem 0 0; }
+.bank-options label { display: flex; gap: 0.45rem; align-items: center;
+                      font-family: var(--mono); font-size: 12px; color: var(--accent); }
+/* The generic `select` is full-width, which is right in a form column and wrong in a row of
+   controls -- the same correction `.road-add select` needed. */
+.bank-options select { width: auto; font-family: var(--mono); font-size: 12.5px; }
+.bank-options .argv { margin: 0.6rem 0 0; }
+.bank-options .note { font-size: 12.5px; margin: 0.6rem 0 0; overflow-wrap: anywhere; }
+.bank-options .note.failed { font-family: var(--mono); font-size: 12px; white-space: pre-wrap;
+                             color: var(--bad); }
 </style>
 
 <header class="top">
@@ -451,15 +472,18 @@ table.seeds td.gap .dup { color: var(--bad); }
       <p class="argv" id="build-where"></p>
     </div>
 
-    <!-- The road builder. Preview only: a road drawn here is not a bank row -- a row needs a
-         category name and a manifest entry, and inventing names for one-offs is how a bank stops
-         meaning anything. This is where to look at everything the eleven types left out. -->
+    <!-- The road builder. Drawing writes nothing; adding files the road under a name derived
+         from the road and the rule (`categories.composed_name`), which is what keeps "no invented
+         names for one-offs" true while still letting one into a bank: the same road composed
+         twice is one category, not two spellings of one. This is also where to look at
+         everything the eleven shipped types left out. -->
     <div class="card" id="road-card">
       <h2>Or compose a road by hand</h2>
       <p class="blurb">
         Any string of the fifteen blocks, an exit rule and a seed, drawn by
         <code>scenariobank inspect --block-seq</code> exactly as a terminal would. It is a
-        preview and nothing more — the picture goes to the studio's scratch, not to a bank. A road
+        preview until you add it — the picture goes to the studio's scratch, and only <b>Add to
+        bank</b> writes anything, into a scenario type named after the road and the rule. A road
         MetaDrive will not build is refused in MetaDrive's own words.
       </p>
       <div class="palette" id="palette">
@@ -543,7 +567,7 @@ table.seeds td.gap .dup { color: var(--bad); }
         <li class="done">replace the seed behind an image</li>
         <li class="done sub">8b — edit, add or remove one item</li>
         <li class="done">four new scenario types</li>
-        <li class="done">the road builder — compose a road by hand</li>
+        <li class="done">the road builder — compose a road by hand, and add it to a bank</li>
         <li>the road utilities — exits, and the destinations reference</li>
         <li>pick a model and submit a run to the queue</li>
       </ol>
@@ -634,7 +658,21 @@ tabs.addEventListener("click", (event) => {
 // ------------------------------------------------------------------ the gallery
 
 const build = { rows: null, selected: new Set(), missing: new Set(), stamp: 0,
-                seeds: [], root: null, looks: null, writable: true };
+                seeds: [], root: null, looks: null, writable: true, axes: [] };
+
+// The one fetch every screen depends on, held so the Bank tab can wait for it. The option
+// dropdowns are built out of the `options` command's own flags, and the banks are fetched when
+// their tab is first opened -- which can be before the reference has landed.
+let referenceReady = Promise.resolve();
+
+// What the last option change said. Not a job state: there is nothing to poll, so this is only
+// the sentence left under the dropdowns afterwards.
+const bankOpts = { note: null, failed: false };
+
+function forgetBankOptions() {
+  bankOpts.note = null;
+  bankOpts.failed = false;
+}
 
 // A bank name becomes a directory name, so it is kept to what one safely is. The real guard is
 // the server's containment check on `--out`; this is only so the refusal arrives before the click.
@@ -769,13 +807,16 @@ function renderBuild(rows) {
 // ---------------------------------------------------------- the road builder
 //
 // Any string of block ids, an exit rule and a seed, drawn by the same `inspect --block-seq` a
-// terminal would run, into the studio's scratch. Preview only: nothing here has a category name
-// or a manifest entry. It is the escape hatch for everything the eleven types left out -- look at
-// a fork or a parking lot here and watch it fail honestly, in the simulator's own words, rather
-// than have a category invented to accommodate it.
+// terminal would run, into the studio's scratch. Drawing writes nothing into a bank; the row
+// under the facts adds it, under a name `composed_name` derives from the road and the rule. It is
+// the escape hatch for everything the eleven shipped types left out -- look at a fork or a
+// parking lot here and watch it fail honestly, in the simulator's own words.
 
 const road = { blocks: [], rules: [], state: "idle", seq: "", rule: null, seed: 0, facts: null,
-               note: null, stamp: 0 };
+               note: null, stamp: 0,
+               // The add is a second axis, not a fourth drawing state: a road stays drawn while
+               // it is being added, and stays drawn after it has been.
+               add: { state: "idle", note: null, id: null, bank: null }, banks: null };
 
 // A look is served by name, and a name may not hold `$`. Spelled out rather than stripped: the
 // toll gate is the one block whose letter is not a letter, and dropping it would make `$S` and
@@ -825,6 +866,7 @@ async function drawRoad() {
   road.state = "drawing";
   road.facts = null;
   road.note = null;
+  forgetRoadAdd();
   renderRoad();
   try {
     await startJob("inspect", {
@@ -855,6 +897,9 @@ function applyRoad(job) {
       road.facts = lastJson(run.text);
       road.state = "drawn";
       road.stamp = Date.now();
+      // Fetched now rather than at start-up: a road is worth adding somewhere only once it has
+      // drawn, and the list may have gained a bank since the page loaded.
+      listRoadBanks();
     } catch (error) {
       road.state = "refused";
       road.note = `the drawing could not be read: ${error.message}`;
@@ -904,9 +949,13 @@ function renderRoad() {
     ])));
     side.appendChild(el("p", {
       class: "caption",
-      text: "Preview only — this road is in no bank. \u201cwould earn\u201d is the step budget a "
-        + "category on it would be given, from the same formula as the eleven above.",
+      text: "Nothing is in a bank until you add it. Added, this road becomes the scenario "
+        + `type ${f.composed_name || "\u2014"} \u2014 the name is the road and the rule, so `
+        + "the same road always lands in the same type \u2014 with this seed as its first "
+        + "scenario and \u201cwould earn\u201d as its step cap. For more seeds of it, the "
+        + "Bank tab\u2019s \u201cAdd another\u201d.",
     }));
+    side.appendChild(roadAddRow());
   } else if (road.state === "refused") {
     side.appendChild(el("p", {
       class: "caption",
@@ -918,6 +967,127 @@ function renderRoad() {
     }));
   }
   result.replaceChildren(shot, side);
+}
+
+// ------------------------------------------------------- putting one in a bank
+//
+// The same `add` a terminal would run, with the road given rather than a category named. The
+// category it lands in is named after the road and the rule -- `CCX` at `sharpest` is
+// `CCX_sharpest` -- so nothing is invented for a one-off and the same road never arrives twice
+// under two names. `categories.composed_name` owns that spelling; this page only ever displays
+// the one `inspect --json` already reported.
+
+function forgetRoadAdd() {
+  road.add = { state: "idle", note: null, id: null, bank: null };
+}
+
+async function listRoadBanks() {
+  try {
+    road.banks = await api("/api/banks");
+  } catch (error) {
+    road.banks = [];
+    road.add.note = `the banks could not be listed: ${error.message}`;
+  }
+  renderRoad();
+}
+
+// The select defaults to the bank already open on the Bank tab, so adding from here lands where
+// you were just looking. Otherwise the newest, which is the order the list arrives in.
+function roadBankChoice() {
+  const names = (road.banks || []).map((entry) => entry.name);
+  if (road.add.bank && names.includes(road.add.bank)) return road.add.bank;
+  if (names.includes(dataset.name)) return dataset.name;
+  return names[0] || null;
+}
+
+function roadAddRow() {
+  if (road.banks === null) {
+    return el("p", { class: "caption", text: "looking for banks to add it to…" });
+  }
+  if (!build.writable) {
+    // The same reason generating is refused here: a job may only write inside the directory the
+    // studio was started in, so `--bank` pointing outside it is a 400 from `invoke.py`.
+    return el("p", { class: "caption failed",
+                     text: "This studio can look at these banks but not write to them — they "
+                           + "are outside the directory it was started in." });
+  }
+  if (!road.banks.length) {
+    // A listing that failed leaves the same empty array, so it says which of the two it was.
+    return el("p", { class: road.add.note ? "caption failed" : "caption",
+                     text: road.add.note
+                           || "No bank to add it to yet — build one above first." });
+  }
+
+  const bank = roadBankChoice();
+  const busy = road.add.state === "adding";
+  const choose = el("select", {}, road.banks.map((entry) => el("option", {
+    value: entry.name, text: entry.name, selected: entry.name === bank ? "" : null,
+  })));
+  choose.disabled = busy;
+  choose.addEventListener("change", () => { road.add.bank = choose.value; renderRoad(); });
+
+  const go = el("button", { class: "go", text: busy ? "Adding…" : `Add to ${bank}` });
+  go.disabled = busy;
+  go.addEventListener("click", () => addRoadToBank(choose.value));
+
+  const row = el("div", { class: "row" }, [
+    el("label", { class: "lab", text: "add to" }), choose, go,
+  ]);
+  if (road.add.state === "added") {
+    row.appendChild(el("span", { class: "pill ok", text: `added ${road.add.id}` }));
+    const open = el("button", { class: "ghost", text: "Open the bank" });
+    open.addEventListener("click", async () => {
+      await loadBanks(road.add.bank);
+      showView("bank");
+    });
+    row.appendChild(open);
+  }
+
+  const wrap = el("div", { class: "road-add" }, [row, el("p", {
+    class: "argv",
+    text: `scenariobank add --bank ${build.root}/${bank} --block-seq ${road.seq}`
+          + ` --rule ${road.rule} --seed ${road.seed}`,
+  })]);
+  if (road.add.note) {
+    // The CLI's own sentence -- `add failed: seed 0 is already used by CCX_sharpest…` -- because
+    // the rule belongs to `bank.py` and this is the only screen that would ever show it.
+    wrap.appendChild(el("pre", { class: "refusal", text: road.add.note }));
+  }
+  return wrap;
+}
+
+async function addRoadToBank(bank) {
+  road.add = { state: "adding", note: null, id: null, bank };
+  renderRoad();
+  try {
+    await startJob("add", {
+      "--bank": `${build.root}/${bank}`,
+      "--block-seq": road.seq,
+      "--rule": road.rule,
+      "--seed": String(road.seed),
+    });
+  } catch (error) {
+    road.add.state = "idle";
+    road.add.note = error.message;
+    renderRoad();
+  }
+}
+
+function applyRoadAdd(job) {
+  if (road.add.state !== "adding" || job.state === "running") return;
+  if (job.state === "lost" || job.exit_code !== 0) {
+    road.add.state = "idle";
+    road.add.note = tail(run.text, 3) || "the add ended without saying why";
+  } else {
+    // The id is read off the CLI's line for the same reason the edit panel reads it there: it is
+    // one past the highest, and a gap a removal left is never walked back into.
+    const added = run.text.match(/added (\S+) at seed/);
+    road.add.state = "added";
+    road.add.id = added ? added[1] : road.facts && road.facts.composed_name;
+    // The Bank tab is now one scenario out of date, if what grew is what it has open.
+    if (dataset.name === road.add.bank) openBank(dataset.name);
+  }
+  renderRoad();
 }
 
 // ---------------------------------------------------------------- generating
@@ -1222,6 +1392,72 @@ function scenarioCard(bank, row, mark) {
   return node;
 }
 
+// The one write on the Bank tab that is not about a single scenario, and the second on the page
+// that is not a job. Nothing here is measured off a road: the levels are applied when a run
+// happens, so saving one is a manifest write and no environment starts.
+async function saveOption(bank, axis, level, node) {
+  node.disabled = true;
+  try {
+    await api(`/api/banks/${encodeURIComponent(bank)}/options`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ [axis]: level }),
+    });
+  } catch (error) {
+    node.disabled = false;
+    bankOpts.note = error.message;
+    bankOpts.failed = true;
+    return;
+  }
+  bankOpts.note = `${axis} pinned at ${level} — the manifest changed and nothing was rebuilt`;
+  bankOpts.failed = false;
+  // No road was built, so nothing polls and nothing would re-read the bank on its own -- the
+  // same reason `saveBudget` reloads it itself. The review's own sentence is refetched with it.
+  await openBank(bank);
+}
+
+// The command that would do the same thing, shown for the reason every other screen shows one:
+// the page is a way of typing the CLI, not a second thing that can do what the CLI cannot.
+function optionsArgv(name, levels) {
+  const set = build.axes
+    .filter((one) => levels[one.axis] && levels[one.axis] !== "none")
+    .map((one) => `--${one.axis} ${levels[one.axis]}`);
+  const tail = set.length ? set.join(" ") : "--show";
+  return `uv run scenariobank options --bank ${build.root}/${name} ${tail}`;
+}
+
+function optionsCard(name, manifest, report) {
+  const levels = manifest.options || {};
+  const grid = el("div", { class: "grid" }, build.axes.map((one) => {
+    const select = el("select", { title: one.help },
+      one.levels.map((level) => el("option", {
+        value: level, text: level, selected: levels[one.axis] === level ? "selected" : null,
+      })));
+    select.value = levels[one.axis] || "none";
+    select.addEventListener("change", () => saveOption(name, one.axis, select.value, select));
+    return el("label", {}, [el("span", { text: one.axis }), select]);
+  }));
+
+  const parts = [
+    el("h3", { class: "band" }, [
+      el("span", { text: "option levels" }),
+      // `review.py` writes this sentence, so the page and `scenariobank review` cannot describe
+      // one bank two different ways -- the same arrangement the category warnings use.
+      el("span", { class: "facts", text: report ? report.options_line : "" }),
+    ]),
+    el("p", { class: "blurb", text:
+      "These are applied when a run happens, not when the bank was built — the pictures and the "
+      + "routes are the same at every level. Set them once here instead of typing them into "
+      + "every run; a run flag still overrides what is pinned." }),
+    grid,
+    el("p", { class: "argv", text: optionsArgv(name, levels) }),
+  ];
+  if (bankOpts.note) {
+    parts.push(el("p", { class: `note${bankOpts.failed ? " failed" : ""}`, text: bankOpts.note }));
+  }
+  return el("div", { class: "card bank-options" }, parts);
+}
+
 function renderBank(name, manifest, report) {
   const cards = [];
   const reviewed = Object.fromEntries((report ? report.categories : []).map((one) =>
@@ -1273,6 +1509,8 @@ function renderBank(name, manifest, report) {
   if (!cards.length) {
     cards.push(card([el("p", { class: "blurb", text: "This bank has no categories in it." })]));
   }
+  // First, because it is the only thing on this screen that is about every scenario below it.
+  cards.unshift(optionsCard(name, manifest, report));
   $("bank-body").replaceChildren(...cards);
 
   const total = Object.values(manifest.categories)
@@ -2074,6 +2312,10 @@ function editParts(bank, id) {
 
 
 async function openBank(name) {
+  // The note is about *this* bank's last change. Carrying it into another one would leave a
+  // sentence about a manifest that is no longer on the screen -- the same reasoning as the
+  // selection being dropped below.
+  if (dataset.name !== name) forgetBankOptions();
   dataset.name = name;
   // Every picture in this bank is re-fetched rather than served from cache: a bank is re-opened
   // precisely when something in it may have changed.
@@ -2110,6 +2352,9 @@ async function openBank(name) {
 }
 
 async function loadBanks(prefer) {
+  // The axes come out of the reference, and this tab can be opened before it arrives. A failed
+  // reference is not this tab's to report -- the Reference tab says so -- so it is only awaited.
+  await referenceReady.catch(() => {});
   let banks;
   try {
     banks = await api("/api/banks");
@@ -2153,6 +2398,22 @@ function choicesFor(data, command, flag) {
       if (entry.name !== command) continue;
       const param = entry.params.find((one) => one.flag === flag);
       return (param && param.choices) || [];
+    }
+  }
+  return [];
+}
+
+// The option axes, as flags with a closed set of levels. Same trick as `choicesFor` and for the
+// same reason: the page reads the CLI's own parameters, so it cannot offer an axis that does not
+// exist or a level the CLI would refuse.
+function axesFrom(data) {
+  for (const group of data.groups) {
+    for (const entry of group.commands) {
+      if (entry.name !== "options") continue;
+      return entry.params
+        .filter((one) => one.choices && one.choices.length)
+        .map((one) => ({ axis: one.flag.replace(/^--/, ""), levels: one.choices,
+                         help: one.help }));
     }
   }
   return [];
@@ -2274,7 +2535,9 @@ const WATCHERS = {
   // rebuild at a typed seed or at another exit. The job is the same one either way, so which of
   // them is waiting decides where the answer lands.
   replace: (job) => (swap.state === "replacing" ? applyReplace(job) : applyEdit(job)),
-  add: applyEdit,
+  // Two screens run an `add`: the edit controls under a picked card, and the road builder's
+  // "Add to bank". Which of them is waiting decides where the answer lands.
+  add: (job) => (road.add.state === "adding" ? applyRoadAdd(job) : applyEdit(job)),
   remove: applyEdit,
   sockets: applyExits,
 };
@@ -2362,8 +2625,8 @@ api("/api/doctor").then((report) => {
 // One fetch of the reference, and the document is built from it. Every job this page starts is
 // still checked against the same data on the way through `invoke.py`, so the page cannot come to
 // send a flag the CLI does not take.
-Promise.all([api("/api/commands"), api("/api/categories"), api("/api/studio"),
-             api("/api/blocks")])
+referenceReady = Promise.all([api("/api/commands"), api("/api/categories"), api("/api/studio"),
+                              api("/api/blocks")])
   .then(([data, categories, studio, blocks]) => {
     // The facts the page needs but may not invent: how many seeds a category is built at (the
     // CLI's default, which reads as `None` in the parameter table), where banks go, and where a
@@ -2372,6 +2635,10 @@ Promise.all([api("/api/commands"), api("/api/categories"), api("/api/studio"),
     // The five exit rules, read off the flag that writes one onto a scenario rather than listed
     // here. `categories.py` owns the set; a copy in this file would be the sixth place to change.
     build.rules = choicesFor(data, "replace", "--exit-rule");
+    // The six axes and their four levels, read off the `options` command's own flags rather than
+    // listed here. `options.py` owns the names; a copy in this file would be the place they go
+    // stale. The two flags that are not an axis -- `--bank` and `--show` -- carry no closed set.
+    build.axes = axesFrom(data);
     build.root = studio.banks_root;
     build.looks = studio.looks;
     build.writable = studio.writable;
@@ -2387,6 +2654,7 @@ Promise.all([api("/api/commands"), api("/api/categories"), api("/api/studio"),
     $("road-clear").addEventListener("click", () => {
       $("road-seq").value = "";
       road.state = "idle";
+      forgetRoadAdd();
       renderRoad();
       $("road-seq").focus();
     });

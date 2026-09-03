@@ -43,7 +43,7 @@ GROUPS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
         "Build and correct",
         "The ones that write into a bank, and the one that writes this page. `generate` makes a "
         "bank; the four after it change one scenario of one that exists.",
-        ("generate", "replace", "add", "remove", "budget", "commands"),
+        ("generate", "replace", "add", "remove", "budget", "options", "commands"),
     ),
     (
         "Do all of it in a page",
@@ -75,6 +75,13 @@ EXAMPLES: dict[str, tuple[tuple[str, str], ...]] = {
     "examples": (
         ("uv run scenariobank examples", "redraw the studio's gallery"),
         ("uv run scenariobank examples -c roundabout", "just the one that changed"),
+    ),
+    "options": (
+        (
+            "uv run scenariobank options --bank ./banks/b --traffic medium --pedestrians low",
+            "pin two axes; nothing is rebuilt",
+        ),
+        ("uv run scenariobank options --bank ./banks/b --show", "what this bank pins"),
     ),
     "seeds": (
         (
@@ -125,6 +132,10 @@ EXAMPLES: dict[str, tuple[tuple[str, str], ...]] = {
             "uv run scenariobank add --bank ./banks/b -c t_junction -s 7",
             "a sixth t_junction, numbered past the highest id",
         ),
+        (
+            "uv run scenariobank add --bank ./banks/b -b CCX --rule sharpest -s 0",
+            "a road composed by hand, filed as CCX_sharpest",
+        ),
     ),
     "remove": (
         (
@@ -162,6 +173,7 @@ INDEX: tuple[tuple[str, str], ...] = (
     ("see which exits a road offers", "sockets"),
     ("check which simulator this is", "doctor"),
     ("re-measure the destinations reference", "destinations"),
+    ("set the traffic level once instead of on every run", "options"),
     ("do all of that by looking rather than typing", "studio"),
 )
 
@@ -205,8 +217,10 @@ def _value_notes() -> dict[str, str]:
     flag exists is no use without knowing what may follow it.
     """
     from scenariobank.categories import BLOCKS, CATEGORIES, SEEDS, VALID_BLOCK_IDS, ExitRule
+    from scenariobank.options import AXES, LEVEL_NAMES
 
     seeds = ",".join(str(seed) for seed in SEEDS)
+    levels = ", ".join(f"`{level}`" for level in LEVEL_NAMES)
     categories = ", ".join(f"`{name}`" for name in CATEGORIES)
     rules = ", ".join(f"`{rule.value}`" for rule in ExitRule)
     blocks = ", ".join(f"`{block.id}` {block.label}" for block in BLOCKS)
@@ -232,6 +246,12 @@ def _value_notes() -> dict[str, str]:
             "seed changes."
         ),
         "--max-steps": "A whole number of steps, at least 1.",
+        **{
+            f"--{axis}": (
+                f"One of: {levels}. Applied when a run happens, not when the bank was built."
+            )
+            for axis in AXES
+        },
     }
 
 
@@ -243,10 +263,14 @@ def _choices() -> dict[str, list[str]]:
     reason everything else here is -- a hand-listed set goes stale the day a category is added.
     """
     from scenariobank.categories import CATEGORIES, ExitRule
+    from scenariobank.options import AXES, LEVEL_NAMES
 
     return {
         "--category": list(CATEGORIES),
         "--rule": [rule.value for rule in ExitRule],
+        # The six option axes, all drawing on the same four levels. Listed per flag rather than
+        # once, because the studio keys its dropdowns on the flag name.
+        **{f"--{axis}": list(LEVEL_NAMES) for axis in AXES},
         # The same closed set as `--rule`, under the flag that writes it onto a scenario rather
         # than into a drawing. Listed separately because a flag is what the studio keys on.
         "--exit-rule": [rule.value for rule in ExitRule],
