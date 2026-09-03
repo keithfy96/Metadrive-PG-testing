@@ -753,12 +753,12 @@ simulated. So `generate` **reuses one env per block sequence** and resets per se
 multi-minute command is not acceptable at that scale. (All 20 seeds built for every sequence above;
 longer sequences are viable, they are just slower.)
 
-**Manifest schema (v1.0)** — pydantic models in `bank.py`, every one `extra="forbid"`, so a field
+**Manifest schema (v1.1)** — pydantic models in `bank.py`, every one `extra="forbid"`, so a field
 a writer added and a reader does not know about is a failure rather than a silently ignored key.
 
 ```json
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "bank_id": "pg-bank-2026-08",
   "created_utc": "2026-08-31T13:40:22Z",
   "metadrive": {
@@ -782,7 +782,8 @@ a writer added and a reader does not know about is a failure rather than a silen
          "route_length_m": 111.7,
          "net_rotation_deg": 90.0,
          "turn_pairs": "",
-         "thumbnail": "thumbs/t_junction_0000.png"}
+         "thumbnail": "thumbs/t_junction_0000.png",
+         "exit_rule": null, "exit_node": null, "max_steps": null}
       ]
     }
   }
@@ -802,6 +803,16 @@ come off the reset that already happens, via `sockets.route_rotation`. `net_rota
 rotation along the driven route, unwrapped — not `SocketReading.angle_deg`, which is the
 `wrap_to_pi`'d final heading and reads −120.5° for a route that sweeps +239.5°. `turn_pairs`
 carries what a single number cannot: a gentle left and a left-then-right both read low.)*
+
+*(Amended 2026-09-03 at Step 8b — **1.0 to 1.1**: three optional per-scenario overrides,
+`exit_rule`, `exit_node` and `max_steps`, all `null` on a row that follows its category. They exist
+because editing one item means saying something the category does not: its own destination, or its
+own budget. 1.0 manifests still load — 1.1 only added optional fields — and the version moved
+because the reverse does not hold, `extra="forbid"` being what makes a 1.0 reader refuse a row that
+declares its own budget. A 1.0 bank this build edits is written back as 1.1: the version describes
+the shape of the file, not the history of the bank. `CategoryEntry.rule_for` and `budget_for` are
+the one place an override is resolved, so the review, the panel and a rebuild read the same
+number.)*
 
 **How you test it** *(recorded as it was done. Building a bank is now the Build tab — Phase 2c,
 Step 5 — and reading it back is Steps 6 and 7.)*
@@ -1330,7 +1341,7 @@ page with `replace failed: seed 0 is already used by curve: each seed builds one
 currently holds seeds [0, 1, 2, 3, 22].` Three tabs, no Run tab, no console errors. 287 tests pass,
 ruff clean. The scratch bank was removed afterwards; the three real banks were not touched.)*
 
-### Step 8b — edit, add or remove one item ⬜
+### Step 8b — edit, add or remove one item ✅
 
 *(Added 2026-09-02 — Keith: "could you add step after step 8, call it 8b, that will let me change a
 specific item in the dataset?" Three things Step 8 does not do, chosen from four: type an exact
@@ -1397,6 +1408,47 @@ ever starting. Remove `curve_0002`, and confirm `curve_0003` and `curve_0004` ke
 their pictures while `thumbs/curve_0002.png` is gone. Add one to `t_junction` and get
 `t_junction_0005`, not `t_junction_0000` reused. Type seed 137 into `curve_0004` and watch it
 rebuild. Then remove every scenario of a one-category bank — refused, readably, on the panel.
+
+Four decisions this step made:
+
+- **The overrides are recorded, not applied and forgotten.** A destination changed in the page
+  writes `exit_node` onto the row, not just the new `destination` it resolved to. The manifest's
+  rule is "declare the intent, store the fact", and without the intent a later rebuild would
+  silently revert to the category's rule. Three new fields rather than two, because `exit_rule`
+  survives a seed change and an exact node cannot.
+- **A pinned exit does not outlive its seed.** `1T0_1_` is an arm of *that* seed's road, and
+  `StdTInterSection` offers a different arm on seeds 2 and 3. So a rebuild at a new seed drops the
+  pin and says so on the job's own output, rather than failing on a node nobody typed or carrying
+  an intent the road cannot honour.
+- **`bank.set_max_steps` gets an endpoint, not a job.** It is the one edit that measures nothing,
+  and `POST /api/banks/{bank}/scenarios/{id}/budget` writes the manifest in-process — no
+  subprocess, no second of Python start-up to change one integer. It is refused with a 409 while a
+  job is running, because `replace` holds a manifest in memory and writes it back at the end: an
+  edit slipped in beside it would be lost silently, which is the one failure the page could not
+  show you.
+- **`add` re-creates a category the manifest no longer holds**, from this build's `categories.py`.
+  Removing a category's last scenario removes the entry, and without this that removal would be
+  the only edit here you could not undo.
+
+**Schema 1.1 was the real cost, and it was smaller than it looked.** The three fields are optional,
+so every 1.0 bank on disk still opens and `_locate`, `review` and the studio needed no version
+branch. What they did need was one place to resolve an override: `CategoryEntry.rule_for` and
+`budget_for`. `review.Budget` grew `caps` — the cap that applies to each id — so the page reads the
+number rather than working out whose cap applies, exactly as it already reads `earned` rather than
+dividing metres by a constant.
+
+*(Done 2026-09-03. 311 tests pass, ruff clean. Verified in a running studio against copies of
+`banks/t-junction-left-intersection` and `banks/curve`. `curve_0003`'s budget went to 500 with no
+job created — the panel read `820 / 500 · its own` and the band's warning became `curve_0003
+(820/500)`. Removing `curve_0002` left `0000, 0001, 0003, 0004` with their pictures and took
+`thumbs/curve_0002.png` with it; the review noticed the bank had lost a turn pair and said `no
+scenario drives RR`. Seed 137 typed into `curve_0004` rebuilt it to 204.3 m / −126.6° / RR. Adding
+a `t_junction` at seed 7 gave `t_junction_0005`, and pinning its exit to `1T1_1_` — listed by a
+`sockets` job on the manifest's own road — rebuilt it to 122.5 m / 0.0° and recorded
+`exit_node: "1T1_1_"`, the panel reading `1T1_1_ · pinned on this scenario`. Then the last
+scenario of a one-category bank: refused on the panel with `remove failed: curve_0004 is the only
+scenario in this bank…`. No console errors. The scratch banks were removed; the three real banks
+were never opened for writing and are still 1.0.)*
 
 ### Step 9 — four new scenario types ⬜
 

@@ -53,7 +53,14 @@ from scenariobank.sockets import (
 )
 
 #: Bumped when a reader would break. The runner validates against it rather than duck-typing.
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"
+
+#: Every version this build can read. 1.1 added the three optional per-scenario overrides below,
+#: so a 1.0 manifest is a 1.1 one that overrides nothing and the banks already on disk keep
+#: opening. The reverse does not hold -- `extra="forbid"` means a 1.0 reader refuses a row that
+#: declares its own budget -- which is why the number moved rather than the fields being slipped
+#: in quietly under the old one.
+READABLE_VERSIONS = ("1.0", "1.1")
 
 #: Where thumbnails go, relative to the bank root. Stored in the manifest as a relative path so
 #: a bank directory can be moved or mounted anywhere.
@@ -69,6 +76,15 @@ _PER_RUN_KEYS = ("map", "start_seed", "num_scenarios")
 
 class BankError(RuntimeError):
     """Raised when a bank cannot be generated -- a seed that will not build, a wrong drive side."""
+
+
+class ScenarioNotFound(BankError):
+    """No scenario by that id in this bank.
+
+    A `BankError`, so every existing handler still catches it, and its own type so a caller that
+    answers over HTTP can tell "this bank does not hold that" (a 404) from "that is not a thing
+    you may ask for" (a 400) without reading the sentence.
+    """
 
 
 class ScenarioRow(BaseModel):
@@ -99,6 +115,25 @@ class ScenarioRow(BaseModel):
     turn_pairs: str
     thumbnail: str | None
 
+    # The three overrides below are what makes this schema 1.1, and all three are `None` on a row
+    # that follows its category. They are *declared intent* for one scenario, the way the entry's
+    # fields are the declared intent for the type -- an overridden row keeps its category name,
+    # because a bank that silently reclassified a scenario would be the manifest failing to
+    # explain itself.
+
+    #: This row's own exit rule, or `None` to follow the category's. `destination` above is still
+    #: the fact it resolved to.
+    exit_rule: str | None = None
+    #: An exact exit, pinned instead of resolved from a rule. Only meaningful at *this row's*
+    #: seed: `StdTInterSection` offers a different arm on seeds 2 and 3, so a node pinned at one
+    #: seed may not exist at another, and a rebuild at a new seed drops the pin rather than
+    #: failing on a node nobody typed.
+    exit_node: str | None = None
+    #: This row's own step cap, or `None` to follow the category's. The only field of a scenario
+    #: that is declared rather than measured, and so the only one an edit can change without
+    #: building a road again.
+    max_steps: int | None = None
+
 
 class CategoryEntry(BaseModel):
     """One category's scenarios, and the fixed facts they share."""
@@ -112,6 +147,18 @@ class CategoryEntry(BaseModel):
     exit_rule: str
     max_steps: int
     scenarios: list[ScenarioRow]
+
+    def rule_for(self, row: ScenarioRow) -> str:
+        """The exit rule that applies to one row: its own if it declares one, else this one.
+
+        Resolved here rather than wherever a row is read, so the review, the studio's panel and a
+        rebuild cannot come to different conclusions about which rule a scenario was built on.
+        """
+        return row.exit_rule or self.exit_rule
+
+    def budget_for(self, row: ScenarioRow) -> int:
+        """The step cap that applies to one row: its own if it declares one, else this one."""
+        return self.max_steps if row.max_steps is None else row.max_steps
 
 
 class SimulatorInfo(BaseModel):
@@ -130,7 +177,7 @@ class Manifest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["1.0"]
+    schema_version: Literal["1.0", "1.1"]
     bank_id: str
     created_utc: str
     metadrive: SimulatorInfo
@@ -209,6 +256,7 @@ def _draw_thumbnail(
     seed: int,
     exit_socket,
     net_rotation: float,
+    intent: str | None = None,
 ) -> str:
     """Draw one scenario's route and return the PNG's path relative to the bank root.
 
@@ -231,6 +279,7 @@ def _draw_thumbnail(
         exit_socket=exit_socket,
         out_path=out_dir / relative,
         net_rotation=net_rotation,
+        intent=intent,
     )
     return relative
 
@@ -376,8 +425,11 @@ def generate(
 def replace_scenario(
     bank_dir: Path,
     scenario_id_: str,
-    seed: int,
+    seed: int | None = None,
     *,
+    exit_rule: str | None = None,
+    destination: str | None = None,
+    inherit_exit: bool = False,
     thumbnails: bool = True,
     progress: Callable[[str], None] | None = None,
 ) -> ScenarioRow:
@@ -397,6 +449,13 @@ def replace_scenario(
     `block_seq` and `exit_rule` come from the **manifest's own category entry**, not from
     `categories.py`. The bank is self-describing, and one generated before a code change should
     still be correctable afterwards.
+
+    Omit `seed` to rebuild at the one the row already has, which is what changing *where it drives
+    to* means: `exit_rule` gives this row its own rule, `destination` pins an exact exit, and
+    `inherit_exit` puts it back on the category's. Those are schema 1.1's per-scenario overrides,
+    and they are recorded on the row rather than applied and forgotten -- a rebuild months later
+    has to resolve the same way, and "declare the intent, store the fact" is how every other field
+    here already works.
     """
     from metadrive.envs.metadrive_env import MetaDriveEnv
 
@@ -405,6 +464,10 @@ def replace_scenario(
     say = progress or (lambda _message: None)
 
     name, entry, index = _locate(manifest, scenario_id_)
+    old = entry.scenarios[index]
+    # A rebuild that names no seed is a rebuild at this row's own seed. That is what an edit to
+    # the exit is: same draw, different destination.
+    seed = old.seed if seed is None else seed
     taken = {row.seed for i, row in enumerate(entry.scenarios) if i != index}
     if seed in taken:
         raise BankError(
@@ -412,20 +475,16 @@ def replace_scenario(
             f"{name} currently holds seeds {sorted(row.seed for row in entry.scenarios)}."
         )
 
-    try:
-        rule = ExitRule(entry.exit_rule)
-    except ValueError as error:
-        raise BankError(
-            f"{name} records exit rule {entry.exit_rule!r}, which this build does not know"
-        ) from error
-
-    category = Category(
-        name=name,
-        block_seq=entry.block_seq,
-        exit_rule=rule,
-        max_steps=entry.max_steps,
-        description=entry.description,
+    over_rule, over_node = _exit_intent(
+        entry,
+        old,
+        seed,
+        exit_rule=exit_rule,
+        destination=destination,
+        inherit=inherit_exit,
+        say=say,
     )
+    category = _category_for(name, entry, rule=over_rule, max_steps=entry.budget_for(old))
     env = MetaDriveEnv(
         base_config(map=entry.block_seq, start_seed=seed, num_scenarios=1)
     )
@@ -434,15 +493,24 @@ def replace_scenario(
         _assert_drive_side(env, entry.block_seq, seed)
         row, chosen = _measure(
             env, category, seed, read_sockets_from_env(env), int(env.agent.lane_index[2]),
-            scenario_id_,
+            scenario_id_, pinned=over_node,
         )
-        old = entry.scenarios[index]
+        # The row is measured; the overrides are declared. They are written on afterwards so
+        # `_measure` stays the one thing that reads a road, and `max_steps` rides along untouched
+        # because a rebuild changes what a scenario drives, never the budget someone chose for it.
+        row = row.model_copy(
+            update={
+                "exit_rule": over_rule,
+                "exit_node": over_node,
+                "max_steps": old.max_steps,
+            }
+        )
         if thumbnails and old.thumbnail:
             row = row.model_copy(
                 update={
                     "thumbnail": _draw_thumbnail(
                         bank_dir, scenario_id_, env, category, seed, chosen,
-                        row.net_rotation_deg,
+                        row.net_rotation_deg, _pin_label(over_node),
                     )
                 }
             )
@@ -456,13 +524,7 @@ def replace_scenario(
     finally:
         env.close()
 
-    earned = step_budget(row.route_length_m)
-    if earned > entry.max_steps:
-        say(
-            f"warning: {scenario_id_} at seed {seed} runs {row.route_length_m:.1f} m, which "
-            f"earns a budget of {earned} steps against {name}'s cap of {entry.max_steps}. The "
-            "scenario is written; a policy may run out of steps before reaching the destination."
-        )
+    _warn_budget(entry, row, name, say)
 
     entry.scenarios[index] = row
     write_manifest(bank_dir, manifest)
@@ -473,6 +535,287 @@ def replace_scenario(
     return row
 
 
+def add_scenario(
+    bank_dir: Path,
+    category_name: str,
+    seed: int,
+    *,
+    thumbnails: bool = True,
+    progress: Callable[[str], None] | None = None,
+) -> ScenarioRow:
+    """Build one more scenario for a category and append it to an existing bank.
+
+    **The new id is one past the highest, never `len(scenarios)`.** Removing leaves a gap, so a
+    bank that counted rows would eventually re-issue `curve_0002` for a different road -- and an
+    id is how a run refers to a scenario and how Phase 5's results are keyed. A re-used id makes
+    every recorded one ambiguous; a gap costs nothing, because `_locate` already searches by id.
+
+    A category still in the manifest is built from the **manifest's own entry**, the way
+    `replace_scenario` is. A category the manifest no longer holds -- removed with its last
+    scenario -- is re-created from `categories.py`, because otherwise that removal would be the
+    one edit this tool cannot undo.
+    """
+    from metadrive.envs.metadrive_env import MetaDriveEnv
+
+    bank_dir = Path(bank_dir)
+    manifest = read_manifest(bank_dir)
+    say = progress or (lambda _message: None)
+
+    entry = manifest.categories.get(category_name)
+    if entry is None:
+        known = get_category(category_name)
+        entry = CategoryEntry(
+            description=known.description,
+            block_seq=known.block_seq,
+            exit_rule=known.exit_rule.value,
+            max_steps=known.max_steps,
+            scenarios=[],
+        )
+        manifest.categories[known.name] = entry
+        category_name = known.name
+        say(
+            f"{category_name} was not in this bank, so its road and rule come from this build: "
+            f"{entry.block_seq} / {entry.exit_rule}."
+        )
+
+    taken = sorted(row.seed for row in entry.scenarios)
+    if seed in taken:
+        raise BankError(
+            f"seed {seed} is already used by {category_name}: each seed builds one scenario. "
+            f"{category_name} currently holds seeds {taken}."
+        )
+
+    name = scenario_id(category_name, _next_index(entry))
+    category = _category_for(category_name, entry)
+    env = MetaDriveEnv(base_config(map=entry.block_seq, start_seed=seed, num_scenarios=1))
+    try:
+        _reset(env, seed, entry.block_seq)
+        _assert_drive_side(env, entry.block_seq, seed)
+        row, chosen = _measure(
+            env, category, seed, read_sockets_from_env(env), int(env.agent.lane_index[2]), name,
+        )
+        if thumbnails:
+            row = row.model_copy(
+                update={
+                    "thumbnail": _draw_thumbnail(
+                        bank_dir, name, env, category, seed, chosen, row.net_rotation_deg,
+                    )
+                }
+            )
+    finally:
+        env.close()
+
+    _warn_budget(entry, row, category_name, say)
+    entry.scenarios.append(row)
+    write_manifest(bank_dir, manifest)
+    say(
+        f"added {name}  seed {seed}  -> {row.destination}  lane {row.spawn_lane_index}  "
+        f"{row.route_length_m:.1f} m  {row.net_rotation_deg:+.1f} deg"
+    )
+    return row
+
+
+def remove_scenario(
+    bank_dir: Path,
+    scenario_id_: str,
+    *,
+    progress: Callable[[str], None] | None = None,
+) -> ScenarioRow:
+    """Take one scenario out of a bank, with its picture. No simulator.
+
+    **The ids that remain do not move.** Renumbering `curve_0003` down because `curve_0002` went
+    would change the id of a scenario nobody touched, and an id already written into a result is
+    not this tool's to re-point. So the position is left empty and `scenario_id` stops being a
+    row number, which `_locate` never assumed anyway.
+
+    The thumbnail goes with the row, on the rule `replace_scenario` already set: a picture of a
+    scenario that is not in the manifest is wrong, not merely stale. A category whose last
+    scenario is removed goes too -- an entry with no scenarios describes nothing -- and the
+    bank's last scenario is refused, because an empty bank is a manifest with nothing in it.
+    """
+    bank_dir = Path(bank_dir)
+    manifest = read_manifest(bank_dir)
+    say = progress or (lambda _message: None)
+
+    name, entry, index = _locate(manifest, scenario_id_)
+    held = sum(len(one.scenarios) for one in manifest.categories.values())
+    if held == 1:
+        raise BankError(
+            f"{scenario_id_} is the only scenario in this bank, and a bank with nothing in it is "
+            "a manifest describing no scenarios. Delete the directory instead, or generate a new "
+            "bank over it."
+        )
+
+    row = entry.scenarios.pop(index)
+    if row.thumbnail:
+        (bank_dir / row.thumbnail).unlink(missing_ok=True)
+    if not entry.scenarios:
+        del manifest.categories[name]
+        say(f"{scenario_id_} was the last {name} in this bank, so the category went with it.")
+    write_manifest(bank_dir, manifest)
+    say(
+        f"removed {scenario_id_}  seed {row.seed}  -> {row.destination}. The ids after it keep "
+        f"their numbers: {name} does not renumber."
+    )
+    return row
+
+
+def set_max_steps(
+    bank_dir: Path,
+    scenario_id_: str,
+    max_steps: int | None,
+    *,
+    progress: Callable[[str], None] | None = None,
+) -> ScenarioRow:
+    """Give one scenario its own step budget, or `None` to put it back on its category's.
+
+    **The one edit here that builds nothing.** Every other field of a row is read off a road, so
+    changing it means building that road again; `max_steps` is a cap somebody chose, and choosing
+    a different one is an edit to the manifest and nothing else.
+
+    It is still checked against what the route earns from `step_budget`, because a budget below
+    that is the one setting on this panel that can make a scenario unfinishable.
+    """
+    bank_dir = Path(bank_dir)
+    manifest = read_manifest(bank_dir)
+    say = progress or (lambda _message: None)
+
+    if max_steps is not None and max_steps < 1:
+        raise BankError(
+            f"a step budget of {max_steps} would end the episode before it began: "
+            "give at least 1, or clear the override to use the category's cap."
+        )
+
+    name, entry, index = _locate(manifest, scenario_id_)
+    row = entry.scenarios[index].model_copy(update={"max_steps": max_steps})
+    entry.scenarios[index] = row
+    _warn_budget(entry, row, name, say)
+    write_manifest(bank_dir, manifest)
+
+    whose = "its own" if max_steps is not None else f"{name}'s"
+    say(
+        f"{scenario_id_} runs on a budget of {entry.budget_for(row)} steps ({whose}); its "
+        f"{row.route_length_m:.1f} m route earns {step_budget(row.route_length_m)}."
+    )
+    return row
+
+
+def _next_index(entry: CategoryEntry) -> int:
+    """One past the highest index any of these ids carries, or 0 for an empty category.
+
+    Read off the **ids** rather than counted, because removal leaves gaps and a count would walk
+    back into one. A row whose id does not end in a number does not vote: the id is still the key
+    either way, and guessing at its shape would be worse than ignoring it.
+    """
+    highest = -1
+    for row in entry.scenarios:
+        suffix = row.scenario_id.rpartition("_")[2]
+        if suffix.isdigit():
+            highest = max(highest, int(suffix))
+    return highest + 1
+
+
+def _exit_intent(
+    entry: CategoryEntry,
+    row: ScenarioRow,
+    seed: int,
+    *,
+    exit_rule: str | None,
+    destination: str | None,
+    inherit: bool,
+    say: Callable[[str], None],
+) -> tuple[str | None, str | None]:
+    """What this row's destination should be resolved from after an edit: a rule, or an exit.
+
+    Four ways in, and the last is the one worth spelling out. An edit that says nothing about the
+    exit carries the row's own override forward -- except a pinned node when the seed moves. A
+    node names an arm of *that* seed's road, so it cannot outlive the seed it was pinned at, and
+    carrying it would fail the rebuild with a message about a node nobody typed.
+    """
+    if exit_rule is not None and destination is not None:
+        raise BankError(
+            "give either an exit rule or an exact exit, not both: one resolves the destination "
+            "and the other names it outright."
+        )
+    if inherit:
+        if exit_rule is not None or destination is not None:
+            raise BankError(
+                "inheriting the category's exit and naming one of your own are two different "
+                "instructions; give one."
+            )
+        return None, None
+    if exit_rule is not None:
+        try:
+            ExitRule(exit_rule)
+        except ValueError as error:
+            known = ", ".join(member.value for member in ExitRule)
+            raise BankError(f"unknown exit rule {exit_rule!r}: one of {known}") from error
+        return exit_rule, None
+    if destination is not None:
+        return None, destination
+    if row.exit_node and seed != row.seed:
+        say(
+            f"note: {row.scenario_id} pinned the exit {row.exit_node}, which is an arm of seed "
+            f"{row.seed}'s road. Seed {seed} builds a different road, so this rebuild resolves "
+            f"its exit from {entry.exit_rule} instead."
+        )
+        return row.exit_rule, None
+    return row.exit_rule, row.exit_node
+
+
+def _category_for(
+    name: str, entry: CategoryEntry, *, rule: str | None = None, max_steps: int | None = None
+) -> Category:
+    """The `Category` an edit builds against: the manifest's entry, with a row's overrides on top.
+
+    From the entry rather than from `CATEGORIES`, because a bank is self-describing and one
+    generated before a code change still has to be correctable afterwards.
+    """
+    value = rule or entry.exit_rule
+    try:
+        resolved = ExitRule(value)
+    except ValueError as error:
+        raise BankError(
+            f"{name} records exit rule {value!r}, which this build does not know"
+        ) from error
+    return Category(
+        name=name,
+        block_seq=entry.block_seq,
+        exit_rule=resolved,
+        max_steps=entry.max_steps if max_steps is None else max_steps,
+        description=entry.description,
+    )
+
+
+def _pin_label(node: str | None) -> str | None:
+    """What a thumbnail's title says the destination was chosen by.
+
+    A picture outlives the session that drew it, so a route to a pinned exit must not be captioned
+    with a rule that would have chosen a different one.
+    """
+    return "pinned" if node else None
+
+
+def _warn_budget(
+    entry: CategoryEntry, row: ScenarioRow, name: str, say: Callable[[str], None]
+) -> None:
+    """Say so when a route earns more steps than the cap that applies to it.
+
+    Written anyway, never refused: the scenario is real and the cap is a decision. `review`
+    reports the same thing across a whole bank, from `entry.budget_for` -- the same one place the
+    override is resolved.
+    """
+    earned = step_budget(row.route_length_m)
+    cap = entry.budget_for(row)
+    if earned > cap:
+        whose = "its own cap" if row.max_steps is not None else f"{name}'s cap"
+        say(
+            f"warning: {row.scenario_id} at seed {row.seed} runs {row.route_length_m:.1f} m, "
+            f"which earns a budget of {earned} steps against {whose} of {cap}. The scenario is "
+            "written; a policy may run out of steps before reaching the destination."
+        )
+
+
 def _locate(manifest: Manifest, scenario_id_: str) -> tuple[str, CategoryEntry, int]:
     """Find a scenario by its public key, or say which keys exist."""
     for name, entry in manifest.categories.items():
@@ -480,7 +823,7 @@ def _locate(manifest: Manifest, scenario_id_: str) -> tuple[str, CategoryEntry, 
             if row.scenario_id == scenario_id_:
                 return name, entry, index
     known = [row.scenario_id for entry in manifest.categories.values() for row in entry.scenarios]
-    raise BankError(
+    raise ScenarioNotFound(
         f"no scenario {scenario_id_!r} in this bank. It holds {len(known)}: "
         f"{', '.join(known[:6])}{', ...' if len(known) > 6 else ''}"
     )
@@ -544,6 +887,8 @@ def _measure(
     readings,
     spawn_lane: int,
     name: str,
+    *,
+    pinned: str | None = None,
 ) -> tuple[ScenarioRow, Any]:
     """Pin this category's destination on the live env and read the route back off it.
 
@@ -553,11 +898,25 @@ def _measure(
 
     Returns the row and the socket the rule resolved to, because the thumbnail's title names the
     rule and the node it chose, and resolving twice would be a second chance to disagree.
+
+    `pinned` names an exit outright, for a row that declares one instead of a rule. It is checked
+    against the exits **this seed's** road actually offers, which is the whole hazard of pinning a
+    node: the arm that exists at one seed need not exist at the next.
     """
-    try:
-        chosen = select_exit(readings, category.exit_rule)
-    except SocketError as error:
-        raise BankError(f"{category.name} at seed {seed}: {error}") from error
+    if pinned is not None:
+        chosen = next((reading for reading in readings if reading.node == pinned), None)
+        if chosen is None:
+            offered = ", ".join(reading.node for reading in readings)
+            raise BankError(
+                f"{category.name} at seed {seed} has no exit {pinned!r}: this road offers "
+                f"{offered}. An exit is resolved per seed, so a node pinned at one seed is not "
+                "guaranteed at another."
+            )
+    else:
+        try:
+            chosen = select_exit(readings, category.exit_rule)
+        except SocketError as error:
+            raise BankError(f"{category.name} at seed {seed}: {error}") from error
 
     navigation = env.agent.navigation
     try:
@@ -589,7 +948,12 @@ def write_manifest(out_dir: Path, manifest: Manifest) -> Path:
     Written **last**, after every map is built and every thumbnail is on disk. An interrupted
     generation therefore leaves a directory with no manifest, which reads as "no bank here"
     rather than as a bank that is quietly missing rows.
+
+    Stamped with this build's `SCHEMA_VERSION` on the way out, because the version describes the
+    shape of the file rather than the history of the bank: a 1.0 manifest edited by a build that
+    can write per-scenario overrides is a 1.1 file, whether or not this particular edit used one.
     """
+    manifest = manifest.model_copy(update={"schema_version": SCHEMA_VERSION})
     path = out_dir / MANIFEST_NAME
     temporary = path.with_suffix(".json.tmp")
     temporary.write_text(manifest.model_dump_json(indent=2) + "\n")
@@ -622,17 +986,22 @@ def _stored_config() -> dict[str, Any]:
 
 __all__ = [
     "MANIFEST_NAME",
+    "READABLE_VERSIONS",
     "SCHEMA_VERSION",
     "BankError",
     "CategoryEntry",
     "Manifest",
+    "ScenarioNotFound",
     "ScenarioRow",
     "SimulatorInfo",
+    "add_scenario",
     "describe_config",
     "generate",
     "num_scenarios_for",
     "read_manifest",
+    "remove_scenario",
     "replace_scenario",
     "scenario_id",
+    "set_max_steps",
     "write_manifest",
 ]

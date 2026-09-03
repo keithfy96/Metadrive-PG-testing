@@ -13,6 +13,10 @@ from scenariobank.logging import configure_logging
 from scenariobank.sockets import SocketError, read_sockets, select_exit
 
 Seed = Annotated[int, typer.Option("--seed", "-s", help="Map seed.")]
+BankDir = Annotated[
+    Path, typer.Option("--bank", help="Bank directory holding the manifest to edit.")
+]
+ScenarioKey = Annotated[str, typer.Option("--scenario", help="Which scenario, by its id.")]
 CategoryName = Annotated[
     str, typer.Option("--category", "-c", help="The category to scan.")
 ]
@@ -317,19 +321,30 @@ def _parse_seed_options(
 
 @app.command()
 def replace(
-    bank: Annotated[
-        Path, typer.Option("--bank", help="Bank directory holding the manifest to correct.")
-    ],
-    scenario: Annotated[
-        str, typer.Option("--scenario", help="Which scenario to rebuild.")
-    ],
-    seed: Annotated[int, typer.Option("--seed", "-s", help="Seed to rebuild it at.")],
+    bank: BankDir,
+    scenario: ScenarioKey,
+    seed: Annotated[
+        int | None,
+        typer.Option("--seed", "-s", help="Seed to rebuild it at. Defaults to the one it has."),
+    ] = None,
+    exit_rule: Annotated[
+        str | None,
+        typer.Option("--exit-rule", help="Give this scenario its own exit rule."),
+    ] = None,
+    destination: Annotated[
+        str | None,
+        typer.Option("--destination", help="Pin an exact exit node instead of resolving one."),
+    ] = None,
+    inherit_exit: Annotated[
+        bool,
+        typer.Option("--inherit-exit", help="Drop this scenario's exit override."),
+    ] = False,
     thumbnails: Annotated[
         bool,
         typer.Option("--thumbnails/--no-thumbnails", help="Redraw the scenario's PNG."),
     ] = True,
 ) -> None:
-    """Rebuild one scenario of an existing bank at a different seed, in place.
+    """Rebuild one scenario of an existing bank, in place: a new seed, or a new destination.
 
     The correction loop: generate a bank, look at it, and swap the scenarios that turned out to
     be poor draws -- without paying to regenerate the other thirty-four.
@@ -338,8 +353,13 @@ def replace(
     position; only the seed and what was measured from it change. A seed already used elsewhere
     in the same category is refused, because a bank does not build one seed twice.
 
-    Use `scenariobank seeds` to find a seed worth swapping to, and `scenariobank inspect
-    --block-seq` to look at it first.
+    Omit `--seed` to rebuild at the seed it already has, which is what changing where it drives
+    to means. `--exit-rule` and `--destination` are recorded on the row as its own declared
+    intent, and `--inherit-exit` puts it back on the category's; a pinned exit is dropped when the
+    seed moves, because a node names an arm of that seed's road.
+
+    Use `scenariobank seeds` to find a seed worth swapping to, `scenariobank sockets` to see the
+    exits a road offers, and `scenariobank inspect --block-seq` to look at one first.
     """
     _require_simulator()
     from scenariobank.bank import BankError, replace_scenario
@@ -349,13 +369,127 @@ def replace(
             bank,
             scenario,
             seed,
+            exit_rule=exit_rule,
+            destination=destination,
+            inherit_exit=inherit_exit,
             thumbnails=thumbnails,
             progress=lambda message: typer.echo(message, err=True),
         )
     except (BankError, CategoryError, SocketError) as error:
         typer.echo(f"replace failed: {error}", err=True)
         raise typer.Exit(code=1) from error
-    typer.echo(f"{row.scenario_id} rebuilt at seed {row.seed}: {bank / 'manifest.json'}")
+    typer.echo(
+        f"{row.scenario_id} rebuilt at seed {row.seed} -> {row.destination}: "
+        f"{bank / 'manifest.json'}"
+    )
+
+
+@app.command("add")
+def add_scenario_cmd(
+    bank: BankDir,
+    category: Annotated[
+        str, typer.Option("--category", "-c", help="Which category to add a scenario to.")
+    ],
+    seed: Annotated[int, typer.Option("--seed", "-s", help="Seed to build it at.")],
+    thumbnails: Annotated[
+        bool,
+        typer.Option("--thumbnails/--no-thumbnails", help="Draw the new scenario's PNG."),
+    ] = True,
+) -> None:
+    """Add one more scenario to a category of an existing bank.
+
+    **The id is one past the highest, never the row count.** Removing leaves a gap, and re-using
+    an id would make every result already keyed on it ambiguous. So a `t_junction` holding
+    `_0000` to `_0004` gains `t_junction_0005` even if one of those five is missing.
+
+    The road and the rule come from the bank's own manifest, so a bank generated before a code
+    change grows the way it was built. A category this bank no longer holds is re-created from
+    this build's `categories.py`, which is what makes removing a category's last scenario an
+    edit you can undo.
+    """
+    _require_simulator()
+    from scenariobank.bank import BankError, add_scenario
+
+    try:
+        row = add_scenario(
+            bank,
+            category,
+            seed,
+            thumbnails=thumbnails,
+            progress=lambda message: typer.echo(message, err=True),
+        )
+    except (BankError, CategoryError, SocketError) as error:
+        typer.echo(f"add failed: {error}", err=True)
+        raise typer.Exit(code=1) from error
+    typer.echo(
+        f"added {row.scenario_id} at seed {row.seed} -> {row.destination}: "
+        f"{bank / 'manifest.json'}"
+    )
+
+
+@app.command("remove")
+def remove_scenario_cmd(bank: BankDir, scenario: ScenarioKey) -> None:
+    """Take one scenario out of a bank, with its picture. No simulator.
+
+    **The ids that remain do not move.** Renumbering the rows after it would change the id of a
+    scenario nobody touched, and an id already written into a result is not this command's to
+    re-point -- so the position is left empty and an id stops being a row number.
+
+    A category whose last scenario goes is removed with it. The bank's last scenario is refused:
+    an empty bank is a manifest describing nothing, and `generate` is how a new one is made.
+    """
+    from scenariobank.bank import BankError, remove_scenario
+
+    try:
+        row = remove_scenario(
+            bank, scenario, progress=lambda message: typer.echo(message, err=True)
+        )
+    except BankError as error:
+        typer.echo(f"remove failed: {error}", err=True)
+        raise typer.Exit(code=1) from error
+    typer.echo(f"removed {row.scenario_id}: {bank / 'manifest.json'}")
+
+
+@app.command("budget")
+def budget_cmd(
+    bank: BankDir,
+    scenario: ScenarioKey,
+    max_steps: Annotated[
+        int | None,
+        typer.Option("--max-steps", help="Steps this scenario gets, instead of its category's."),
+    ] = None,
+    inherit: Annotated[
+        bool,
+        typer.Option("--inherit", help="Drop the override and use the category's cap again."),
+    ] = False,
+) -> None:
+    """Set or clear one scenario's own step budget. The only edit here that builds nothing.
+
+    Every other field of a scenario is measured off a road, so changing it means building that
+    road again. `max_steps` is a cap somebody chose -- a bound on a stuck episode, not a
+    measurement -- so choosing a different one is an edit to the manifest and nothing else.
+
+    It is still checked against what the route earns from `step_budget`: a budget under that is
+    the one setting here that can leave a scenario unfinishable, and the warning says so.
+    """
+    from scenariobank.bank import BankError, set_max_steps
+
+    if (max_steps is None) == (not inherit):
+        raise typer.BadParameter(
+            "provide exactly one of --max-steps or --inherit", param_hint="--max-steps"
+        )
+    try:
+        row = set_max_steps(
+            bank,
+            scenario,
+            None if inherit else max_steps,
+            progress=lambda message: typer.echo(message, err=True),
+        )
+    except BankError as error:
+        typer.echo(f"budget failed: {error}", err=True)
+        raise typer.Exit(code=1) from error
+    whose = "its own" if row.max_steps is not None else "its category's"
+    typer.echo(f"{row.scenario_id} runs on {whose} budget: {bank / 'manifest.json'}")
 
 
 @app.command()

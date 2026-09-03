@@ -741,3 +741,95 @@ def test_a_look_name_that_is_not_a_name_never_becomes_a_path(client, name):
     # The same guard a thumbnail gets, for the same reason: the shape of the name is checked
     # before it is joined to anything, so a traversal is not filtered out -- it cannot be spelled.
     assert client.get(f"/api/looks/{name}.png").status_code == 400
+
+
+# ------------------------------------------------- the one write that is not a job (step 8b)
+
+
+def test_a_step_budget_is_saved_without_starting_a_job(client):
+    """`max_steps` is declared, not measured, so this endpoint writes the manifest itself.
+
+    Every other edit builds a road, and a road means an engine, which means a subprocess. Making
+    the page start a Python interpreter to change one integer would be a second of waiting for
+    nothing -- so this is the one write here with no job behind it, and the test says so by
+    checking that no job was ever created.
+    """
+    _bank(client.workdir / "banks", "b")
+
+    answer = client.post("/api/banks/b/scenarios/curve_0001/budget", json={"max_steps": 500})
+
+    assert answer.status_code == 200
+    assert answer.json()["max_steps"] == 500
+    assert client.get("/api/jobs").json() == []
+
+    rows = client.get("/api/banks/b").json()["categories"]["curve"]["scenarios"]
+    assert rows[1]["max_steps"] == 500
+    assert rows[0]["max_steps"] is None, "the others still follow the category"
+
+    # And the review reports the cap that applies to each row, from the one place an override is
+    # resolved -- so the page reads a number rather than working one out.
+    budget = client.get("/api/banks/b/review").json()["categories"][0]["budget"]
+    assert budget["caps"]["curve_0001"] == 500
+    assert budget["caps"]["curve_0000"] == budget["max_steps"] == CATEGORIES["curve"].max_steps
+
+
+def test_clearing_a_step_budget_puts_the_scenario_back_on_its_categorys(client):
+    _bank(client.workdir / "banks", "b")
+    client.post("/api/banks/b/scenarios/curve_0001/budget", json={"max_steps": 500})
+
+    answer = client.post("/api/banks/b/scenarios/curve_0001/budget", json={"max_steps": None})
+
+    assert answer.status_code == 200
+    assert answer.json()["max_steps"] is None
+    budget = client.get("/api/banks/b/review").json()["categories"][0]["budget"]
+    assert budget["caps"]["curve_0001"] == CATEGORIES["curve"].max_steps
+
+
+def test_a_budget_for_a_scenario_the_bank_does_not_hold_is_a_404(client):
+    # The bank is fine and the request is well formed; the id names nothing in it. The same split
+    # `/compare` makes, and the reason `ScenarioNotFound` is its own type.
+    _bank(client.workdir / "banks", "b")
+    answer = client.post("/api/banks/b/scenarios/curve_0009/budget", json={"max_steps": 500})
+    assert answer.status_code == 404
+    assert "curve_0009" in answer.json()["detail"]
+
+
+def test_a_budget_that_would_end_the_episode_before_it_began_is_refused(client):
+    _bank(client.workdir / "banks", "b")
+    answer = client.post("/api/banks/b/scenarios/curve_0001/budget", json={"max_steps": 0})
+    assert answer.status_code == 400
+    assert "before it began" in answer.json()["detail"]
+
+
+@pytest.mark.parametrize("scenario", [".ssh", "-lead", "a b"])
+def test_a_scenario_id_that_is_not_a_name_never_becomes_a_path(client, scenario):
+    _bank(client.workdir / "banks", "b")
+    answer = client.post(f"/api/banks/b/scenarios/{scenario}/budget", json={"max_steps": 500})
+    assert answer.status_code == 400
+    assert "not a scenario id" in answer.json()["detail"]
+
+
+def test_a_budget_is_not_written_underneath_a_running_job(client, monkeypatch):
+    """A `replace` holds the manifest in memory and writes it back when it finishes.
+
+    An edit slipped in beside it would be overwritten without a word, and a lost write is the one
+    failure the page could not show you. So the slot is checked first and the answer says what to
+    wait for.
+    """
+    _bank(client.workdir / "banks", "b")
+    monkeypatch.setattr(client.app.state.jobs, "running", lambda: {"command": "replace"})
+
+    answer = client.post("/api/banks/b/scenarios/curve_0001/budget", json={"max_steps": 500})
+
+    assert answer.status_code == 409
+    assert "replace" in answer.json()["detail"]
+    rows = client.get("/api/banks/b").json()["categories"]["curve"]["scenarios"]
+    assert rows[1]["max_steps"] is None
+
+
+def test_the_commands_that_edit_one_item_are_all_runnable_from_the_page(client):
+    # Every edit but the budget is a subprocess of this same CLI, so the page can only offer them
+    # if `/api/runnable` does. A flag typo'd here would be a 400 from `invoke.py`, not a page that
+    # quietly does nothing.
+    runnable = client.get("/api/runnable").json()["commands"]
+    assert {"replace", "add", "remove", "budget"} <= set(runnable)

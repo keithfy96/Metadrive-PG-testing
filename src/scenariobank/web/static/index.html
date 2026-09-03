@@ -323,16 +323,19 @@ h3.band .facts { font-family: var(--sans); font-weight: 400; font-size: 12px;
                           overflow-wrap: anywhere; }
 .side .numbers { flex: 1; min-width: 300px; }
 /* The one-selected panel: every field of the row, which is the whole point of the step -- the
-   manifest was written to explain itself and this is the first thing that reads it back. */
-.facts { display: grid; grid-template-columns: max-content 1fr; gap: 0.15rem 1rem;
-         font-size: 12.5px; margin: 0; }
+   manifest was written to explain itself and this is the first thing that reads it back.
+   Selected as `dl.facts`, not `.facts`: the same word labels a run of prose on the type card and
+   in the category band, and a grid laid over prose stretches each word to a column and pushes the
+   last one out of the card. The list is the only one of the three that is a list of pairs. */
+dl.facts { display: grid; grid-template-columns: max-content 1fr; gap: 0.15rem 1rem;
+           font-size: 12.5px; margin: 0; }
 /* Two pairs to a row where there is width for it. The panel sits over the grid, so every line it
    does not need is a card you can still see underneath it. */
 @media (min-width: 720px) {
-  .facts { grid-template-columns: max-content minmax(5rem, 1fr) max-content minmax(5rem, 1fr); }
+  dl.facts { grid-template-columns: max-content minmax(5rem, 1fr) max-content minmax(5rem, 1fr); }
 }
-.facts dt { color: var(--muted); }
-.facts dd { margin: 0; font-family: var(--mono); }
+dl.facts dt { color: var(--muted); }
+dl.facts dd { margin: 0; font-family: var(--mono); }
 table.diff { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 table.diff th { text-align: left; font-weight: 600; color: var(--muted); font-size: 11.5px;
                 padding: 0.15rem 0.6rem 0.3rem 0; white-space: nowrap; }
@@ -367,6 +370,23 @@ table.seeds td.gap .dup { color: var(--bad); }
 .swap .bar { margin: 0.5rem 0 0.35rem; }
 .swap .note { font-size: 12.5px; margin: 0.4rem 0 0; overflow-wrap: anywhere; }
 .swap .note.failed { font-family: var(--mono); font-size: 12px; white-space: pre-wrap; }
+
+/* Editing one item. The controls sit directly under the facts they change, in the panel that
+   already shows them: a form on its own screen would be a second description of a scenario, and
+   the one the manifest gives is the description. */
+.edit { margin-top: 0.9rem; border-top: 1px solid var(--hair); padding-top: 0.7rem; }
+.edit .line { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;
+              margin-top: 0.55rem; }
+.edit .line > .key { font-family: var(--mono); font-size: 12px; color: var(--accent);
+                     width: 7rem; flex: none; }
+.edit input[type="number"] { width: 6.5rem; font-family: var(--mono); font-size: 12.5px; }
+.edit select { width: auto; max-width: 20rem; font-family: var(--mono); font-size: 12.5px; }
+.edit .hint { font-size: 12px; color: var(--muted); }
+.edit .note { font-size: 12.5px; margin: 0.6rem 0 0; overflow-wrap: anywhere; }
+.edit .note.failed { font-family: var(--mono); font-size: 12px; white-space: pre-wrap; }
+/* Removing is the one control here that cannot be undone by pressing the other one, so it says
+   so in a colour and asks twice. */
+.edit button.danger { color: var(--bad); border-color: var(--bad); }
 </style>
 
 <header class="top">
@@ -462,7 +482,7 @@ table.seeds td.gap .dup { color: var(--bad); }
         <li class="done sub">6b — the statistics: how many are actually different</li>
         <li class="done">what generated this picture, and how two compare</li>
         <li class="done">replace the seed behind an image</li>
-        <li class="sub">8b — edit, add or remove one item</li>
+        <li class="done sub">8b — edit, add or remove one item</li>
         <li>four new scenario types</li>
         <li>the road builder — compose a road by hand</li>
         <li>the road utilities — exits, and the destinations reference</li>
@@ -1009,6 +1029,8 @@ function renderBank(name, manifest, report) {
         // metres by a constant would be a second rounding rule; this reads the review's answer,
         // and says so plainly when there is no review to read.
         earned: one ? one.budget.earned[row.scenario_id] : null,
+        // The cap that applies to *this* row, which is its own where schema 1.1 gave it one.
+        cap: one ? one.budget.caps[row.scenario_id] : null,
       };
     }
     const parts = [
@@ -1138,10 +1160,15 @@ function detailPanel(bank, id) {
     // `step_budget` rounds, and the rule for how belongs to `categories.py`. This reads the
     // review's answer rather than dividing metres by a constant here, and says so when there is
     // no review to read.
+    // The cap is the review's answer too, because since schema 1.1 a scenario may carry its own
+    // and `CategoryEntry.budget_for` is the one place that override is resolved.
     ["step budget", found.earned === null || found.earned === undefined
-      ? "needs the review" : `${found.earned} / ${entry.max_steps}`],
+      ? "needs the review"
+      : `${found.earned} / ${found.cap ?? entry.max_steps}`
+        + (row.max_steps === null || row.max_steps === undefined ? "" : " · its own")],
     ["road", entry.block_seq],
-    ["exit rule", entry.exit_rule],
+    ["exit rule", row.exit_node ? `${row.exit_node} · pinned on this scenario`
+      : row.exit_rule ? `${row.exit_rule} · this scenario's own` : entry.exit_rule],
     ["built on", commit ? `metadrive ${commit.slice(0, 8)}` : "an unrecorded metadrive"],
   ];
   const parts = [
@@ -1161,8 +1188,9 @@ function detailPanel(bank, id) {
     ]),
   ]));
   // The row says what this seed drew. The swap is what to do about it when the answer is "the
-  // same thing as the card next to it".
+  // same thing as the card next to it"; the edit controls are for everything a swap leaves alone.
   parts.push(...swapParts(bank, id));
+  parts.push(...editParts(bank, id));
   return parts;
 }
 
@@ -1262,13 +1290,14 @@ function forgetSwap() {
                         note: null, looking: null, looked: null });
 }
 
-// `seeds --json` writes its progress on stderr and one document on stdout, and a job merges the
-// two into a single log. The document is written last and, indented, its only brace at the start
-// of a line is the outermost one -- so the answer is the tail from there. Reading it back off the
-// log rather than inventing a second channel for it is the same choice `applyGenerate` makes.
+// A `--json` command writes its progress on stderr and one document on stdout, and a job merges
+// the two into a single log. The document is written last and, indented, its only bracket at the
+// start of a line is the outermost one -- so the answer is the tail from there. Reading it back
+// off the log rather than inventing a second channel for it is the same choice `applyGenerate`
+// makes. An object for `seeds`, an array for `sockets`; both are documents on one line each.
 function lastJson(text) {
-  const at = text.lastIndexOf("\n{");
-  if (at < 0 && !text.startsWith("{")) throw new Error("the command printed no JSON");
+  const at = Math.max(text.lastIndexOf("\n{"), text.lastIndexOf("\n["));
+  if (at < 0 && !/^[{[]/.test(text)) throw new Error("the command printed no JSON");
   return JSON.parse(text.slice(at < 0 ? 0 : at + 1));
 }
 
@@ -1532,12 +1561,312 @@ function swapParts(bank, id) {
   return [el("div", { class: "swap" }, parts)];
 }
 
+// ------------------------------------------------------- editing the item itself
+
+// Step 8 re-rolls a seed and deliberately keeps the bank's size, its ids and its positions. These
+// are the controls that change those, plus the two fields a re-roll never touches: where the
+// scenario drives to, and how many steps it gets to get there.
+//
+// **`max_steps` is declared; every other field is measured.** That one distinction decides the
+// whole panel. A budget is a number somebody chose, so it saves straight into the manifest and no
+// simulator starts; a different exit is a road driven again and therefore a job, like everything
+// else here. Which is which is visible in what happens when you press the button.
+const edit = { id: null, busy: null, note: null, failed: false,
+               exits: null, exitsFor: null, confirm: false };
+
+// What each running edit is called while you wait for it.
+const EDIT_SAID = {
+  replace: "rebuilding this scenario…",
+  add: "building the new scenario…",
+  remove: "removing it…",
+  exits: "reading this seed's exits…",
+  budget: "saving…",
+};
+
+function forgetEdit() {
+  Object.assign(edit, { id: null, busy: null, note: null, failed: false,
+                        exits: null, exitsFor: null, confirm: false });
+}
+
+function editNote(text, failed) {
+  edit.note = text || null;
+  edit.failed = Boolean(failed);
+}
+
+// Every edit that builds something is a job, submitted through the same POST a generate is.
+async function editJob(bank, id, command, options, what) {
+  edit.id = id;
+  edit.busy = what;
+  edit.confirm = false;
+  editNote(null);
+  renderPick(bank);
+  try {
+    await startJob(command, options);
+  } catch (error) {
+    edit.busy = null;
+    editNote(error.message, true);
+    renderPick(bank);
+  }
+}
+
+function applyEdit(job) {
+  if (!edit.busy || edit.busy === "exits" || job.state === "running") return;
+  const what = edit.busy;
+  const bank = dataset.name;
+  edit.busy = null;
+  if (job.state === "lost" || job.exit_code !== 0) {
+    // The CLI's own sentence -- `remove failed: curve_0000 is the only scenario in this bank…` --
+    // because the rule belongs to `bank.py`. With the Run tab gone this is where a refusal is
+    // read, so it is printed under the control that earned it rather than left in a log.
+    editNote(tail(run.text, 3) || `the ${what} ended without saying why`, true);
+    renderPick(bank);
+    return;
+  }
+  // `add` prints the id it chose, because the page cannot work it out: the number is one past the
+  // highest, and a gap a removal left is never walked back into.
+  const added = what === "add" ? run.text.match(/added (\S+) at seed/) : null;
+  const next = what === "remove" ? null : added ? added[1] : edit.id;
+  openBank(bank).then(() => {
+    picked.length = 0;
+    if (next && dataset.index[next]) picked.push(next);
+    markPicked();
+    renderPick(bank);
+  });
+}
+
+function applyExits(job) {
+  if (edit.busy !== "exits" || job.state === "running") return;
+  edit.busy = null;
+  if (job.state === "lost" || job.exit_code !== 0) {
+    editNote(tail(run.text, 3) || "the exits could not be read", true);
+  } else {
+    try {
+      // The entry socket is the arm the ego arrives through. Every rule in `sockets.py` excludes
+      // it and so does this list: it is not a place a route can end.
+      edit.exits = lastJson(run.text).filter((one) => !one.is_entry).map((one) => one.node);
+    } catch (error) {
+      editNote(`the exits could not be read: ${error.message}`, true);
+    }
+  }
+  renderPick(dataset.name);
+}
+
+// Read off **the manifest's** road at **this row's** seed, never off `categories.py`: a pinned
+// exit has to be one this scenario's own road offers, and an exit is resolved per seed.
+async function listExits(bank, id) {
+  const { row, entry } = dataset.index[id];
+  edit.exitsFor = `${entry.block_seq}:${row.seed}`;
+  await editJob(bank, id, "sockets",
+                { "--block-seq": entry.block_seq, "--seed": String(row.seed), "--json": true },
+                "exits");
+}
+
+// The one write on this page that is not a job. No road is built, so nothing polls and nothing
+// would re-read the bank on its own -- which is why this reloads it itself.
+async function saveBudget(bank, id, steps) {
+  edit.id = id;
+  edit.busy = "budget";
+  editNote(null);
+  renderPick(bank);
+  const at = `/api/banks/${encodeURIComponent(bank)}/scenarios/${encodeURIComponent(id)}/budget`;
+  try {
+    await api(at, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ max_steps: steps }),
+    });
+  } catch (error) {
+    edit.busy = null;
+    editNote(error.message, true);
+    renderPick(bank);
+    return;
+  }
+  await openBank(bank);
+  picked.length = 0;
+  picked.push(id);
+  markPicked();
+  edit.id = id;
+  editNote(steps === null
+    ? "back on the category's cap — the manifest changed and nothing was rebuilt"
+    : `budget set to ${steps} steps — the manifest changed and nothing was rebuilt`);
+  renderPick(bank);
+}
+
+// ------------------------------------------------------------ the edit controls, drawn
+
+function editLine(key, controls, hint) {
+  return el("div", { class: "line" }, [
+    el("span", { class: "key", text: key }),
+    ...controls,
+    ...(hint ? [el("span", { class: "hint", text: hint })] : []),
+  ]);
+}
+
+// One control for three ways of saying where a scenario drives to, because they are three answers
+// to one question. `--exit-rule` and `--destination` are the CLI's, and the empty value is
+// `--inherit-exit`: back to whatever the category says.
+function exitOptions(entry, row) {
+  const options = [el("option", { value: "", text: `${entry.exit_rule} · the category's rule` })];
+  for (const rule of build.rules || []) {
+    options.push(el("option", { value: `rule:${rule}`, text: `rule ${rule} · this one only` }));
+  }
+  for (const node of edit.exits || []) {
+    options.push(el("option", { value: `exit:${node}`, text: `exit ${node} · pinned` }));
+  }
+  const current = row.exit_node ? `exit:${row.exit_node}`
+    : row.exit_rule ? `rule:${row.exit_rule}` : "";
+  // A pin the row already carries is an option before the exits are listed. Leaving it out would
+  // make the control show a selection the manifest does not hold.
+  if (current && !options.some((one) => one.value === current)) {
+    options.push(el("option", { value: current, text: `exit ${row.exit_node} · pinned` }));
+  }
+  // The attribute rather than the property: `defaultSelected` is what a browser honours when
+  // the option is inserted into a select that does not exist yet.
+  for (const one of options) {
+    if (one.value === current) one.setAttribute("selected", "selected");
+  }
+  return options;
+}
+
+function editParts(bank, id) {
+  const found = dataset.index[id];
+  const { row, entry, category } = found;
+  // The controls describe *this* row, so a click on another card starts them over rather than
+  // carrying a half-typed seed or somebody else's refusal across.
+  if (edit.id !== id) forgetEdit();
+  edit.id = id;
+  const busy = Boolean(edit.busy) || swap.state === "scanning" || swap.state === "replacing";
+  const own = row.max_steps ?? null;
+
+  const parts = [el("div", { class: "picked-head" }, [
+    el("span", { class: "who", text: "this scenario" }),
+    el("span", { class: "hint",
+                 text: "the fields a re-roll never touches, and the two edits that change the "
+                       + "shape of the bank" }),
+  ])];
+
+  const seedBox = el("input", { type: "number", min: "0", step: "1", value: String(row.seed) });
+  const rebuild = el("button", { class: "ghost", text: "Rebuild at this seed" });
+  rebuild.disabled = busy;
+  rebuild.addEventListener("click", () => {
+    const seed = Number(seedBox.value);
+    if (!Number.isInteger(seed) || seed < 0) {
+      editNote("a seed is a whole number, 0 or more", true);
+      renderPick(bank);
+      return;
+    }
+    editJob(bank, id, "replace",
+            { "--bank": `${build.root}/${bank}`, "--scenario": id, "--seed": String(seed) },
+            "replace");
+  });
+  parts.push(editLine("seed", [seedBox, rebuild],
+                      "ranking is a thirty-one seed scan; this is for when you already know"));
+
+  const exit = el("select", {}, exitOptions(entry, row));
+  const known = edit.exitsFor === `${entry.block_seq}:${row.seed}` && Boolean(edit.exits);
+  const list = el("button", { class: "ghost",
+                              text: known ? "exits listed" : "List this seed's exits" });
+  list.disabled = busy || known;
+  list.addEventListener("click", () => listExits(bank, id));
+  const retarget = el("button", { class: "ghost", text: "Rebuild to this exit" });
+  retarget.disabled = busy;
+  retarget.addEventListener("click", () => {
+    const value = exit.value;
+    const where = value.startsWith("exit:") ? { "--destination": value.slice(5) }
+      : value.startsWith("rule:") ? { "--exit-rule": value.slice(5) }
+      : { "--inherit-exit": true };
+    editJob(bank, id, "replace",
+            { "--bank": `${build.root}/${bank}`, "--scenario": id, ...where }, "replace");
+  });
+  parts.push(editLine("exit", [exit, retarget, list],
+                      "same seed, another destination — the route is measured again, so it is a "
+                      + "rebuild"));
+
+  const steps = el("input", { type: "number", min: "1", step: "1",
+                              placeholder: String(entry.max_steps),
+                              value: own === null ? "" : String(own) });
+  const save = el("button", { class: "ghost", text: "Save" });
+  save.disabled = busy;
+  save.addEventListener("click", () => {
+    const typed = steps.value.trim();
+    if (!typed) {
+      saveBudget(bank, id, null);
+      return;
+    }
+    const value = Number(typed);
+    if (!Number.isInteger(value) || value < 1) {
+      editNote("a step budget is a whole number of steps, at least 1", true);
+      renderPick(bank);
+      return;
+    }
+    saveBudget(bank, id, value);
+  });
+  parts.push(editLine("step budget", [steps, save],
+    own === null
+      ? `empty follows ${category}'s ${entry.max_steps}. Saved into the manifest — no rebuild`
+      : `its own, instead of ${category}'s ${entry.max_steps}. Empty puts it back`));
+
+  const addBox = el("input", { type: "number", min: "0", step: "1",
+                               value: String(Math.max(...entry.scenarios.map((one) => one.seed))
+                                              + 1) });
+  const addOne = el("button", { class: "ghost", text: `Add another ${category}` });
+  addOne.disabled = busy;
+  addOne.addEventListener("click", () => {
+    const seed = Number(addBox.value);
+    if (!Number.isInteger(seed) || seed < 0) {
+      editNote("a seed is a whole number, 0 or more", true);
+      renderPick(bank);
+      return;
+    }
+    editJob(bank, id, "add",
+            { "--bank": `${build.root}/${bank}`, "--category": category, "--seed": String(seed) },
+            "add");
+  });
+  parts.push(editLine("add", [addBox, addOne],
+                      "numbered one past the highest id, never back into a gap"));
+
+  const remove = el("button", { class: "ghost danger",
+                                text: edit.confirm ? `Yes — remove ${id}` : "Remove this one" });
+  remove.disabled = busy;
+  remove.addEventListener("click", () => {
+    if (!edit.confirm) {
+      edit.confirm = true;
+      editNote(null);
+      renderPick(bank);
+      return;
+    }
+    editJob(bank, id, "remove",
+            { "--bank": `${build.root}/${bank}`, "--scenario": id }, "remove");
+  });
+  const removing = [remove];
+  if (edit.confirm) {
+    // Asked twice, because this is the one control on the panel that the others cannot undo.
+    const keep = el("button", { class: "ghost", text: "keep it" });
+    keep.addEventListener("click", () => {
+      edit.confirm = false;
+      renderPick(bank);
+    });
+    removing.push(keep);
+  }
+  parts.push(editLine("remove", removing,
+    edit.confirm ? "its picture goes too, and the ids after it do not move"
+                 : "the ids after it keep their numbers; the position is left empty"));
+
+  if (edit.busy) parts.push(el("p", { class: "note", text: EDIT_SAID[edit.busy] }));
+  else if (edit.note) {
+    parts.push(el("p", { class: edit.failed ? "note failed" : "note", text: edit.note }));
+  }
+  return [el("div", { class: "edit" }, parts)];
+}
+
+
 async function openBank(name) {
   dataset.name = name;
   // Every picture in this bank is re-fetched rather than served from cache: a bank is re-opened
   // precisely when something in it may have changed.
   dataset.stamp = Date.now();
   forgetSwap();
+  forgetEdit();
   // The selection is of *these* cards. Carrying it into another bank would leave two ids picked
   // that are no longer on the screen, and a panel comparing scenarios you cannot see.
   picked.length = 0;
@@ -1601,6 +1930,20 @@ async function loadBanks(prefer) {
 }
 
 // -------------------------------------------------------------- the reference
+
+// One flag's closed set, out of the reference the page already holds. `docs._choices` reads it
+// from `categories.py`, `invoke.py` validates against the same entry, and this fills a dropdown
+// from it -- one list, three readers.
+function choicesFor(data, command, flag) {
+  for (const group of data.groups) {
+    for (const entry of group.commands) {
+      if (entry.name !== command) continue;
+      const param = entry.params.find((one) => one.flag === flag);
+      return (param && param.choices) || [];
+    }
+  }
+  return [];
+}
 
 function optionsTable(rows) {
   if (!rows.length) return el("p", { class: "blurb", text: "Takes no options." });
@@ -1712,7 +2055,13 @@ const WATCHERS = {
   examples: applyExamples,
   seeds: applySeeds,
   inspect: applyLook,
-  replace: applyReplace,
+  // Two screens start a `replace`: the ranked table swaps a seed, and the edit controls under it
+  // rebuild at a typed seed or at another exit. The job is the same one either way, so which of
+  // them is waiting decides where the answer lands.
+  replace: (job) => (swap.state === "replacing" ? applyReplace(job) : applyEdit(job)),
+  add: applyEdit,
+  remove: applyEdit,
+  sockets: applyExits,
 };
 
 function apply(job) {
@@ -1804,6 +2153,9 @@ Promise.all([api("/api/commands"), api("/api/categories"), api("/api/studio")])
     // CLI's default, which reads as `None` in the parameter table), where banks go, and where a
     // job may draw a seed nobody has committed yet.
     build.seeds = data.default_seeds;
+    // The five exit rules, read off the flag that writes one onto a scenario rather than listed
+    // here. `categories.py` owns the set; a copy in this file would be the sixth place to change.
+    build.rules = choicesFor(data, "replace", "--exit-rule");
     build.root = studio.banks_root;
     build.looks = studio.looks;
     build.writable = studio.writable;

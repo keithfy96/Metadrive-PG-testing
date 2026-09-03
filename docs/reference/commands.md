@@ -198,7 +198,7 @@ uv run scenariobank destinations
 
 ## Build and correct
 
-The two that write scenarios, and the one that writes this page.
+The ones that write into a bank, and the one that writes this page. `generate` makes a bank; the four after it change one scenario of one that exists.
 
 ### `generate`
 
@@ -228,7 +228,7 @@ uv run scenariobank generate -o /tmp/b --bank-id b -c curve --no-thumbnails  # o
 
 ### `replace`
 
-Rebuild one scenario of an existing bank at a different seed, in place.
+Rebuild one scenario of an existing bank, in place: a new seed, or a new destination.
 
 The correction loop: generate a bank, look at it, and swap the scenarios that turned out to
 be poor draws -- without paying to regenerate the other thirty-four.
@@ -237,18 +237,95 @@ be poor draws -- without paying to regenerate the other thirty-four.
 position; only the seed and what was measured from it change. A seed already used elsewhere
 in the same category is refused, because a bank does not build one seed twice.
 
-Use `scenariobank seeds` to find a seed worth swapping to, and `scenariobank inspect
---block-seq` to look at it first.
+Omit `--seed` to rebuild at the seed it already has, which is what changing where it drives
+to means. `--exit-rule` and `--destination` are recorded on the row as its own declared
+intent, and `--inherit-exit` puts it back on the category's; a pinned exit is dropped when the
+seed moves, because a node names an arm of that seed's road.
+
+Use `scenariobank seeds` to find a seed worth swapping to, `scenariobank sockets` to see the
+exits a road offers, and `scenariobank inspect --block-seq` to look at one first.
 
 | flag | | repeats | meaning |
 |---|---|---|---|
-| `--bank <path>` | **required** |  | Bank directory holding the manifest to correct. |
-| `--scenario <str>` | **required** |  | Which scenario to rebuild. A `scenario_id` from the bank's manifest, e.g. `curve_0004`. |
-| `--seed/-s <int>` | **required** |  | Seed to rebuild it at. Any non-negative integer. |
+| `--bank <path>` | **required** |  | Bank directory holding the manifest to edit. |
+| `--scenario <str>` | **required** |  | Which scenario, by its id. A `scenario_id` from the bank's manifest, e.g. `curve_0004`. |
+| `--seed/-s <int>` | optional |  | Seed to rebuild it at. Defaults to the one it has. Any non-negative integer. |
+| `--exit-rule <str>` | optional |  | Give this scenario its own exit rule. One of: `only`, `left`, `right`, `straight`, `sharpest`. Recorded on the scenario, not on its category. |
+| `--destination <str>` | optional |  | Pin an exact exit node instead of resolving one. An exit node as `sockets` reports it, e.g. `1T2_1_`. Only the exits **this seed's** road offers: a node is resolved per seed, so one pinned at a seed is dropped if the seed changes. |
+| `--inherit-exit` | default `false` |  | Drop this scenario's exit override. |
 | `--thumbnails/--no-thumbnails` | default `true` |  | Redraw the scenario's PNG. |
 
 ```bash
-uv run scenariobank replace --bank ./banks/b --scenario curve_0004 --seed 22  # rebuild one scenario; the other 34 are untouched
+uv run scenariobank replace --bank ./banks/b --scenario curve_0004 --seed 22                  # rebuild one scenario; the other 34 are untouched
+uv run scenariobank replace --bank ./banks/b --scenario t_junction_0002 --exit-rule left      # same seed, its own exit rule
+uv run scenariobank replace --bank ./banks/b --scenario t_junction_0002 --destination 1T0_1_  # same seed, that exact exit
+```
+
+### `add`
+
+Add one more scenario to a category of an existing bank.
+
+**The id is one past the highest, never the row count.** Removing leaves a gap, and re-using
+an id would make every result already keyed on it ambiguous. So a `t_junction` holding
+`_0000` to `_0004` gains `t_junction_0005` even if one of those five is missing.
+
+The road and the rule come from the bank's own manifest, so a bank generated before a code
+change grows the way it was built. A category this bank no longer holds is re-created from
+this build's `categories.py`, which is what makes removing a category's last scenario an
+edit you can undo.
+
+| flag | | repeats | meaning |
+|---|---|---|---|
+| `--bank <path>` | **required** |  | Bank directory holding the manifest to edit. |
+| `--category/-c <str>` | **required** |  | Which category to add a scenario to. One of: `intersection_left`, `intersection_right`, `intersection_straight`, `t_junction`, `roundabout`, `curve`, `ramp_traffic_merge`. |
+| `--seed/-s <int>` | **required** |  | Seed to build it at. Any non-negative integer. |
+| `--thumbnails/--no-thumbnails` | default `true` |  | Draw the new scenario's PNG. |
+
+```bash
+uv run scenariobank add --bank ./banks/b -c t_junction -s 7  # a sixth t_junction, numbered past the highest id
+```
+
+### `remove`
+
+Take one scenario out of a bank, with its picture. No simulator.
+
+**The ids that remain do not move.** Renumbering the rows after it would change the id of a
+scenario nobody touched, and an id already written into a result is not this command's to
+re-point -- so the position is left empty and an id stops being a row number.
+
+A category whose last scenario goes is removed with it. The bank's last scenario is refused:
+an empty bank is a manifest describing nothing, and `generate` is how a new one is made.
+
+| flag | | repeats | meaning |
+|---|---|---|---|
+| `--bank <path>` | **required** |  | Bank directory holding the manifest to edit. |
+| `--scenario <str>` | **required** |  | Which scenario, by its id. A `scenario_id` from the bank's manifest, e.g. `curve_0004`. |
+
+```bash
+uv run scenariobank remove --bank ./banks/b --scenario curve_0002  # the ids after it keep their numbers
+```
+
+### `budget`
+
+Set or clear one scenario's own step budget. The only edit here that builds nothing.
+
+Every other field of a scenario is measured off a road, so changing it means building that
+road again. `max_steps` is a cap somebody chose -- a bound on a stuck episode, not a
+measurement -- so choosing a different one is an edit to the manifest and nothing else.
+
+It is still checked against what the route earns from `step_budget`: a budget under that is
+the one setting here that can leave a scenario unfinishable, and the warning says so.
+
+| flag | | repeats | meaning |
+|---|---|---|---|
+| `--bank <path>` | **required** |  | Bank directory holding the manifest to edit. |
+| `--scenario <str>` | **required** |  | Which scenario, by its id. A `scenario_id` from the bank's manifest, e.g. `curve_0004`. |
+| `--max-steps <int>` | optional |  | Steps this scenario gets, instead of its category's. A whole number of steps, at least 1. |
+| `--inherit` | default `false` |  | Drop the override and use the category's cap again. |
+
+```bash
+uv run scenariobank budget --bank ./banks/b --scenario curve_0003 --max-steps 500  # a tighter cap on one scenario, no rebuild
+uv run scenariobank budget --bank ./banks/b --scenario curve_0003 --inherit        # back to the category's cap
 ```
 
 ### `commands`

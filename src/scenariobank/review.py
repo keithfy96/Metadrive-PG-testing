@@ -171,7 +171,12 @@ class Budget(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    #: The category's cap: what applies to a scenario that does not set its own.
     max_steps: int
+    #: The cap that actually applies to each id, which is the row's own where schema 1.1 gave it
+    #: one. Carried rather than left to the reader to work out, for the same reason `earned` is:
+    #: `CategoryEntry.budget_for` is the one place an override is resolved.
+    caps: dict[str, int]
     #: What each route earns from `step_budget`, by id. Carried per scenario as well as summarised
     #: because the panel that reads one scenario back needs this number, and `step_budget` is the
     #: only thing entitled to compute it -- a page dividing metres by a constant would be a second
@@ -325,15 +330,17 @@ def _coverage(rows: Sequence[ScenarioRow]) -> Coverage:
     )
 
 
-def _budget(rows: Sequence[ScenarioRow], max_steps: int) -> Budget:
+def _budget(rows: Sequence[ScenarioRow], entry: CategoryEntry) -> Budget:
     earned = {row.scenario_id: step_budget(row.route_length_m) for row in rows}
+    caps = {row.scenario_id: entry.budget_for(row) for row in rows}
     worst = max(earned, key=lambda name: earned[name]) if earned else None
     return Budget(
-        max_steps=max_steps,
+        max_steps=entry.max_steps,
+        caps=caps,
         earned=earned,
         worst_earned=earned[worst] if worst else 0,
         worst_scenario=worst,
-        over_budget=[name for name, steps in earned.items() if steps > max_steps],
+        over_budget=[name for name, steps in earned.items() if steps > caps[name]],
     )
 
 
@@ -360,10 +367,15 @@ def _warnings(
     """
     lines = []
     if budget.over_budget:
+        # Each id with the cap that applies to *it*: since schema 1.1 a scenario may carry its
+        # own, and a sentence naming only the category's would be wrong about those rows.
+        over = ", ".join(
+            f"{one} ({budget.earned[one]}/{budget.caps[one]})" for one in budget.over_budget
+        )
         lines.append(
-            f"{len(budget.over_budget)} scenario(s) earn more steps than {name}'s cap of "
-            f"{budget.max_steps}: {', '.join(budget.over_budget)}. A policy may run out of steps "
-            "before reaching the destination."
+            f"{len(budget.over_budget)} scenario(s) earn more steps than the cap they run on: "
+            f"{over}. {name}'s cap of {budget.max_steps} applies unless a scenario sets its own. "
+            "A policy may run out of steps before reaching the destination."
         )
     if dupes.distinct < dupes.total:
         spare = dupes.total - dupes.distinct
@@ -414,8 +426,8 @@ def review_category(name: str, entry: CategoryEntry) -> CategoryReview:
                 turns_left=0, turns_right=0, turns_straight=0,
             ),
             budget=Budget(
-                max_steps=entry.max_steps, earned={}, worst_earned=0, worst_scenario=None,
-                over_budget=[],
+                max_steps=entry.max_steps, caps={}, earned={}, worst_earned=0,
+                worst_scenario=None, over_budget=[],
             ),
             spread=Spread(
                 route_length_min_m=0.0, route_length_median_m=0.0, route_length_max_m=0.0,
@@ -426,7 +438,7 @@ def review_category(name: str, entry: CategoryEntry) -> CategoryReview:
 
     dupes = _duplicates(rows)
     cover = _coverage(rows)
-    budget = _budget(rows, entry.max_steps)
+    budget = _budget(rows, entry)
     return CategoryReview(
         category=name,
         block_seq=entry.block_seq,
@@ -521,8 +533,8 @@ def _fields(
         pair("turn pairs", left.turn_pairs or "none", right.turn_pairs or "none"),
         pair(
             "step budget",
-            f"{step_budget(left.route_length_m)} / {left_entry.max_steps}",
-            f"{step_budget(right.route_length_m)} / {right_entry.max_steps}",
+            f"{step_budget(left.route_length_m)} / {left_entry.budget_for(left)}",
+            f"{step_budget(right.route_length_m)} / {right_entry.budget_for(right)}",
             None if steps_apart == 0 else f"{steps_apart} steps",
         ),
     ]

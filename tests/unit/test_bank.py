@@ -6,14 +6,23 @@ import pytest
 
 from scenariobank.bank import (
     MANIFEST_NAME,
+    READABLE_VERSIONS,
+    SCHEMA_VERSION,
     BankError,
+    CategoryEntry,
     Manifest,
+    ScenarioRow,
+    _exit_intent,
+    _next_index,
+    add_scenario,
     describe_config,
     generate,
     num_scenarios_for,
     read_manifest,
+    remove_scenario,
     replace_scenario,
     scenario_id,
+    set_max_steps,
     write_manifest,
 )
 from scenariobank.categories import CATEGORIES, SEEDS
@@ -71,8 +80,22 @@ def test_read_manifest_says_what_a_missing_manifest_means(tmp_path):
 
 def test_write_manifest_round_trips(tmp_path):
     write_manifest(tmp_path, _minimal_manifest())
-    assert read_manifest(tmp_path) == _minimal_manifest()
+    assert read_manifest(tmp_path) == _minimal_manifest().model_copy(
+        update={"schema_version": SCHEMA_VERSION}
+    )
     assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_a_manifest_is_stamped_with_the_shape_the_writer_wrote(tmp_path):
+    """A 1.0 bank edited by this build comes back 1.1, and both versions still read.
+
+    The version describes the shape of the file, not the history of the bank. This build can write
+    a row that declares its own exit or its own budget, and a 1.0 reader forbids extra keys -- so
+    a file it has touched has to say 1.1 whether or not this particular edit used one.
+    """
+    write_manifest(tmp_path, _minimal_manifest())
+    assert read_manifest(tmp_path).schema_version == SCHEMA_VERSION
+    assert "1.0" in READABLE_VERSIONS and SCHEMA_VERSION in READABLE_VERSIONS
 
 
 def _minimal_manifest() -> Manifest:
@@ -265,3 +288,241 @@ def test_replace_names_the_scenarios_that_do_exist(tmp_path):
 def test_generate_refuses_duplicate_seeds(tmp_path):
     with pytest.raises(BankError, match="duplicate seeds"):
         generate(tmp_path, bank_id="test-bank", category_names=["curve"], seeds=(0, 0))
+
+
+# --------------------------------------------- editing one item: schema 1.1's three overrides
+
+
+def _edited_row(index: int, seed: int, **over) -> ScenarioRow:
+    """One plausible row, so the edits below can be tested without building a road."""
+    return ScenarioRow(
+        scenario_id=scenario_id("curve", index),
+        seed=seed,
+        destination="1C0_1_",
+        spawn_lane_index=0,
+        route_length_m=400.0,
+        net_rotation_deg=12.0,
+        turn_pairs="LL",
+        thumbnail=f"thumbs/curve_{index:04d}.png",
+        **over,
+    )
+
+
+def _bank_on_disk(tmp_path, count: int = 5) -> Manifest:
+    """A written bank with `count` curve rows and a picture for each. No simulator anywhere."""
+    rows = [_edited_row(index, index) for index in range(count)]
+    manifest = _minimal_manifest().model_copy(
+        update={
+            "categories": {
+                "curve": CategoryEntry(
+                    description="two curves",
+                    block_seq="CC",
+                    exit_rule="only",
+                    max_steps=1200,
+                    scenarios=rows,
+                )
+            }
+        }
+    )
+    (tmp_path / "thumbs").mkdir(exist_ok=True)
+    for row in rows:
+        (tmp_path / row.thumbnail).write_bytes(b"not really a png")
+    write_manifest(tmp_path, manifest)
+    return manifest
+
+
+def test_removing_a_scenario_leaves_a_gap_rather_than_renumbering(tmp_path):
+    """The decision the whole edit step turns on.
+
+    An id is how a run refers to a scenario and how a result is keyed, so renumbering `curve_0003`
+    down because `curve_0002` went would change the id of a scenario nobody touched. The gap
+    costs nothing: `_locate` searches by id, and the next id is read off the highest rather than
+    counted, so the empty position is never re-issued.
+    """
+    _bank_on_disk(tmp_path)
+    gone = remove_scenario(tmp_path, "curve_0002")
+    after = read_manifest(tmp_path)
+
+    assert gone.scenario_id == "curve_0002"
+    assert [row.scenario_id for row in after.categories["curve"].scenarios] == [
+        "curve_0000", "curve_0001", "curve_0003", "curve_0004",
+    ]
+    # The picture goes with the row: a thumbnail of a scenario that is not in the manifest is
+    # wrong rather than merely stale.
+    assert not (tmp_path / "thumbs" / "curve_0002.png").exists()
+    assert (tmp_path / "thumbs" / "curve_0003.png").exists()
+    # And the position is not handed out again. Five rows minus one is four; the next id is 5.
+    assert scenario_id("curve", _next_index(after.categories["curve"])) == "curve_0005"
+
+
+def test_removing_a_categorys_last_scenario_removes_the_category(tmp_path):
+    _bank_on_disk(tmp_path, count=1)
+    manifest = read_manifest(tmp_path)
+    manifest.categories["roundabout"] = CategoryEntry(
+        description="a roundabout", block_seq="O", exit_rule="only", max_steps=1200,
+        scenarios=[_edited_row(0, 0).model_copy(update={"scenario_id": "roundabout_0000",
+                                                        "thumbnail": None})],
+    )
+    write_manifest(tmp_path, manifest)
+
+    said = []
+    remove_scenario(tmp_path, "curve_0000", progress=said.append)
+
+    assert list(read_manifest(tmp_path).categories) == ["roundabout"]
+    assert any("the category went with it" in line for line in said)
+
+
+def test_the_last_scenario_in_a_bank_cannot_be_removed(tmp_path):
+    # An empty bank is a manifest describing nothing. `generate` is how a new bank is made, and
+    # deleting the directory is how an old one goes.
+    _bank_on_disk(tmp_path, count=1)
+    with pytest.raises(BankError, match="only scenario in this bank"):
+        remove_scenario(tmp_path, "curve_0000")
+    assert read_manifest(tmp_path).categories["curve"].scenarios
+
+
+def test_a_scenario_can_carry_its_own_step_budget_without_a_rebuild(tmp_path):
+    """`max_steps` is declared, not measured, which is why this edit builds nothing.
+
+    Everything else on a row is read off a road. A budget is a cap somebody chose, so choosing a
+    different one is an edit to the manifest -- and `budget_for` is the one place the override is
+    resolved, so the review and a rebuild read the same number.
+    """
+    _bank_on_disk(tmp_path, count=2)
+    said = []
+    row = set_max_steps(tmp_path, "curve_0001", 200, progress=said.append)
+    entry = read_manifest(tmp_path).categories["curve"]
+
+    assert row.max_steps == 200
+    assert entry.budget_for(entry.scenarios[1]) == 200
+    assert entry.budget_for(entry.scenarios[0]) == 1200, "the others still follow the category"
+    # A 400 m route earns 1000 steps, so 200 is a cap that ends the episode short. Written
+    # anyway -- it is a decision, not an error -- but never silently.
+    assert any("its own cap of 200" in line for line in said)
+
+    cleared = set_max_steps(tmp_path, "curve_0001", None)
+    assert cleared.max_steps is None
+    assert read_manifest(tmp_path).categories["curve"].budget_for(cleared) == 1200
+
+
+def test_a_budget_that_ends_the_episode_before_it_begins_is_refused(tmp_path):
+    _bank_on_disk(tmp_path, count=2)
+    with pytest.raises(BankError, match="before it began"):
+        set_max_steps(tmp_path, "curve_0001", 0)
+
+
+def test_a_pinned_exit_does_not_outlive_the_seed_it_was_pinned_at(tmp_path):
+    """An exit node names an arm of one seed's road, so it cannot be carried to another.
+
+    `StdTInterSection` offers right-and-straight on seeds 0, 1 and 4 and left-and-straight on 2
+    and 3. Carrying a pin across a seed change would fail the rebuild with a message about a node
+    nobody typed, so the pin is dropped and the category's rule resolves the new road's exit.
+    """
+    entry = _bank_on_disk(tmp_path).categories["curve"]
+    pinned = _edited_row(0, 0, exit_node="1C0_1_")
+    said = []
+
+    kept = _exit_intent(entry, pinned, 0, exit_rule=None, destination=None, inherit=False,
+                        say=said.append)
+    assert kept == (None, "1C0_1_") and not said
+
+    moved = _exit_intent(entry, pinned, 22, exit_rule=None, destination=None, inherit=False,
+                         say=said.append)
+    assert moved == (None, None)
+    assert any("arm of seed 0's road" in line for line in said)
+
+
+def test_an_exit_is_either_resolved_or_named_but_not_both(tmp_path):
+    entry = _bank_on_disk(tmp_path).categories["curve"]
+    row = _edited_row(0, 0)
+    with pytest.raises(BankError, match="not both"):
+        _exit_intent(entry, row, 0, exit_rule="left", destination="1X0_1_", inherit=False,
+                     say=lambda _message: None)
+    with pytest.raises(BankError, match="unknown exit rule"):
+        _exit_intent(entry, row, 0, exit_rule="leftish", destination=None, inherit=False,
+                     say=lambda _message: None)
+
+
+@needs_sim
+def test_add_numbers_past_the_highest_id_even_over_a_gap(tmp_path):
+    # The pair that has to agree: removing leaves `curve_0000` empty, and adding must not walk
+    # back into it. Two rows, one removed, one added -- the new id is 2, not 0.
+    generate(tmp_path, bank_id="test-bank", category_names=["curve"], seeds=(0, 1),
+             thumbnails=False)
+    remove_scenario(tmp_path, "curve_0000")
+
+    row = add_scenario(tmp_path, "curve", 22, thumbnails=False)
+    after = read_manifest(tmp_path)
+
+    assert row.scenario_id == "curve_0002"
+    assert [one.scenario_id for one in after.categories["curve"].scenarios] == [
+        "curve_0001", "curve_0002",
+    ]
+    assert [one.seed for one in after.categories["curve"].scenarios] == [1, 22]
+    with pytest.raises(BankError, match="already used by curve"):
+        add_scenario(tmp_path, "curve", 22, thumbnails=False)
+
+
+@needs_sim
+def test_a_scenario_can_be_pointed_at_another_exit_without_changing_its_seed(tmp_path):
+    """The other half of an edit: same draw, different destination.
+
+    `intersection_left` and `intersection_right` are the same junction with different rules, so
+    the row rebuilt at rule `right` must land where the `right` category lands -- and record the
+    rule it was built from, because a rebuild months later has to resolve the same way.
+    """
+    generate(tmp_path, bank_id="test-bank", category_names=["intersection_left"], seeds=(0,),
+             thumbnails=False)
+    before = read_manifest(tmp_path).categories["intersection_left"].scenarios[0]
+
+    row = replace_scenario(tmp_path, "intersection_left_0000", exit_rule="right",
+                           thumbnails=False)
+    entry = read_manifest(tmp_path).categories["intersection_left"]
+
+    assert row.seed == before.seed, "no seed given means the seed it already has"
+    assert row.destination == "1X2_1_" != before.destination
+    assert row.exit_rule == "right" and entry.rule_for(row) == "right"
+    # The category itself did not move. An overridden row keeps its category name, and the
+    # entry stays the declared intent for every row that has none of its own.
+    assert entry.exit_rule == "left"
+
+    pinned = replace_scenario(tmp_path, "intersection_left_0000", destination=before.destination,
+                              thumbnails=False)
+    assert pinned.exit_node == before.destination and pinned.exit_rule is None
+    assert pinned.destination == before.destination
+
+    back = replace_scenario(tmp_path, "intersection_left_0000", inherit_exit=True,
+                            thumbnails=False)
+    assert back.exit_rule is None and back.exit_node is None
+    assert back.destination == before.destination
+
+
+@needs_sim
+def test_a_pinned_exit_the_road_does_not_offer_is_refused_by_name(tmp_path):
+    generate(tmp_path, bank_id="test-bank", category_names=["intersection_left"], seeds=(0,),
+             thumbnails=False)
+    with pytest.raises(BankError, match="has no exit '1T0_1_'"):
+        replace_scenario(tmp_path, "intersection_left_0000", destination="1T0_1_",
+                         thumbnails=False)
+
+
+def test_a_1_0_manifest_still_opens_and_overrides_nothing(tmp_path):
+    """The banks already on disk, read by the build that can write overrides.
+
+    1.1 only *added* optional fields, so a 1.0 row is a 1.1 row that overrides nothing. The
+    version moved because the reverse does not hold: `extra="forbid"` means a 1.0 reader refuses
+    a row that declares its own budget.
+    """
+    raw = json.loads(_bank_on_disk(tmp_path).model_dump_json())
+    raw["schema_version"] = "1.0"
+    for row in raw["categories"]["curve"]["scenarios"]:
+        for key in ("exit_rule", "exit_node", "max_steps"):
+            del row[key]
+    (tmp_path / MANIFEST_NAME).write_text(json.dumps(raw))
+
+    entry = read_manifest(tmp_path).categories["curve"]
+
+    assert read_manifest(tmp_path).schema_version == "1.0"
+    assert all(row.max_steps is None and row.exit_rule is None for row in entry.scenarios)
+    assert entry.budget_for(entry.scenarios[0]) == entry.max_steps
+    assert entry.rule_for(entry.scenarios[0]) == entry.exit_rule

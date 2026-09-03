@@ -19,9 +19,16 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from scenariobank.bank import MANIFEST_NAME, THUMBNAIL_DIR, BankError, read_manifest
+from scenariobank.bank import (
+    MANIFEST_NAME,
+    THUMBNAIL_DIR,
+    BankError,
+    ScenarioNotFound,
+    read_manifest,
+    set_max_steps,
+)
 from scenariobank.cli import EXAMPLES_DIR
 from scenariobank.web.invoke import NOT_RUNNABLE, InvokeError, build_argv, catalog
 from scenariobank.web.jobs import JobBusy, JobNotFound, Jobs
@@ -55,6 +62,18 @@ class JobRequest(BaseModel):
     command: str
     options: dict[str, object] = Field(default_factory=dict)
     global_options: dict[str, object] = Field(default_factory=dict)
+
+
+class BudgetRequest(BaseModel):
+    """One scenario's own step cap, or `None` to put it back on its category's.
+
+    A model of its own rather than a job submission, because this is the one edit that runs no
+    command: there is no flag to validate against `docs.reference()`, only a number.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_steps: int | None = None
 
 
 def create_app(*, banks_root: Path, state_dir: Path, workdir: Path | None = None) -> FastAPI:
@@ -261,6 +280,41 @@ def create_app(*, banks_root: Path, state_dir: Path, workdir: Path | None = None
             # The bank is fine and the request is well formed; the id names nothing in it.
             raise HTTPException(status_code=404, detail=str(error)) from error
         except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+    @app.post("/api/banks/{bank}/scenarios/{scenario}/budget")
+    def set_budget(bank: str, scenario: str, request: BudgetRequest) -> dict:
+        """Give one scenario its own step budget, or clear it. **The one write here that is not
+        a job.**
+
+        Every other edit measures something off a road, and a road means an engine, which means a
+        subprocess -- the constraint this whole module is arranged around. `max_steps` is
+        *declared* rather than measured, so this is a manifest read and a manifest write, and
+        making the page start a Python interpreter to change one integer would be a second of
+        waiting for nothing. `bank.set_max_steps` still owns the rule; this endpoint only carries
+        the number to it.
+
+        Refused while a job is running, because `replace` holds a manifest in memory and writes
+        it back when it finishes: an edit slipped in beside it would be overwritten without a
+        word, and a lost write is the one failure the page could not show you.
+        """
+        directory = _bank_dir(bank)
+        if not _NAME.match(scenario):
+            raise HTTPException(status_code=400, detail=f"{scenario!r} is not a scenario id")
+        busy = jobs.running()
+        if busy is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"{busy['command']} is still running, and it will write this manifest when "
+                    "it finishes. Wait for it, then set the budget."
+                ),
+            )
+        try:
+            return set_max_steps(directory, scenario, request.max_steps).model_dump()
+        except ScenarioNotFound as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except (BankError, ValueError) as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
 
     @app.get("/api/banks/{bank}/thumbs/{name}.png")

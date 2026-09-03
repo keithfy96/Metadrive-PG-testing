@@ -143,6 +143,7 @@ Three endpoints behind it, and nothing else:
 | `GET /api/banks/{bank}/review` | what is in it: duplicates, coverage, step budgets and spread — computed, never stored |
 | `GET /api/banks/{bank}/compare?left=&right=` | two of its scenarios read against each other |
 | `GET /api/looks/{name}.png` | a candidate seed drawn by `inspect`, before it is committed to anything |
+| `POST /api/banks/{bank}/scenarios/{id}/budget` | set or clear one scenario's own `max_steps` — the only write here that is not a job |
 
 The manifest is returned unshaped. It was written to explain itself — "declare the intent, store
 the fact" — so a studio that reformatted it here would be inventing a second description of a bank
@@ -306,6 +307,78 @@ read back off disk every time it is asked for. Reloading the page mid-job reatta
 restarting the studio does not orphan it. Anything the page cannot show you is still there, in
 `.studio/jobs/`.
 
+## Editing, adding and removing an item
+
+The swap above re-rolls a seed and **deliberately** keeps the bank's size, its ids and its
+positions. Under it, in the same panel, are the controls that change those, plus the two fields a
+re-roll never touches.
+
+| control | what happens |
+|---|---|
+| **seed** + **Rebuild at this seed** | `replace --seed`, for when you already know the seed you want and do not need a thirty-one seed ranking |
+| **exit** + **Rebuild to this exit** | `replace --exit-rule` / `--destination` / `--inherit-exit`: same seed, a different destination |
+| **List this seed's exits** | runs `sockets` on **this bank's** road at **this row's** seed, and fills the dropdown with the exits it actually has |
+| **step budget** + **Save** | writes `max_steps` straight into the manifest. No job, no simulator, no waiting |
+| **add** + **Add another _type_** | `add`: one more scenario of that type, at the seed you give |
+| **Remove this one** | `remove`, after asking twice. The scenario and its picture go |
+
+**One distinction decides all of it: `max_steps` is declared, everything else is measured.** A
+route length, a rotation, a destination and a turn pair are all read off a road that was built, so
+changing any of them means building that road again — a job, like everything else here. A budget is
+a cap somebody chose. So it is the one control on the panel that saves instantly, through the one
+endpoint in this API with no subprocess behind it. It is refused while a job is running, because a
+`replace` holds the manifest in memory and would write over the edit when it finished.
+
+### Removing leaves a gap
+
+`scenario_id(name, index)` puts the position in the id, so `curve_0004` **is** position 4. Delete
+`curve_0002` and the ids after it do not move:
+
+```
+curve_0000  curve_0001  curve_0003  curve_0004        and the next one added is curve_0005
+```
+
+Renumbering would change the id of a scenario nobody touched, and an id is how a run refers to a
+scenario — Phase 5's results are keyed on it. So the position is left empty, `add` numbers one past
+the **highest id** rather than counting rows, and an id stops being a row number. Nothing in
+`bank.py` minds: `_locate` always searched by id.
+
+Removing a category's last scenario removes the category with it. The bank's last scenario is
+refused, on the panel, in the CLI's own words:
+
+```
+remove failed: curve_0004 is the only scenario in this bank, and a bank with nothing in it is
+a manifest describing no scenarios. Delete the directory instead, or generate a new bank over it.
+```
+
+A category you removed can be added back: `add` re-creates a missing entry from this build's
+`categories.py`, which is what keeps that removal an edit you can undo.
+
+### Schema 1.1
+
+This is the first change to touch the manifest, so the version moved. Three optional fields
+appeared on a scenario row, all `null` on a row that follows its category:
+
+```json
+{ "scenario_id": "t_junction_0005", "seed": 7, "destination": "1T1_1_",
+  "exit_rule": null, "exit_node": "1T1_1_", "max_steps": null }
+```
+
+- `exit_rule` — this row's own rule, instead of the category's.
+- `exit_node` — an exact exit, pinned rather than resolved. Only meaningful at this row's seed:
+  `StdTInterSection` offers a different arm on seeds 2 and 3, so **a rebuild at a new seed drops
+  the pin** and says so.
+- `max_steps` — this row's own cap.
+
+An overridden row keeps its category name. The manifest's rule is "declare the intent, store the
+fact", and an override *is* the declared intent for that row; a bank that silently reclassified a
+scenario would be the manifest failing to explain itself.
+
+**1.0 banks still open**, because 1.1 only added optional fields. The reverse does not hold — a 1.0
+reader forbids extra keys — which is why the number moved rather than the fields being slipped in
+quietly. A 1.0 bank that this build edits is written back as 1.1: the version describes the shape
+of the file, not the history of the bank.
+
 ## What it will and will not do to your files
 
 - **Reads** `--banks-root` for directories holding a `manifest.json`, and serves thumbnails from
@@ -315,6 +388,9 @@ restarting the studio does not orphan it. Anything the page cannot show you is s
   it would from a terminal, and **Use this seed** rewrites one row of one manifest and redraws its
   thumbnail. `.studio/` is gitignored and disposable: a job is re-runnable, so nothing in it is
   worth keeping.
+- **Deletes** exactly two things, both of them yours to ask for: **Remove this one** deletes a
+  scenario's thumbnail with its row, and a rebuild deletes a thumbnail it did not redraw. A picture
+  of a scenario the manifest no longer describes is wrong, not merely stale.
 - **Never** touches a bank you did not name, and never regenerates one you did not ask it to.
 
 ## How it works, in one paragraph
@@ -368,6 +444,10 @@ design is arranged to prevent. Existing examples of the pattern: `/api/doctor` r
 | **Find a better seed** is greyed out | the bank records a different road or exit rule for that type than this build declares, so a ranking would be measured on one road and the replacement built on another |
 | **Find a better seed** does nothing, or a swap 404s | the studio is older than the feature — restart it. Routes are fixed when the process starts |
 | a swap is refused naming the seeds the category holds | a bank does not build one seed twice. Pick another row, or free that seed first |
+| **Save** on a step budget says a command is still running | an edit written beside a running job would be overwritten when that job finished. Wait for it |
+| the exit dropdown offers no nodes | the exits are only known once **List this seed's exits** has run — it is a simulator job, so it is not run for every card you click |
+| a pinned exit disappeared after a rebuild | the seed changed. An exit node names an arm of *that* seed's road, so it cannot outlive it; the category's rule resolved the new one |
+| removing is refused, naming the scenario | it is the last one in the bank. Delete the directory instead |
 | a comparison says `incomparable` | the two cards are different scenario types. There is no gap between categories, only between scenarios of one — the fields are still shown side by side |
 | a bank is listed as `unreadable` | its `manifest.json` does not parse or does not validate — opening it names the reason. A bank written by an older schema reads exactly like this |
 | **Generate** is greyed out and says banks live outside the working directory | the studio was started with a `--banks-root` outside its own checkout; no job may write out there. Restart it inside the directory you want the bank in |
@@ -387,6 +467,8 @@ done. Currently live:
 7. the review — how many of those scenarios are actually different
 8. the panel — click a card for the row behind the picture, two for how they differ
 9. the swap — rank candidate seeds for a scenario, look at one, and replace it
+10. the edit — an exact seed, another exit, a scenario's own step budget, and adding or removing
+    one; manifest schema 1.1
 
-Still to come is editing, adding and removing an item, four more scenario types, and submitting a
-run to the queue. See **Phase 2c** in `IMPLEMENTATION_PLAN.md`.
+Still to come are four more scenario types and submitting a run to the queue. See **Phase 2c** in
+`IMPLEMENTATION_PLAN.md`.

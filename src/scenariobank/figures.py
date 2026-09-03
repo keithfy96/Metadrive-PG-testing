@@ -65,6 +65,7 @@ def render_route(
     exit_socket,
     out_path: Path,
     net_rotation: float | None = None,
+    intent: str | None = None,
 ) -> dict:
     """Draw the route of an env that has **already** reset and had its destination pinned.
 
@@ -80,6 +81,10 @@ def render_route(
 
     `net_rotation` is accepted rather than always computed: `generate` needs the number for the
     manifest anyway, and `route_rotation` should run once per scenario rather than twice.
+
+    `intent` replaces the rule in the title for a route whose exit was **pinned** rather than
+    resolved. A picture outlives the session that drew it, and captioning a pinned exit with a
+    rule that would have chosen a different one is a lie that nothing later would catch.
     """
     import matplotlib
 
@@ -134,7 +139,7 @@ def render_route(
     axes.axis("off")
     axes.set_title(
         f"{category.name}  seed {seed}\n"
-        f"{category.exit_rule.value} -> {exit_socket.node} "
+        f"{intent or category.exit_rule.value} -> {exit_socket.node} "
         f"({net_rotation:+.1f} deg, {total_length:.0f} m)",
         fontsize=11,
     )

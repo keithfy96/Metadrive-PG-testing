@@ -41,8 +41,9 @@ GROUPS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ),
     (
         "Build and correct",
-        "The two that write scenarios, and the one that writes this page.",
-        ("generate", "replace", "commands"),
+        "The ones that write into a bank, and the one that writes this page. `generate` makes a "
+        "bank; the four after it change one scenario of one that exists.",
+        ("generate", "replace", "add", "remove", "budget", "commands"),
     ),
     (
         "Do all of it in a page",
@@ -107,6 +108,38 @@ EXAMPLES: dict[str, tuple[tuple[str, str], ...]] = {
         (
             "uv run scenariobank replace --bank ./banks/b --scenario curve_0004 --seed 22",
             "rebuild one scenario; the other 34 are untouched",
+        ),
+        (
+            "uv run scenariobank replace --bank ./banks/b --scenario t_junction_0002"
+            " --exit-rule left",
+            "same seed, its own exit rule",
+        ),
+        (
+            "uv run scenariobank replace --bank ./banks/b --scenario t_junction_0002"
+            " --destination 1T0_1_",
+            "same seed, that exact exit",
+        ),
+    ),
+    "add": (
+        (
+            "uv run scenariobank add --bank ./banks/b -c t_junction -s 7",
+            "a sixth t_junction, numbered past the highest id",
+        ),
+    ),
+    "remove": (
+        (
+            "uv run scenariobank remove --bank ./banks/b --scenario curve_0002",
+            "the ids after it keep their numbers",
+        ),
+    ),
+    "budget": (
+        (
+            "uv run scenariobank budget --bank ./banks/b --scenario curve_0003 --max-steps 500",
+            "a tighter cap on one scenario, no rebuild",
+        ),
+        (
+            "uv run scenariobank budget --bank ./banks/b --scenario curve_0003 --inherit",
+            "back to the category's cap",
         ),
     ),
     "commands": (("uv run scenariobank commands", "rewrite this page"),),
@@ -192,6 +225,13 @@ def _value_notes() -> dict[str, str]:
         "--keep": f"A comma-separated list. Defaults to the bank's seeds, `{seeds}`.",
         "--scan": "A comma-separated list, or an inclusive range like `0-30`.",
         "--scenario": "A `scenario_id` from the bank's manifest, e.g. `curve_0004`.",
+        "--exit-rule": f"One of: {rules}. Recorded on the scenario, not on its category.",
+        "--destination": (
+            "An exit node as `sockets` reports it, e.g. `1T2_1_`. Only the exits **this seed's** "
+            "road offers: a node is resolved per seed, so one pinned at a seed is dropped if the "
+            "seed changes."
+        ),
+        "--max-steps": "A whole number of steps, at least 1.",
     }
 
 
@@ -207,6 +247,9 @@ def _choices() -> dict[str, list[str]]:
     return {
         "--category": list(CATEGORIES),
         "--rule": [rule.value for rule in ExitRule],
+        # The same closed set as `--rule`, under the flag that writes it onto a scenario rather
+        # than into a drawing. Listed separately because a flag is what the studio keys on.
+        "--exit-rule": [rule.value for rule in ExitRule],
     }
 
 
