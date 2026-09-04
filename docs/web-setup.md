@@ -163,10 +163,10 @@ It is still the escape hatch for everything the eleven shipped types left out �
 lot, a two-way road, a crossroads with a U-turn — and the place to watch them fail honestly.
 
 **Failing honestly** means the command's own words, not a spinner. Two kinds of refusal reach
-the card. The rule can find no exit: `T` at rule `right` is refused with `no exit turning -90
-degrees out of the last block: closest is 1T1_1_ at +0.0`, because a T junction at that seed
-offers a left and a straight and nothing else — try `sharpest`, or another seed, where the arm on
-offer flips. And MetaDrive can refuse the road itself. Type `fS` and draw it:
+the card. The rule can find no exit: `T` at rule `right` is refused with `nothing here turns
+right. The closest is 1T1_1_, which carries straight on`, because a T junction at that seed offers
+a left and a straight and nothing else — try `sharpest`, or another seed, where the arm on offer
+flips. And MetaDrive can refuse the road itself. Type `fS` and draw it:
 
 ```
 inspect failed: seed 0 does not build for block sequence 'fS': Bug exists in this block, Recommend to use Ramp
@@ -189,59 +189,80 @@ exits** does, on the sequence already in the box — the second button on the sa
 `scenariobank sockets` where **Draw** runs `inspect`. That is why the two share one card: asking
 this from anywhere else would mean typing the road twice.
 
-Two tables come back. The first is every socket the road's last block offers: its index, the node
-a route would be pinned to, how many lanes it has, and **two** angles — `turn` and `from spawn`.
-**Positive is a left turn** (`straight_lane.py:56`). Two exits of the same sign and similar size
-mean the block is not the shape you think it is.
-
-**`turn` is what the driver does at the junction**, measured from the heading the car arrives on.
-**`from spawn`** is the same arm measured from where the car set off, which is the angle the
-drawing's title reports. On a one-block road they are identical. They come apart the moment the
-road turns the car before its last block, and the card says so above the table when it does:
+One table comes back, written for someone who has never opened MetaDrive: **which setting sends
+the car which way**. All five values of the `exit` dropdown, what each one does, and where it
+lands — **including the ones that cannot be used here**, in the command's own words:
 
 ```
-CSX at seed 0
-  this road turns the car +115.5° before it reaches the last block
+T at seed 0
+This road ends at a T junction, so the car has 2 ways to leave it.
 
-  socket        node      lanes    turn   from spawn   which way
-  3X-socket0    3X0_1_        3   +90.0       -154.5   left
-  3X-socket1    3X1_1_        3    -0.0       +115.5   straight
-  3X-socket2    3X2_1_        3   -90.0        +25.5   right
+  setting     what it does                                      goes to
+  only        can't be used here — this junction has 2 ways
+              out (1T0_1_, 1T1_1_), and "only" means "take
+              the single way out". Choose left, right,
+              straight or sharpest instead.                            —
+  left        turns left                                        1T0_1_
+  right       can't be used here — nothing here turns right.
+              The closest is 1T1_1_, which carries straight
+              on. Try a different exit setting, or a
+              different seed.                                          —
+  straight    carries straight on                               1T1_1_
+  sharpest    takes the biggest turn on offer, whichever
+              way it goes                                       1T0_1_
+```
+
+**The exit name is a label, not something you type.** `1T0_1_` names that piece of road *at this
+seed*; the next seed's road may have no such name. You set `exit` to a direction and the studio
+finds the road that matches.
+
+A second table, one row per way out, sat above this one until it was measured away. No block
+MetaDrive builds offers more than three arms, and their turns are always −90 / 0 / +90, so `left`,
+`right` and `straight` between them already name every arm there is — the arm table was this one
+rearranged. The one thing it carried that this does not is each exit's lane count, which matters
+on `y` (leaves on 1 lane), `Y` (5) and `B` (1) and nowhere else; it can come back as a column here
+if it is wanted.
+
+Under the table, **show the raw measurements** opens the numbers the plain view leaves out: every
+way out of the last block, MetaDrive's own socket index for it, and two angles.
+
+**`turn`** is measured from the heading the car arrives on, so it is what the driver does, and it
+is what the settings match. **`from spawn`** is the same arm measured from where the car set off —
+the angle the drawing's title reports. On a one-block road they are the same number. They come
+apart the moment the road turns the car before its last block, and the disclosure says by how much:
+
+```
+CSX at seed 0 — this road turns the car +115.5° before it reaches the last block
+
+  socket        node        turn   from spawn
+  3X-socket0    3X0_1_     +90.0       -154.5
+  3X-socket1    3X1_1_      -0.0       +115.5
+  3X-socket2    3X2_1_     -90.0        +25.5
 ```
 
 The curve in front of the crossroads swings the car +115.5°, so from the spawn the three arms sit
 at −154.5 / +115.5 / +25.5 — no two of which look like a crossroads. From the junction they are the
-+90 / 0 / −90 that they plainly are in the drawing. **The rules match `turn`.** They used to match
-`from spawn`, which is why `CSX` with rule `right` was refused on a road with an obvious right
-turn, and why rule `left` answered `3X1_1_` — the arm the drawing goes *straight* up.
++90 / 0 / −90 that they plainly are in the drawing. **Positive is a left turn**
+(`straight_lane.py:56`). Two exits of the same sign and similar size mean the block is not the
+shape you think it is.
 
-None of the eleven shipped scenario types is affected: they are single-block roads, or they use
-rule `only`, which ignores angles. `docs/reference/destinations.md` re-measures byte-for-byte
-identical. It was only ever composed roads — the ones this card exists for — that read wrong.
+The settings used to match `from spawn`, which is why `CSX` with rule `right` was refused on a road
+with an obvious right turn, and why rule `left` answered `3X1_1_` — the arm the drawing goes
+*straight* up. None of the eleven shipped scenario types was affected: they are single-block roads,
+or they use rule `only`, which ignores angles, and `docs/reference/destinations.md` re-measures
+byte-for-byte identical. It was only ever composed roads — the ones this card exists for — that
+read wrong.
 
-**The arm the car drives in through is not in the list.** A block's sockets are the connections
-it offers onward, and the one behind it belongs to the block before — so `X` reads as exactly
-three exits, at +90, 0 and −90. Measured across all fifteen block ids: of the twelve that build,
-not one marks an entry. `SocketReading.is_entry` and the filter every rule applies stay, guarding
-a case MetaDrive does not currently produce, but nothing composed from these blocks fills that
-column in.
-
-The second table is what each of the five exit rules picks, **including the ones that pick
-nothing**, in the command's own words:
-
-```
-only      ExitRule.ONLY needs a single-exit block, but this one offers 2: [...]. Use an angle rule.
-left      1T0_1_    +90.0°
-right     no exit turning -90 degrees out of the last block: closest is 1T1_1_ at +0.0.
-straight  1T1_1_     +0.0°
-sharpest  1T0_1_    +90.0°
-```
+**The way the car came in is never listed.** A block's sockets are the connections it offers
+onward, and the one behind it belongs to the block before — so `X` reads as exactly three exits.
+Measured across all fifteen block ids: of the twelve that build, not one marks an entry.
+`SocketReading.is_entry` and the filter every rule applies stay, guarding a case MetaDrive does not
+currently produce, but nothing composed from these blocks fills that column in.
 
 So the `T` refusal above resolves in one press: `right` never will at seed 0, `sharpest` gives
-`1T0_1_`. It is also where a scenario type's rule can be justified — `t_junction` uses `sharpest`
-because
-the arm on offer flips with the seed, and reading `T` at seed 0 (`right` refused) and at seed 2
-(`left` refused) is the evidence for that.
+`1T0_1_`. It is also where a scenario type's exit setting can be justified — `t_junction` uses
+`sharpest` because the arm on offer flips with the seed, and reading `T` at seed 0 (`right`
+refused) and at seed 2 (`left` refused) is the evidence for that.
 
 Both buttons are held while either is running: the studio runs one job at a time, so a second
 click would be a refusal rather than a second answer.

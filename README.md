@@ -147,10 +147,11 @@ uv run scenariobank sockets --category roundabout --seed 3 --json
 ```
 
 Prints one row per exit — socket index, destination node, **two** angles and the turn they imply —
-then what each `ExitRule` would resolve to, **including the rules that resolve to nothing**: "no
-exit turning -90 degrees out of the last block: closest is `1T1_1_` at +0.0" is the useful half of
-the answer when a road cannot carry a category. Angles are counter-clockwise-positive, so
-**positive is a left turn**.
+then what each `ExitRule` would resolve to, **including the rules that resolve to nothing**:
+"nothing here turns right. The closest is `1T1_1_`, which carries straight on" is the useful half
+of the answer when a road cannot carry a category. Refusals are worded for a reader who has not
+used MetaDrive, because the studio's card shows them verbatim. Angles are
+counter-clockwise-positive, so **positive is a left turn**.
 
 `--json` emits one document — `block_seq`, `seed`, `sockets` and `rules` — rather than a bare list
 of sockets, because the rules are what turn an exit into a destination and a list has nowhere to

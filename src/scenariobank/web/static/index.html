@@ -448,10 +448,19 @@ select#road-type { width: auto; max-width: 10rem; font-family: var(--mono); font
    is on the pill and not on the check for the same reason -- an empty check would absorb the
    space on the line above and leave the pill where it started. */
 #road-state { margin-left: auto; }
+/* The same span says two things: an unknown letter, which is a mistake and reads red, and what
+   the greyed buttons are waiting for, which is not a mistake and must not. */
+#road-check.hint { color: var(--muted); }
 .exits { margin-top: 1.1rem; border-top: 1px solid var(--hair); padding-top: 0.4rem; }
 .exits h3 { margin-top: 1.3rem; }
 .exits .caption { font-size: 12px; color: var(--muted); margin: 0.5rem 0 0; }
 .exits td.turn { color: var(--ink-2); }
+/* The measurements the default view drops. Reachable in one click, and not the first thing a
+   reader who has never used this simulator has to get past. */
+.exits details { margin-top: 0.7rem; }
+.exits details summary { font-size: 12px; color: var(--muted); cursor: pointer; }
+.exits details summary:hover { color: var(--ink-2); }
+.exits details > *:not(summary) { margin-top: 0.5rem; }
 /* A rule that finds nothing is the useful half of the answer often enough that it is a row
    like any other, in the command's own words rather than an empty cell. */
 .exits td.refused { color: var(--bad); }
@@ -544,10 +553,10 @@ select#road-type { width: auto; max-width: 10rem; font-family: var(--mono); font
                autocomplete="off" autocapitalize="off">
         <label class="lab" for="road-type">or a type</label>
         <select id="road-type"></select>
-        <label class="lab" for="road-rule">exit</label>
-        <select id="road-rule"></select>
         <label class="lab" for="road-seed">seed</label>
         <input type="number" id="road-seed" min="0" step="1" value="0">
+        <label class="lab" for="road-rule">exit</label>
+        <select id="road-rule"></select>
         <button class="go" id="road-go" disabled>Draw</button>
         <button class="go" id="exits-go" disabled>Read the exits</button>
         <button class="ghost" id="road-clear">Clear</button>
@@ -946,7 +955,11 @@ function refreshRoad() {
   // Both are held while either is running: the studio runs one job at a time, so the second
   // click would be a 409 rather than a second answer.
   const busy = road.state === "drawing" || exits.state === "reading";
-  $("road-check").textContent = unknown.length ? `not a block: ${unknown.join(" ")}` : "";
+  const check = $("road-check");
+  check.textContent = unknown.length
+    ? `not a block: ${unknown.join(" ")}`
+    : (seq ? "" : "click a block above, or pick a type");
+  check.classList.toggle("hint", !unknown.length && !seq);
   $("road-go").disabled = !ok || busy;
   $("exits-go").disabled = !ok || busy;
   $("road-argv").textContent = ok
@@ -2543,21 +2556,22 @@ function applyRoadExits(job) {
   renderExits();
 }
 
-// The turn word the terminal prints, from the same thresholds `sockets._turn_word` uses. It is
-// the one number on this card that is a judgement rather than a measurement, so it is shown
-// beside the angle it was read off rather than instead of it.
-//
-// Read off `turn_deg`, the turn measured from where the car enters the last block -- not
-// `angle_deg`, which is measured from where it spawned. On a road with a curve in front of its
-// junction the two disagree, and it was `angle_deg` that had this table calling an arm "left"
-// while the drawing plainly went straight through it.
-function turnWord(socket) {
-  if (socket.is_entry) return "entry";
-  if (Math.abs(socket.turn_deg) < 30) return "straight";
-  return socket.turn_deg > 0 ? "left" : "right";
-}
+// What each exit setting is asking for, said the way the road is described above it.
+const RULE_MEANS = {
+  only: "takes the single way out — only works where there is exactly one",
+  left: "turns left",
+  right: "turns right",
+  straight: "carries straight on",
+  sharpest: "takes the biggest turn on offer, whichever way it goes",
+};
 
 const signed = (n) => `${n > 0 ? "+" : ""}${n.toFixed(1)}°`;
+
+// The palette already names every block in English. `CCX` ends in `X`, and `X` is "crossroads".
+function lastBlockName(blockSeq) {
+  const found = road.blocks.find((b) => b.id === blockSeq.slice(-1));
+  return found ? found.label.trim() : "junction";
+}
 
 // No pill of its own: the card already has one for the drawing, and a second reading "idle"
 // beside it would look broken. This section says its own state where the answer will be.
@@ -2582,62 +2596,74 @@ function renderExits() {
   }
 
   const doc = exits.doc;
-  // Cells carry markdown, not HTML: `table` runs every one of them through `inline`, so a node
-  // name is backticked here for the same reason it is in the reference tab.
-  const sockets = table(
-    ["socket", "node", { label: "lanes", nowrap: true }, { label: "turn", nowrap: true },
-     { label: "from spawn", nowrap: true }, "which way"],
-    doc.sockets.map((one) => [
-      { html: `\`${one.index}\``, class: "nowrap" },
-      { html: `\`${one.node}\``, class: "nowrap" },
-      { html: String(one.lane_count), class: "num" },
-      { html: signed(one.turn_deg), class: "num" },
-      { html: signed(one.angle_deg), class: "num" },
-      { html: turnWord(one), class: "turn" },
-    ]));
-  // Every rule, including the ones that find nothing. A road is the shape it is, and "no exit
-  // near +90 degrees: closest is 3X2_1_ at +149.5" is why a category cannot be built on it --
-  // which is the whole reason to look at a road here before pinning anything to it.
-  const rules = table(
-    ["rule", "destination", { label: "turn", nowrap: true }],
+
+  // One table, not two. A per-arm table sat above this one until it was measured away: no block
+  // MetaDrive builds offers more than three arms, and their turns are always -90 / 0 / +90, so
+  // `left`, `right` and `straight` between them already name every arm there is -- the arm table
+  // was this one rearranged, with a lane count. What it carried that this does not is the lane
+  // count; the rest is in the disclosure below.
+  //
+  // Every setting, including the ones that find nothing: a road is the shape it is, and being
+  // told why `only` cannot be used here is why you came to this card. Cells carry markdown, not
+  // HTML -- `table` runs every one through `inline` -- so an exit name is backticked here for
+  // the same reason it is in the reference tab.
+  const ruleTable = table(
+    ["setting", "what it does", "goes to"],
     doc.rules.map((outcome) => [
       { html: `\`${outcome.rule}\``, class: "nowrap" },
       outcome.refused === null
-        ? { html: `\`${outcome.node}\``, class: "nowrap" }
-        : { html: outcome.refused, class: "refused" },
+        ? { html: RULE_MEANS[outcome.rule] ?? outcome.rule }
+        : { html: `*can't be used here* — ${outcome.refused}`, class: "refused" },
       outcome.refused === null
-        ? { html: signed(outcome.turn_deg), class: "num" }
+        ? { html: `\`${outcome.node}\``, class: "nowrap" }
         : { html: "—", class: "num" },
     ]));
 
-  // Said only when the two angle columns disagree, which is exactly when the road rotates the
-  // car before its last block. Silent for every single-block road, which is all eleven types.
+  // The measurements the plain view drops, kept one click away rather than deleted: they are
+  // what a road that is not the shape you assumed shows up in.
   const rotation = doc.sockets.length ? doc.sockets[0].entry_heading_deg : 0;
   const rotated = Math.abs(rotation) >= 0.05;
+  const rawTable = table(
+    ["socket", "node", { label: "turn", nowrap: true }, { label: "from spawn", nowrap: true }],
+    doc.sockets.map((one) => [
+      { html: `\`${one.index}\``, class: "nowrap" },
+      { html: `\`${one.node}\``, class: "nowrap" },
+      { html: signed(one.turn_deg), class: "num" },
+      { html: signed(one.angle_deg), class: "num" },
+    ]));
 
   result.replaceChildren(
     el("h3", { text: `${doc.block_seq} at seed ${doc.seed}` }),
-    ...(rotated
-      ? [el("p", { class: "caption",
-                   html: `This road turns the car <b>${signed(rotation)}</b> before it reaches `
-                     + "the last block, so the two angle columns disagree. <b>turn</b> is what "
-                     + "the driver does at the junction; <b>from spawn</b> is the same arm "
-                     + "measured from where the car set off." })]
-      : []),
-    sockets,
     el("p", { class: "caption",
-              html: "<b>turn</b> is measured from the heading the car arrives on, so it is what "
-                + "the driver actually does — and it is what the rules below match. "
-                + "<b>from spawn</b> is the arm's final heading relative to the spawn, wrapped "
-                + "into (−180, +180]; it is the angle the drawing's title reports. The arm "
-                + "the car drives in through is not here: a block's sockets are the connections "
-                + "it offers onward, and the one behind it belongs to the block before. Nothing "
-                + "built from the fifteen blocks marks an entry." }),
-    el("h3", { text: "what each exit rule picks" }),
-    rules,
+              html: `This road ends at a <b>${escape(lastBlockName(doc.block_seq))}</b>, so the `
+                + `car has ${doc.sockets.length === 1 ? "one way" : `${doc.sockets.length} ways`}`
+                + " to leave it. Nothing here changes anything — the road is built once and"
+                + " measured." }),
+    ruleTable,
     el("p", { class: "caption",
-              text: "A rule is how a scenario type names its destination without naming a node: "
-                + "a node is an arm of this seed's road and the next seed may not have it." }));
+              html: "Set <b>exit</b> at the top of this card to one of these and press "
+                + "<b>Draw</b>. You choose a direction rather than an exit name because the "
+                + "names change from seed to seed: <code>left</code> still means left on every "
+                + "seed, and this seed's exit names may not exist on the next one." }),
+    el("details", {}, [
+      el("summary", { text: "show the raw measurements" }),
+      el("p", { class: "caption",
+                html: "<b>turn</b> is measured from the heading the car arrives on, so it is "
+                  + "what the driver does — and it is what the settings above match. "
+                  + "<b>from spawn</b> is the arm's final heading relative to where the car "
+                  + "started, wrapped into (−180, +180]; it is the angle the drawing's title "
+                  + "reports."
+                  + (rotated
+                     ? ` This road turns the car <b>${signed(rotation)}</b> before it reaches `
+                       + "the last block, which is exactly why the two columns disagree here."
+                     : " They agree here, because nothing turns the car before the last block.")
+                  + " <b>socket</b> is MetaDrive's own name for the connection." }),
+      rawTable,
+      el("p", { class: "caption",
+                text: "No arm is ever marked as the one the car came in by: a block's sockets "
+                  + "are the connections it offers onward, and the one behind it belongs to the "
+                  + "block before. Measured across all fifteen blocks, none marks an entry." }),
+    ]));
 }
 
 // ------------------------------------------------------- the destinations reference

@@ -1853,6 +1853,72 @@ outright before. The Bank tab's **List this seed's exits** still fills from the 
 (`curve_0000` → `exit:2C0_1_`). No console errors. 362 tests pass, ruff clean.
 `uv run scenariobank destinations` reproduced the checked-in file exactly.)*
 
+### Step 11d — say "Read the exits" in words, not in MetaDrive's ✅
+
+*(2026-09-04, Keith, reading the card cold: "i get what you're trying to do but this is way too
+cryptic, it needs to be worded in a way that a first time user with no knowledge of metadrive will
+understand how to use".)*
+
+Step 11c fixed the numbers. The card still explained them in the simulator's vocabulary: a column
+headed `socket` holding `3X-socket0`, a column headed `node`, two angle columns one of which read
+−30.5 / −120.5 / +149.5 on a plain crossroads, a caption about "the connections a block offers
+onward", and a refusal in raw Python — `ExitRule.ONLY needs a single-exit block`. Nothing wrong,
+and all of it assuming the reader already had the model.
+
+What the card actually carries is small: **this road ends at a crossroads; you can go left,
+straight or right; here is which setting gets you each one.** It now says that.
+
+**The refusals were reworded at the source**, in `select_exit`, because both the terminal and the
+card show them verbatim and a second wording would be a second truth:
+
+```
+this junction has 3 ways out (3X0_1_, 3X1_1_, 3X2_1_), and "only" means "take the single way
+out". Choose left, right, straight or sharpest instead.
+
+nothing here turns right. The closest is 1T1_1_, which carries straight on. Try a different exit
+setting, or a different seed.
+```
+
+The second needed the target as a word rather than `+90`, which is `_RULE_PHRASE` and
+`_describe_turn` beside `_turn_word`.
+
+**One table, "which setting sends the car which way"** — every value of the `exit` dropdown, what
+it does in English, and where it lands, with the ones that cannot be used marked *can't be used
+here* and carrying the command's own sentence.
+
+A second table sat above it for one round, one row per way out. Keith read it and asked what it
+was for, which was the right question: **no block MetaDrive builds offers more than three arms**,
+and their turns are always −90 / 0 / +90, so `left`, `right` and `straight` between them already
+name every arm there is. Measured at seed 0 across all fifteen ids — `C S r R $` one arm, `y` one
+arm on 1 lane, `Y` one on 5, `B` one on 1, `T` two, `X O U` three, and `f F P` do not build. The
+arm table was the settings table rearranged. Removed on his word — *"just remove it, i don't find
+it very useful, i'll add in again in the future if i think it makes sense"*. The one thing it
+carried that the settings table does not is the per-exit lane count, which is a column here if it
+is ever wanted.
+
+**Nothing was deleted.** `socket`, `from spawn` and the never-marked-entry note moved into a
+`<details>` labelled **show the raw measurements**, closed by default, whose caption says why the
+two angle columns agree or disagree on the road in front of you. They are what a road that is not
+the shape you assumed shows up in, so they stay one click away.
+
+Two smaller things from the same reading: the `exit` dropdown moved to sit immediately left of
+**Draw**, the only button that uses it, so the control and the table that explains it use the same
+word; and an empty `blocks` box now says what the greyed buttons are waiting for
+(`click a block above, or pick a type`, muted rather than red — the span's `failed` class resolves
+red, so a `.hint` class was added).
+
+*(Done 2026-09-04. Verified in a running studio on a throwaway copy of `banks/curve` under
+`scratch-banks/`, removed afterwards; the three real banks were never opened for writing. `CCX`
+seed 0 read "This road ends at a **crossroads**, so the car has 3 ways to leave it", then five
+settings with `only` refused in the new words. **show the raw measurements** opened to the socket indices and
++90.0/−30.5, 0.0/−120.5, −90.0/+149.5, with "This road turns the car −120.5° before it reaches the
+last block, which is exactly why the two columns disagree here". `X` seed 0 read the same shape
+and "They agree here, because nothing turns the car before the last block". `T` at `right` was
+refused with "nothing here turns right. The closest is 1T1_1_, which carries straight on." An
+empty box greyed both buttons and showed the hint. No console errors. 362 tests pass, ruff clean,
+and `destinations` reproduced the checked-in file byte-for-byte — the refusal wording cannot reach
+it, because all eleven categories resolve.)*
+
 ### Step 12 — pick a model, submit a run ⬜  ⟵ *blocked on Phase 7*
 
 *(2026-09-02, Keith: "eventually the ui needs to handle selecting a model and running it against a

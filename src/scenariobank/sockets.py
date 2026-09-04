@@ -74,6 +74,24 @@ def _turn_word(angle_deg: float) -> str:
     return "left" if angle_deg > 0 else "right"
 
 
+#: What each angle rule is asking for, in the words a refusal should use. A reader who has never
+#: seen this simulator can act on "nothing here turns left"; they cannot act on "no exit near +90
+#: degrees" without first being told which way +90 is.
+_RULE_PHRASE: dict[str, str] = {
+    "left": "turns left",
+    "right": "turns right",
+    "straight": "carries straight on",
+}
+
+
+def _describe_turn(turn_deg: float) -> str:
+    """A turn in words and degrees, unsigned: "turns left 90 degrees"."""
+    word = _turn_word(turn_deg)
+    if word == "straight":
+        return "carries straight on"
+    return f"turns {word} {abs(turn_deg):.0f} degrees"
+
+
 def read_sockets(block_seq: str, seed: int) -> list[SocketReading]:
     """Build one env, reset it once, and measure every exit of the final block.
 
@@ -200,13 +218,16 @@ def select_exit(readings: list[SocketReading], rule: ExitRule) -> SocketReading:
     """
     usable = [reading for reading in readings if not reading.is_entry]
     if not usable:
-        raise SocketError("the destination block offers no exit other than the one driven in by")
+        raise SocketError(
+            "this road's last block offers no way out except the one the car drove in by"
+        )
 
     if rule is ExitRule.ONLY:
         if len(usable) != 1:
+            names = ", ".join(reading.node for reading in usable)
             raise SocketError(
-                f"ExitRule.ONLY needs a single-exit block, but this one offers "
-                f"{len(usable)}: {[reading.node for reading in usable]}. Use an angle rule."
+                f'this junction has {len(usable)} ways out ({names}), and "only" means "take the '
+                f'single way out". Choose left, right, straight or sharpest instead.'
             )
         return usable[0]
 
@@ -220,9 +241,9 @@ def select_exit(readings: list[SocketReading], rule: ExitRule) -> SocketReading:
     # aimed at, and it is cheaper to catch here than to discover in a thumbnail.
     if abs(chosen.turn_deg - target) > 45.0:
         raise SocketError(
-            f"no exit turning {target:+.0f} degrees out of the last block: closest is "
-            f"{chosen.node} at {chosen.turn_deg:+.1f}. This block is not shaped the way the "
-            f"category assumes."
+            f"nothing here {_RULE_PHRASE[rule.value]}. The closest is {chosen.node}, which "
+            f"{_describe_turn(chosen.turn_deg)}. Try a different exit setting, or a different "
+            f"seed."
         )
     return chosen
 

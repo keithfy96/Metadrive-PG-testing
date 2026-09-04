@@ -53,7 +53,7 @@ def test_the_socket_driven_in_by_is_never_a_destination():
 
 
 def test_a_block_whose_only_socket_is_the_entry_fails_loudly():
-    with pytest.raises(SocketError, match="no exit other than"):
+    with pytest.raises(SocketError, match="no way out except the one the car drove in by"):
         select_exit([reading("behind", 180.0, is_entry=True)], ExitRule.ONLY)
 
 
@@ -62,7 +62,9 @@ def test_only_accepts_a_single_exit_block():
 
 
 def test_only_refuses_to_guess_when_the_block_offers_a_choice():
-    with pytest.raises(SocketError, match="single-exit block"):
+    # In words a reader who has never opened MetaDrive can act on: what the road offers, what
+    # the setting means, and which settings would work instead.
+    with pytest.raises(SocketError, match="3 ways out"):
         select_exit(FOUR_WAY, ExitRule.ONLY)
 
 
@@ -70,7 +72,7 @@ def test_an_angle_rule_refuses_the_least_wrong_exit_rather_than_accepting_it():
     # The failure the plan's "two sockets of the same sign" check is aimed at: a junction that
     # is not shaped the way the category assumes should stop the build, not pick something.
     skewed = [reading("a", -20.0), reading("b", 10.0)]
-    with pytest.raises(SocketError, match="not shaped the way"):
+    with pytest.raises(SocketError, match="nothing here turns left"):
         select_exit(skewed, ExitRule.LEFT)
 
 

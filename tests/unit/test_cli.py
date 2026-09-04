@@ -269,9 +269,11 @@ def test_every_exit_rule_is_reported_including_the_ones_that_find_nothing():
         "refused": None,
     }
     assert by_rule["sharpest"]["node"] in {"left", "right"}
-    # A crossroads is not a single-exit block, and `only` says so rather than reading as absent.
+    # A crossroads has three ways out, and `only` says so rather than reading as absent. The
+    # refusal is shown verbatim on the card, so it names the settings that would work instead.
     assert by_rule["only"]["node"] is None
-    assert "single-exit block" in by_rule["only"]["refused"]
+    assert "3 ways out" in by_rule["only"]["refused"]
+    assert "left, right, straight or sharpest" in by_rule["only"]["refused"]
 
 
 def test_the_sockets_document_names_the_road_it_measured():

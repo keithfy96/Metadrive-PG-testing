@@ -100,9 +100,10 @@ def categories() -> None:
 def _rule_outcomes(readings: list) -> list[dict[str, object]]:
     """What each exit rule resolves to on these sockets, and why it does not where it does not.
 
-    Every rule, including the ones that find nothing: "no exit near +90 degrees: closest is
-    3X2_1_ at +149.5" is the useful half of the answer when a road is not the shape a category
-    assumes, and dropping it was what made the terminal's table quieter than it should be.
+    Every rule, including the ones that find nothing: "nothing here turns right. The closest is
+    1T1_1_, which carries straight on" is the useful half of the answer when a road is not the
+    shape a category assumes, and dropping it was what made the terminal's table quieter than it
+    should be.
 
     A list rather than a dict so the order survives `json.dumps(sort_keys=True)`: the studio
     prints these in the order the terminal does, and `ExitRule` is where that order is declared.
