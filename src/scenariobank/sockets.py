@@ -47,13 +47,25 @@ class SocketReading:
     start_node: str
     lane_count: int
     angle_deg: float
+    #: The turn the driver actually makes here: `angle_deg` minus the heading the road arrives
+    #: on, wrapped. This is what every `ExitRule` matches and what the turn word reports. It
+    #: equals `angle_deg` exactly when the road does not rotate the car before its final block,
+    #: which is every single-block road and so every one of the eleven shipped categories.
+    turn_deg: float
     #: True when this socket is the one the ego arrives through. `auto_assign_task` excludes it
     #: from its random draw, and so does every rule here.
     is_entry: bool
+    #: How far the road has already turned the car by the time it reaches the final block,
+    #: relative to the spawn heading. The same value on every reading of one map; carried here
+    #: so a reading explains itself without a second return value. `0.0` for a single-block road.
+    entry_heading_deg: float = 0.0
 
     def describe(self) -> str:
-        turn = "entry" if self.is_entry else _turn_word(self.angle_deg)
-        return f"{self.index:<16} {self.node:<12} {self.angle_deg:+7.1f}  {turn}"
+        turn = "entry" if self.is_entry else _turn_word(self.turn_deg)
+        return (
+            f"{self.index:<16} {self.node:<12} {self.turn_deg:+7.1f} "
+            f"{self.angle_deg:+11.1f}   {turn}"
+        )
 
 
 def _turn_word(angle_deg: float) -> str:
@@ -65,10 +77,13 @@ def _turn_word(angle_deg: float) -> str:
 def read_sockets(block_seq: str, seed: int) -> list[SocketReading]:
     """Build one env, reset it once, and measure every exit of the final block.
 
-    The angle is the final lane's heading at its far end, minus the ego's spawn heading, wrapped
-    into (-pi, pi]. `heading_theta_at` does **not** wrap -- a circular lane can run past +/-pi --
-    so the wrap is load-bearing rather than defensive. Heading is counter-clockwise-positive
-    (`straight_lane.py:56`), which makes positive angles left turns.
+    `angle_deg` is the final lane's heading at its far end, minus the ego's spawn heading,
+    wrapped into (-pi, pi]. `heading_theta_at` does **not** wrap -- a circular lane can run past
+    +/-pi -- so the wrap is load-bearing rather than defensive. Heading is
+    counter-clockwise-positive (`straight_lane.py:56`), which makes positive angles left turns.
+
+    `turn_deg` is the same heading measured from the final block's entrance instead of the spawn
+    (see `_entry_heading`), and it is the one the rules use.
     """
     validate_block_seq(block_seq)
 
@@ -101,12 +116,43 @@ def reset_or_explain(env, seed: int, block_seq: str) -> None:
         ) from error
 
 
+def _entry_heading(road_map, spawn_heading: float) -> float:
+    """The heading, relative to spawn, that the car arrives on at the final block. Radians.
+
+    `blocks[-1].pre_block_socket` is the socket the final block was attached through -- the road
+    the driver comes in on -- so its last lane's final heading is the direction the car is
+    pointing when it reaches the junction. Without this every angle is measured from where the
+    car *set off*, and on any road that rotates on the way the turns come out wrong: `CSX` seed 0
+    has a curve that swings the car +115.5 deg, and its crossroads reads -154.5 / +115.5 / +25.5
+    instead of the +90 / 0 / -90 it plainly is.
+
+    Falls back to `0.0` rather than raising. This is measurement in service of a choice, and a
+    map whose final block MetaDrive attached in some shape not seen here should degrade to the
+    old spawn-relative reading, not stop `bank.generate` mid-run. A single-block road returns
+    ~0.0 on its own -- `FirstPGBlock`'s socket points the way the car spawns -- so the fallback
+    is for genuine surprises only.
+    """
+    from metadrive.utils.math import wrap_to_pi
+
+    try:
+        road = road_map.blocks[-1].pre_block_socket.positive_road
+        lane = road.get_lanes(road_map.road_network)[-1]
+        return float(wrap_to_pi(lane.heading_theta_at(lane.length) - spawn_heading))
+    except (AttributeError, KeyError, IndexError):
+        return 0.0
+
+
 def read_sockets_from_env(env) -> list[SocketReading]:
     """Measure the exits of the map an env has **already** been reset into.
 
     Split out of `read_sockets` for `bank.generate`, which resets once per scenario and cannot
     afford a second env per category. The measurement is identical; only the ownership of the
     env differs.
+
+    Two angles come out of each socket, and the difference between them is `_entry_heading`:
+    `angle_deg` from the spawn, which is what the drawing's title and `destinations.md` report,
+    and `turn_deg` from the final block's entrance, which is what the driver does and what the
+    rules match.
 
     Safe to call after `navigation.set_route` has been pointed somewhere else: `set_route`
     rebuilds `current_road` from `checkpoints[0]`, which is always the spawn node, so `is_entry`
@@ -118,28 +164,40 @@ def read_sockets_from_env(env) -> list[SocketReading]:
     road_map = env.engine.current_map
     spawn_heading = env.agent.heading_theta
     spawn_node = env.agent.navigation.current_road.start_node
+    entry = _entry_heading(road_map, spawn_heading)
 
     readings = []
     for socket in road_map.blocks[-1].get_socket_list():
         road = socket.positive_road
         lanes = road.get_lanes(road_map.road_network)
         lane = lanes[-1]
-        angle = np.degrees(wrap_to_pi(lane.heading_theta_at(lane.length) - spawn_heading))
+        angle = wrap_to_pi(lane.heading_theta_at(lane.length) - spawn_heading)
         readings.append(
             SocketReading(
                 index=str(socket.index),
                 node=road.end_node,
                 start_node=road.start_node,
                 lane_count=len(lanes),
-                angle_deg=round(float(angle), 2),
+                angle_deg=round(float(np.degrees(angle)), 2),
+                turn_deg=round(float(np.degrees(wrap_to_pi(angle - entry))), 2),
                 is_entry=socket.is_socket_node(spawn_node),
+                entry_heading_deg=round(float(np.degrees(entry)), 2),
             )
         )
     return readings
 
 
 def select_exit(readings: list[SocketReading], rule: ExitRule) -> SocketReading:
-    """Apply a category's rule to a block's sockets. Pure: no simulator, no seed."""
+    """Apply a category's rule to a block's sockets. Pure: no simulator, no seed.
+
+    The angle rules match `turn_deg` -- the turn measured from where the car **enters the final
+    block** -- not `angle_deg`, which is measured from where it spawned. On a single-block road
+    the two are the same number, which is why the eleven shipped categories are unaffected. On a
+    composed road they are not: `CSX` seed 0 answered `left` with `3X1_1_`, the arm the driver
+    goes straight through, because that arm sits +115.5 deg from the spawn and the curve in front
+    of it had already turned the car by exactly that much. Measured from the junction it is 0 deg
+    and no longer a left turn, and the right turn the road plainly has stops being refused.
+    """
     usable = [reading for reading in readings if not reading.is_entry]
     if not usable:
         raise SocketError("the destination block offers no exit other than the one driven in by")
@@ -153,17 +211,18 @@ def select_exit(readings: list[SocketReading], rule: ExitRule) -> SocketReading:
         return usable[0]
 
     if rule is ExitRule.SHARPEST:
-        return max(usable, key=lambda reading: abs(reading.angle_deg))
+        return max(usable, key=lambda reading: abs(reading.turn_deg))
 
     target = TARGET_ANGLE[rule]
-    chosen = min(usable, key=lambda reading: abs(reading.angle_deg - target))
+    chosen = min(usable, key=lambda reading: abs(reading.turn_deg - target))
     # A rule that lands 60 degrees from what it asked for did not find its exit; it found the
     # least-wrong one. That is the failure the plan's "two sockets with the same sign" check is
     # aimed at, and it is cheaper to catch here than to discover in a thumbnail.
-    if abs(chosen.angle_deg - target) > 45.0:
+    if abs(chosen.turn_deg - target) > 45.0:
         raise SocketError(
-            f"no exit near {target:+.0f} degrees: closest is {chosen.node} at "
-            f"{chosen.angle_deg:+.1f}. This block is not shaped the way the category assumes."
+            f"no exit turning {target:+.0f} degrees out of the last block: closest is "
+            f"{chosen.node} at {chosen.turn_deg:+.1f}. This block is not shaped the way the "
+            f"category assumes."
         )
     return chosen
 

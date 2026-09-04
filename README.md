@@ -146,17 +146,55 @@ uv run scenariobank sockets --block-seq X --seed 0
 uv run scenariobank sockets --category roundabout --seed 3 --json
 ```
 
-Prints one row per exit — socket index, destination node, angle from the spawn heading, and the
-turn that implies — then what each `ExitRule` would resolve to. Angles are
-counter-clockwise-positive, so **positive is a left turn**.
+Prints one row per exit — socket index, destination node, **two** angles and the turn they imply —
+then what each `ExitRule` would resolve to, **including the rules that resolve to nothing**: "no
+exit turning -90 degrees out of the last block: closest is `1T1_1_` at +0.0" is the useful half of
+the answer when a road cannot carry a category. Angles are counter-clockwise-positive, so
+**positive is a left turn**.
 
-**The angle is the final heading, `wrap_to_pi`'d — not how far the ego turns.** That is what
-`ExitRule` needs, but it folds: `curve` seed 0 sweeps +239.5° and shows here as −120.5°, half the
-rotation and the wrong direction. For total rotation use `destinations`, which reports both.
+`--json` emits one document — `block_seq`, `seed`, `sockets` and `rules` — rather than a bare list
+of sockets, because the rules are what turn an exit into a destination and a list has nowhere to
+carry them. Each socket carries `angle_deg`, `turn_deg` and `entry_heading_deg`; the rules carry
+`angle_deg` and `turn_deg` beside the node they picked. The rules are in `ExitRule`'s own order, so
+the page and the terminal print them the same way round. This is what **Read the exits** on the
+studio's **Build** tab reads, and what fills the exit dropdown under a picked scenario.
+
+**`turn` is measured from where the car enters the last block; `from spawn` from where it set
+off.** They are the same number on a one-block road, and differ by exactly the rotation the road
+applied on the way in — printed above the table when it is not zero. `ExitRule` matches **`turn`**,
+because that is the turn a driver makes:
+
+```
+CSX seed 0
+  the road turns the car +115.5 deg before its last block, so the two angles differ
+  socket           node            turn  from spawn   which way
+  3X-socket0       3X0_1_         +90.0      -154.5   left
+  3X-socket1       3X1_1_          -0.0      +115.5   straight
+  3X-socket2       3X2_1_         -90.0       +25.5   right
+```
+
+The curve in front of the crossroads swings the car +115.5°, so from the spawn its three arms read
+−154.5 / +115.5 / +25.5. Matching those, `right` found nothing inside its 45° tolerance and refused
+on a road that plainly has a right turn, and `left` answered `3X1_1_` — the arm the driver goes
+*straight* through. From the junction they are the +90 / 0 / −90 a crossroads has.
+
+Only single-block roads and rule `only` are used by the eleven shipped categories, so this
+correction leaves `docs/reference/destinations.md` byte-for-byte unchanged. It bites on composed
+roads, which is what the studio's road builder makes.
+
+**Neither angle is how far the ego turns in total.** Both fold at ±180: `curve` seed 0 sweeps
++239.5° and shows here as −120.5°, half the rotation and the wrong direction. For total rotation
+use `destinations`, which reports both.
 
 Expect one exit near `+90`, one near `-90` and one near `0` for a four-way junction. **Two exits
 of the same sign and similar magnitude mean the block is not what you think it is** — stop and
 look before pinning anything to it.
+
+**The arm the ego drives in through is not listed.** A block's sockets are the connections it
+offers onward; the one behind it belongs to the block before. Measured across all fifteen block
+ids: none of the twelve that build marks an entry. `SocketReading.is_entry` and the filter every
+rule applies stay — they guard a case MetaDrive does not currently produce — but nothing composed
+from these blocks fills that column in.
 
 **Writes:** nothing.
 
@@ -201,7 +239,9 @@ uv run scenariobank destinations
 
 Resolves every category at every seed, proves each destination is reachable by running the
 shortest path, measures the route, and fingerprints each block sequence's drivable surface. Two
-env builds per category per seed plus one per sequence — about 17 seconds.
+env builds per category per seed plus one per sequence — about 20 seconds, reported as it goes:
+twenty `[n/m]` lines, nine block sequences then eleven categories, in the shape the studio's
+progress bar already reads.
 
 The document it writes has seven sections: the resolved destination and angle per category and
 seed; route length against the earned step budget; the turn actually taken; the **spawn lane**;

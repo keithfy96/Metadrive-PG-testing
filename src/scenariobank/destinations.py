@@ -7,6 +7,7 @@ so regenerating it after a MetaDrive bump is how a change in block shape becomes
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 from scenariobank.categories import CATEGORIES, SEEDS, step_budget
@@ -15,6 +16,8 @@ from scenariobank.sockets import survey
 
 def measure_road_variety(
     seeds: tuple[int, ...] = SEEDS,
+    *,
+    progress: Callable[[str], None] | None = None,
 ) -> tuple[dict[str, list[str]], dict[str, tuple[int, int, float] | None]]:
     """Fingerprint each block sequence at each seed, **and** measure how alike the closest two are.
 
@@ -33,9 +36,11 @@ def measure_road_variety(
     from scenariobank.fingerprint import lane_geometry_digest, road_shape
     from scenariobank.variety import closest_pair
 
+    say = progress or (lambda _message: None)
     sequences = sorted({category.block_seq for category in CATEGORIES.values()})
     variety, closest = {}, {}
     for block_seq in sequences:
+        say(f"road {block_seq}")
         env = MetaDriveEnv(
             base_config(map=block_seq, start_seed=min(seeds), num_scenarios=len(seeds))
         )
@@ -69,9 +74,16 @@ seed 0 turns +239.5 degrees left and its final heading reads -120.5.
 """
 
 
-def build_rows(seeds: tuple[int, ...] = SEEDS) -> dict[str, list[dict]]:
+def build_rows(
+    seeds: tuple[int, ...] = SEEDS, *, progress: Callable[[str], None] | None = None
+) -> dict[str, list[dict]]:
     """Resolve and measure every category at every seed."""
-    return {name: survey(category, seeds) for name, category in CATEGORIES.items()}
+    say = progress or (lambda _message: None)
+    rows = {}
+    for name, category in CATEGORIES.items():
+        say(f"category {name}")
+        rows[name] = survey(category, seeds)
+    return rows
 
 
 def _spawn_lane_section(rows: dict[str, list[dict]], seeds: tuple[int, ...]) -> list[str]:
@@ -315,9 +327,27 @@ def render(
     return "\n".join(lines)
 
 
-def write(path: Path, seeds: tuple[int, ...] = SEEDS) -> Path:
-    """Measure everything and write the document. Costs two env builds per category per seed."""
+def write(
+    path: Path, seeds: tuple[int, ...] = SEEDS, *, progress: Callable[[str], None] | None = None
+) -> Path:
+    """Measure everything and write the document. Costs two env builds per category per seed.
+
+    `progress` is called once per unit of work, in `generate`'s own `[n/m] what` shape rather
+    than a second progress protocol -- the studio's bar already reads those lines. Twenty seconds
+    of silence is what this looked like from a page, which cannot tell a slow measurement from a
+    hung one. The count is kept here because it spans both passes: the roads are fingerprinted
+    first, then every category is resolved and driven.
+    """
+    say = progress or (lambda _message: None)
+    total = len({category.block_seq for category in CATEGORIES.values()}) + len(CATEGORIES)
+    done = 0
+
+    def step(what: str) -> None:
+        nonlocal done
+        done += 1
+        say(f"[{done}/{total}] {what}")
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    variety, closest = measure_road_variety(seeds)
-    path.write_text(render(build_rows(seeds), seeds, variety, closest))
+    variety, closest = measure_road_variety(seeds, progress=step)
+    path.write_text(render(build_rows(seeds, progress=step), seeds, variety, closest))
     return path

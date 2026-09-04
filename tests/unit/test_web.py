@@ -965,3 +965,25 @@ def test_the_commands_that_edit_one_item_are_all_runnable_from_the_page(client):
     # quietly does nothing.
     runnable = client.get("/api/runnable").json()["commands"]
     assert {"replace", "add", "remove", "budget"} <= set(runnable)
+
+
+def test_the_destinations_reference_is_served_as_the_file_on_disk(client):
+    """Text, not a parsed document. `destinations.render` decides the layout of that file, and a
+    second opinion about it here would be the place the page and the command disagree."""
+    doc = client.workdir / "docs" / "reference" / "destinations.md"
+    doc.parent.mkdir(parents=True)
+    doc.write_text("# Destinations\n\n| category | seed 0 |\n|---|---|\n| `curve` | `2C0_1_` |\n")
+
+    body = client.get("/api/reference/destinations").json()
+    assert body["written"] is True
+    assert body["path"] == "docs/reference/destinations.md"
+    assert body["text"] == doc.read_text()
+    assert body["at"] > 0
+
+
+def test_a_studio_with_no_reference_measured_is_told_so_rather_than_refused(client):
+    """Absent is not an error: a studio started outside the repo gets the button that fixes it."""
+    body = client.get("/api/reference/destinations").json()
+    assert body == {
+        "path": "docs/reference/destinations.md", "written": False, "text": None, "at": None
+    }

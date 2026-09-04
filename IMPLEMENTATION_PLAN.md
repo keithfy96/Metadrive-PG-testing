@@ -1712,7 +1712,7 @@ two reproducibility items now scoped to actors alone.
 1.1 -> 1.2. `review` ends with `runs at traffic=medium, pedestrians=low, everything else none`.
 353 tests pass, ruff clean; no bank in `banks/` was opened for writing.)*
 
-### Step 11 — the road utilities ⬜
+### Step 11 — the road utilities ✅
 
 A utility tab: which exits does this road offer, and where does each category's route end. Both
 answer questions *about a road* rather than doing the job, which is why they are last rather than
@@ -1721,6 +1721,137 @@ first. `sockets` and `destinations` are what run behind them.
 **Test in the page:** ask for `X` at seed 0 and see one exit near +90, one near −90, one near 0, and
 the entry marked. Re-measure the destinations reference and `git diff docs/reference/destinations.md`
 is empty.
+
+**The second half of that test passed and the first half was wrong**, in the same way Step 10's
+`CCX` was: written without measuring. `X` at seed 0 offers exactly three exits at +90, 0 and −90,
+and **no entry is marked** — a block's `get_socket_list()` returns the connections it offers
+onward, and the arm it was driven in through belongs to the block before it. Measured across all
+fifteen block ids at seed 0: of the twelve that build, not one marks an entry.
+`SocketReading.is_entry` and the filter every rule applies stay — they guard a case MetaDrive does
+not currently produce — but nothing composed from these blocks will fill that column in, so the
+page says why rather than showing a column that is always empty.
+
+Four things it needed beyond a tab.
+
+- **`sockets --json` became a document.** It was a bare list of sockets, and the rules — which are
+  what turn an exit into a destination — had nowhere to live. Now `{block_seq, seed, sockets,
+  rules}`, with `rules` a **list** in `ExitRule`'s own order so `json.dumps(sort_keys=True)` cannot
+  alphabetise it and leave the page printing them in a different order from the terminal. The one
+  existing reader — the edit panel's exit dropdown — moved to `.sockets` with it.
+- **A rule that finds nothing is a row, not a gap.** The terminal skipped an unsatisfiable rule
+  silently; both surfaces now quote it: `no exit near -90 degrees: closest is 1T1_1_ at +0.0`.
+  That sentence is why a road cannot carry a category, which is the whole reason to look at one
+  here before pinning anything to it. `cli._rule_outcomes` computes it once for both.
+- **`destinations` reports as it goes** — the parked item, now warranted: twenty seconds of silence
+  is indistinguishable from a hung job on a page. Twenty units, `[n/m]`, **one count across both
+  passes** (nine sequences fingerprinted, then eleven categories resolved and driven) so the bar
+  does not refill halfway and read as a job starting over. The shape is `generate`'s own, which
+  the studio's bar already parses — no second progress protocol.
+- **`GET /api/reference/destinations` serves the file as text**, and `renderMarkdown` draws the
+  three blocks `destinations.render` emits — headings, paragraphs, pipe tables — reusing the same
+  `table()` and `inline()` the Reference tab uses. Text rather than a parsed structure: the
+  generator is the authority on that file's shape, and re-parsing it in the API would be a second
+  opinion about it. `inline()` gained italics, which the command help had been rendering as bare
+  asterisks all along.
+
+**It shipped as a fourth tab, and that was the wrong place for both cards.** *(Corrected the same
+day, on the question "what is the point of this?" — the answer named the problem.)*
+
+- **The exit reader belongs beside the road builder**, because what it answers is the question
+  **Draw** leaves open. A refused rule says it failed, not which rule would work; from a separate
+  tab you had to retype the road to ask. Merged into `#road-card` as a **second button on one
+  form** — same palette, same blocks box, same seed box, `Draw` running `inspect` and **Read the
+  exits** running `sockets`. Two `.argv` lines, one per button. The `or a type` dropdown moved
+  with it, so the eleven types' roads fill the same one box.
+- **The destinations reference belongs on the Reference tab**, which is already the tab for
+  documents the CLI generates. It sits above the command reference, **collapsed behind a toggle**
+  — an always-open 34rem document would push the `How do I…` index below the fold on every visit.
+  Fetched when that tab is first opened, for the reason the banks are.
+
+The Roads tab is gone; three tabs again. `paletteButton` reverted to its single-box form — with
+one box the parameterisation it had grown was dead weight — and `refreshExits` folded into
+`refreshRoad`, so one function reads the box and holds both buttons while either job runs. The
+exits section reports its own state where the answer will be rather than adding a second pill
+beside the drawing's. **No Python changed**: the JSON shape, the rule outcomes, the progress lines
+and the endpoint are all independent of where the cards live.
+
+*(Done 2026-09-04. Verified in a running studio, twice — once as the Roads tab and again after the
+fold. The loop the merge exists for: `CCX` at rule `left`, seed 0 refused with `no exit near +90
+degrees: closest is 3X2_1_ at +149.5`, then **Read the exits** without retyping gave `left`
+refused, `right` → `3X1_1_`, `straight` → `3X0_1_`, `sharpest` → `3X2_1_` — and drawing at
+`sharpest` then worked, 519.3 m, `would earn 1300`, `CCX_sharpest`. `X` at seed 0 read three exits
+at +90.0, 0.0 and −90.0, none an entry. `or a type` → `t_junction` filled `T`: seed 0 refused
+`right`, seed 2 refused `left`, which is the evidence for that category's `sharpest`. `fS` was
+refused with MetaDrive's own `Bug exists in this block, Recommend to use Ramp`. **Clear** emptied
+the box and both results. On Reference: the card is first and compact, **Show the document**
+rendered seven tables and eight headings, and **Re-measure** ran 20 units with the bar advancing —
+`docs/reference/destinations.md` came back with the same md5 it went in with, `git diff` empty,
+which is the test. The Bank tab's **List this seed's exits** still fills from the new document
+shape (`curve_0000` → `2C0_1_`). No console errors. 359 tests pass, ruff clean. The scratch bank
+was a copy of `banks/curve` under `scratch-banks/`, removed afterwards; the three real banks were
+never opened for writing.)*
+
+### Step 11c — measure the turn from the junction, not from the spawn ✅
+
+*(2026-09-04, Keith, looking at `CSX` drawn to rule `left`: "i fail to see how this is left, this
+seems like straight? is the angle based on the direction of the car when it enters the block?" —
+then "please change it so it applies from where the car enters the last block".)*
+
+It was not. `SocketReading.angle_deg` is the arm's final heading minus the **spawn** heading, and
+both `_turn_word` and every angle in `select_exit` read it. On a road that rotates the car before
+its last block that is the wrong frame, and the errors it produced were not cosmetic:
+
+```
+CSX seed 0, as it read before
+  3X0_1_   -154.5   right       <- the driver turns LEFT into this arm
+  3X1_1_   +115.5   left        <- the driver goes STRAIGHT through
+  3X2_1_    +25.5   straight    <- the driver turns RIGHT
+```
+
+The curve in front of the crossroads swings the car **+115.5°**, so rule `right` — hunting near
+−90° from the spawn — found nothing inside its 45° tolerance and refused on a road with an obvious
+right turn, and rule `left` answered `3X1_1_`, the arm the drawing goes straight up. **A silently
+wrong destination, not a bad label.**
+
+**The missing number was already in the map.** `blocks[-1].pre_block_socket` is the socket the
+final block was attached through — the road the car arrives on — so its last lane's final heading
+is where the car is pointing when it reaches the junction. New `_entry_heading` reads it, falling
+back to `0.0` rather than raising, because this serves a choice and must not stop `bank.generate`
+mid-run.
+
+`SocketReading` now carries **`turn_deg`** (the turn at the junction) beside `angle_deg` (from the
+spawn) and `entry_heading_deg` (the difference, the same on every reading of one map).
+`_turn_word` and **`select_exit`'s angle rules read `turn_deg`**. `CSX` seed 0 now reads +90 / 0 /
+−90, and all three angle rules resolve to three different arms.
+
+**Both angles are kept, and both are shown.** The terminal and the card print `turn` and
+`from spawn` side by side, with a line above the table naming the rotation when there is one:
+"this road turns the car +115.5° before it reaches the last block". `angle_deg` is still what the
+drawing's title and `destinations.md` report, and still what folds at ±180 — `curve` seed 0 sweeps
++239.5° and shows as −120.5°, which is why `RouteMeasurement.net_rotation_deg` exists and is
+untouched here.
+
+**Nothing shipped moved.** `X`, `T` and `O` are single blocks, so their entry heading is 0 and
+`turn_deg == angle_deg`; `CC`, `rS`, `RS`, `yS`, `YS` and `$S` use rule `only`, which ignores
+angles. `docs/reference/destinations.md` re-measures byte-for-byte identical — `git status` does
+not list it. That invariant is now a test in its own right, alongside a pure test of the two-arm
+case and a `needs_sim` test of `CSX`.
+
+**Step 11's verification record below is now out of date in one respect**: `CCX` at rule `left`,
+seed 0 no longer refuses. Two curves rotate that crossroads −120.5°, so from the spawn its arms
+read −30.5 / −120.5 / +149.5 and `left` found nothing; from the junction they are +90 / 0 / −90
+and `left` is `3X0_1_`. The docs' refusal example moved to `T` at rule `right`, which refuses
+because a T junction genuinely has no right arm at seed 0 rather than because it was measured from
+the wrong place.
+
+*(Done 2026-09-04. Verified in a running studio on a throwaway copy of `banks/curve` under
+`scratch-banks/`, removed afterwards; the three real banks were never opened for writing. `CSX`
+seed 0 **Read the exits** printed the rotation line and +90.0 / 0.0 / −90.0 against −154.5 /
++115.5 / +25.5. **Draw** at `left` → `3X0_1_`, net rotation +205.48°, and the picture turns left
+at the junction; at `right` → `3X2_1_`, +25.48°, and it turns right — that one was refused
+outright before. The Bank tab's **List this seed's exits** still fills from the document
+(`curve_0000` → `exit:2C0_1_`). No console errors. 362 tests pass, ruff clean.
+`uv run scenariobank destinations` reproduced the checked-in file exactly.)*
 
 ### Step 12 — pick a model, submit a run ⬜  ⟵ *blocked on Phase 7*
 

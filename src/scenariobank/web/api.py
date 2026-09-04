@@ -30,7 +30,7 @@ from scenariobank.bank import (
     set_max_steps,
     set_options,
 )
-from scenariobank.cli import EXAMPLES_DIR
+from scenariobank.cli import DESTINATIONS_DOC, EXAMPLES_DIR
 from scenariobank.web.invoke import NOT_RUNNABLE, InvokeError, build_argv, catalog
 from scenariobank.web.jobs import JobBusy, JobNotFound, Jobs
 
@@ -501,6 +501,27 @@ def create_app(*, banks_root: Path, state_dir: Path, workdir: Path | None = None
                 detail=f"no example picture for {category!r} yet -- run: scenariobank examples",
             )
         return FileResponse(path, media_type="image/png")
+
+    @app.get("/api/reference/destinations")
+    def destinations_doc() -> dict:
+        """The checked-in destinations reference, as text, so the page can show what was measured.
+
+        Text rather than a parsed document: it is generated markdown and the generator is the
+        authority on its shape. Re-parsing it here to hand the page a structure would be a second
+        opinion about a file `destinations.render` already decided the layout of.
+
+        Absent is not an error. A studio started outside the repo, or one whose reference has
+        never been measured, gets `written: false` and the button that fixes it.
+        """
+        path = workdir / DESTINATIONS_DOC
+        if not path.is_file():
+            return {"path": str(DESTINATIONS_DOC), "written": False, "text": None, "at": None}
+        return {
+            "path": str(DESTINATIONS_DOC),
+            "written": True,
+            "text": path.read_text(),
+            "at": path.stat().st_mtime,
+        }
 
     @app.get("/")
     def index() -> FileResponse:

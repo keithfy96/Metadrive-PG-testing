@@ -435,6 +435,44 @@ table.seeds td.gap .dup { color: var(--bad); }
 .bank-options .note { font-size: 12.5px; margin: 0.6rem 0 0; overflow-wrap: anywhere; }
 .bank-options .note.failed { font-family: var(--mono); font-size: 12px; white-space: pre-wrap;
                              color: var(--bad); }
+
+/* The exits of the road in the box above, under the picture of it. Same form, second question:
+   which arms does the last block offer, and what does each rule pick from them. */
+/* Capped rather than sized to its longest option: `ramp_traffic_merge` alone pushed the row
+   onto a second line, leaving `Clear` stranded there by itself. The full name is readable the
+   moment the list is open. */
+select#road-type { width: auto; max-width: 10rem; font-family: var(--mono); font-size: 12.5px; }
+/* An auto margin rather than a `.spacer`, because this row is long enough to wrap: a spacer
+   stays on the line it was laid out on and leaves the pill stranded at the left of the next one.
+   An auto margin resolves per flex line, so the pill goes right on whichever line it lands. It
+   is on the pill and not on the check for the same reason -- an empty check would absorb the
+   space on the line above and leave the pill where it started. */
+#road-state { margin-left: auto; }
+.exits { margin-top: 1.1rem; border-top: 1px solid var(--hair); padding-top: 0.4rem; }
+.exits h3 { margin-top: 1.3rem; }
+.exits .caption { font-size: 12px; color: var(--muted); margin: 0.5rem 0 0; }
+.exits td.turn { color: var(--ink-2); }
+/* A rule that finds nothing is the useful half of the answer often enough that it is a row
+   like any other, in the command's own words rather than an empty cell. */
+.exits td.refused { color: var(--bad); }
+.exits pre.refusal { color: var(--bad); white-space: pre-wrap; word-break: break-word; }
+
+/* The generated reference, shown as the document it is. `renderMarkdown` handles the three
+   blocks `destinations.render` emits -- headings, paragraphs and pipe tables -- and nothing
+   else, because the generator is the only thing that writes this file. */
+.doc { margin-top: 0.8rem; border-top: 1px solid var(--hair); padding-top: 0.8rem;
+       max-height: 34rem; overflow-y: auto; }
+.doc[hidden] { display: none; }
+#dest-where { font-size: 12px; color: var(--muted); margin: 0.7rem 0 0; }
+#dest-where.failed { color: var(--bad); }
+.doc h3 { font-family: var(--sans); font-size: 15px; color: var(--ink); margin: 1.4rem 0 0.4rem; }
+.doc h4 { font-family: var(--mono); font-size: 13px; color: var(--accent);
+          margin: 1.4rem 0 0.4rem; font-weight: 600; }
+.doc h5 { font-family: var(--mono); font-size: 12.5px; color: var(--ink-2);
+          margin: 1.1rem 0 0.3rem; font-weight: 600; }
+.doc > :first-child { margin-top: 0; }
+.doc p { color: var(--ink-2); }
+.doc .scroll { margin: 0.5rem 0 1rem; }
 </style>
 
 <header class="top">
@@ -472,11 +510,15 @@ table.seeds td.gap .dup { color: var(--bad); }
       <p class="argv" id="build-where"></p>
     </div>
 
-    <!-- The road builder. Drawing writes nothing; adding files the road under a name derived
-         from the road and the rule (`categories.composed_name`), which is what keeps "no invented
-         names for one-offs" true while still letting one into a bank: the same road composed
-         twice is one category, not two spellings of one. This is also where to look at
-         everything the eleven shipped types left out. -->
+    <!-- The road builder, and the exit reader beside it. Drawing writes nothing; adding files
+         the road under a name derived from the road and the rule (`categories.composed_name`),
+         which is what keeps "no invented names for one-offs" true while still letting one into a
+         bank: the same road composed twice is one category, not two spellings of one. This is
+         also where to look at everything the eleven shipped types left out.
+
+         One form, two questions about it. **Draw** refuses a rule the road cannot satisfy and
+         does not say which rule would work; **Read the exits** does, on the sequence already in
+         the box. Asking that from somewhere else would mean typing the road twice. -->
     <div class="card" id="road-card">
       <h2>Or compose a road by hand</h2>
       <p class="blurb">
@@ -486,6 +528,13 @@ table.seeds td.gap .dup { color: var(--bad); }
         bank</b> writes anything, into a scenario type named after the road and the rule. A road
         MetaDrive will not build is refused in MetaDrive's own words.
       </p>
+      <p class="blurb">
+        <b>Read the exits</b> asks the other question about the same road, with
+        <code>scenariobank sockets</code>: every arm its last block offers, and what each of the
+        five exit rules picks from them — <i>including the rules that pick nothing</i>. That is
+        what to press when a draw is refused, and how a scenario type's destination was chosen in
+        the first place.
+      </p>
       <div class="palette" id="palette">
         <span class="loading">loading the blocks…</span>
       </div>
@@ -493,18 +542,22 @@ table.seeds td.gap .dup { color: var(--bad); }
         <label class="lab" for="road-seq">blocks</label>
         <input type="text" id="road-seq" placeholder="e.g. CCX" spellcheck="false"
                autocomplete="off" autocapitalize="off">
+        <label class="lab" for="road-type">or a type</label>
+        <select id="road-type"></select>
         <label class="lab" for="road-rule">exit</label>
         <select id="road-rule"></select>
         <label class="lab" for="road-seed">seed</label>
         <input type="number" id="road-seed" min="0" step="1" value="0">
         <button class="go" id="road-go" disabled>Draw</button>
+        <button class="go" id="exits-go" disabled>Read the exits</button>
         <button class="ghost" id="road-clear">Clear</button>
-        <span class="spacer"></span>
         <span class="failed" id="road-check"></span>
         <span class="pill" id="road-state">idle</span>
       </div>
       <p class="argv" id="road-argv"></p>
+      <p class="argv" id="exits-argv"></p>
       <div class="road" id="road-result" hidden></div>
+      <div class="exits" id="exits-result" hidden></div>
     </div>
 
     <div class="card" id="build-progress" hidden>
@@ -568,7 +621,7 @@ table.seeds td.gap .dup { color: var(--bad); }
         <li class="done sub">8b — edit, add or remove one item</li>
         <li class="done">four new scenario types</li>
         <li class="done">the road builder — compose a road by hand, and add it to a bank</li>
-        <li>the road utilities — exits, and the destinations reference</li>
+        <li class="done">the road utilities — exits, and the destinations reference</li>
         <li>pick a model and submit a run to the queue</li>
       </ol>
     </div>
@@ -579,6 +632,36 @@ table.seeds td.gap .dup { color: var(--bad); }
   </section>
 
   <section id="view-reference" hidden>
+    <!-- A generated reference, on the tab for generated references. `renderReference` replaces
+         the `#reference` div in place, so this card sits above whatever it builds.
+
+         The document is collapsed by default: this tab's job is the command reference, and an
+         always-open document would push the index below the fold on every visit. -->
+    <div class="card" id="dest-card">
+      <h2>The destinations reference</h2>
+      <p class="blurb">
+        Where every scenario type's route ends, at every seed, and how alike the roads behind
+        them are — <code>docs/reference/destinations.md</code>, written by
+        <code>scenariobank destinations</code>. It is checked in, so this is the document as it
+        was last measured. Re-measure it after a MetaDrive bump: a figure nobody re-measures is
+        a figure nobody can trust, and a change in block geometry has no other way to become
+        visible.
+      </p>
+      <div class="row">
+        <button class="go" id="dest-go">Re-measure</button>
+        <button class="ghost" id="dest-cancel" hidden>Cancel</button>
+        <button class="ghost" id="dest-show">Show the document</button>
+        <span class="spacer"></span>
+        <span class="pill" id="dest-state">idle</span>
+      </div>
+      <p class="argv" id="dest-argv">scenariobank destinations</p>
+      <div class="bar" id="dest-bar" hidden><span id="dest-bar-fill"></span></div>
+      <p class="count" id="dest-count" hidden></p>
+      <pre id="dest-log" hidden></pre>
+      <p class="caption" id="dest-where"></p>
+      <div class="doc" id="dest-doc" hidden></div>
+    </div>
+
     <div class="card loading" id="reference">loading the reference…</div>
   </section>
 </main>
@@ -606,6 +689,9 @@ function inline(text) {
   return escape(text ?? "")
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    // After bold, so `**this**` is not seen as two emphases. Both the command help and the
+    // generated reference are written in markdown and both use it.
+    .replace(/\*([^*]+)\*/g, "<em>$1</em>")
     .replace(/\[([^\]]+)\]\(#([\w.-]+)\)/g, '<a class="jump" href="#cmd-$2">$1</a>');
 }
 
@@ -648,6 +734,9 @@ function showView(name) {
   // Fetched when the tab is first opened rather than at boot: a studio started to run one command
   // should not stat every bank on disk to do it.
   if (name === "bank" && !dataset.banks) loadBanks();
+  // The destinations reference is a checked-in file, read when its tab is first opened and then
+  // only when a re-measurement rewrites it. Not at boot, for the reason the banks are not.
+  if (name === "reference" && !dest.doc) loadDestinations();
 }
 
 tabs.addEventListener("click", (event) => {
@@ -845,18 +934,25 @@ function renderPalette(blocks, rules) {
   refreshRoad();
 }
 
-// The button is live only for a sequence the CLI would take, and the line under the row is the
-// command it would run. The real check is `invoke.py`'s and then `categories.validate_block_seq`;
-// this only brings the refusal forward to before the click.
+// Both buttons are live only for a sequence the CLI would take, and each line under the row is
+// the command that button would run. One reader of the box, because there is one box: the real
+// check is `invoke.py`'s and then `categories.validate_block_seq`, and this only brings the
+// refusal forward to before the click.
 function refreshRoad() {
   const seq = $("road-seq").value.trim();
+  const seed = $("road-seed").value.trim() || 0;
   const unknown = [...new Set([...seq].filter((id) => !road.blocks.some((b) => b.id === id)))];
+  const ok = seq && unknown.length === 0;
+  // Both are held while either is running: the studio runs one job at a time, so the second
+  // click would be a 409 rather than a second answer.
+  const busy = road.state === "drawing" || exits.state === "reading";
   $("road-check").textContent = unknown.length ? `not a block: ${unknown.join(" ")}` : "";
-  $("road-go").disabled = !seq || unknown.length > 0 || road.state === "drawing";
-  $("road-argv").textContent = seq && !unknown.length
-    ? `scenariobank inspect --block-seq ${seq} --rule ${$("road-rule").value}`
-      + ` --seed ${$("road-seed").value.trim() || 0}`
+  $("road-go").disabled = !ok || busy;
+  $("exits-go").disabled = !ok || busy;
+  $("road-argv").textContent = ok
+    ? `scenariobank inspect --block-seq ${seq} --rule ${$("road-rule").value} --seed ${seed}`
     : "";
+  $("exits-argv").textContent = ok ? `scenariobank sockets --block-seq ${seq} --seed ${seed}` : "";
 }
 
 async function drawRoad() {
@@ -1745,7 +1841,8 @@ function forgetSwap() {
 // the two into a single log. The document is written last and, indented, its only bracket at the
 // start of a line is the outermost one -- so the answer is the tail from there. Reading it back
 // off the log rather than inventing a second channel for it is the same choice `applyGenerate`
-// makes. An object for `seeds`, an array for `sockets`; both are documents on one line each.
+// makes. `seeds` and `sockets` both emit one object, written last and indented, so the outermost
+// bracket is the only one at the start of a line.
 function lastJson(text) {
   const at = Math.max(text.lastIndexOf("\n{"), text.lastIndexOf("\n["));
   if (at < 0 && !/^[{[]/.test(text)) throw new Error("the command printed no JSON");
@@ -2094,7 +2191,8 @@ function applyExits(job) {
     try {
       // The entry socket is the arm the ego arrives through. Every rule in `sockets.py` excludes
       // it and so does this list: it is not a place a route can end.
-      edit.exits = lastJson(run.text).filter((one) => !one.is_entry).map((one) => one.node);
+      edit.exits = lastJson(run.text).sockets
+        .filter((one) => !one.is_entry).map((one) => one.node);
     } catch (error) {
       editNote(`the exits could not be read: ${error.message}`, true);
     }
@@ -2387,6 +2485,309 @@ async function loadBanks(prefer) {
   await openBank(dataset.name);
 }
 
+// ------------------------------------------------------------- the exits of it
+//
+// `sockets` on the road already in the box, which is the discovery command every category's
+// destination was chosen with. It is here rather than on a screen of its own because what it
+// answers is the question **Draw** leaves open: a refused rule does not say which rule works.
+// Two screens run it -- this one and the edit panel's exit dropdown -- so `WATCHERS.sockets`
+// routes by which of them is waiting, the same way `inspect` already did.
+
+const exits = { state: "idle", seq: "", seed: 0, doc: null, note: null };
+
+function forgetExits() {
+  Object.assign(exits, { state: "idle", seq: "", seed: 0, doc: null, note: null });
+}
+
+// The eleven scenario types' roads, so the question "where does this type's route end" is one
+// click rather than a block sequence remembered. It fills the box rather than becoming a second
+// input: both buttons run `--block-seq`, so one control decides what is measured.
+function fillTypes(categories) {
+  $("road-type").replaceChildren(
+    el("option", { value: "", text: "—" }),
+    ...categories.map((row) => el("option", { value: row.block_seq, text: row.name })));
+}
+
+async function readExits() {
+  exits.seq = $("road-seq").value.trim();
+  exits.seed = Number($("road-seed").value.trim() || 0);
+  exits.state = "reading";
+  exits.doc = null;
+  exits.note = null;
+  renderExits();
+  try {
+    await startJob("sockets", {
+      "--block-seq": exits.seq, "--seed": String(exits.seed), "--json": true,
+    });
+  } catch (error) {
+    exits.state = "refused";
+    exits.note = error.message;
+    renderExits();
+  }
+}
+
+function applyRoadExits(job) {
+  if (exits.state !== "reading" || job.state === "running") return;
+  if (job.state === "lost" || job.exit_code !== 0) {
+    exits.state = "refused";
+    exits.note = tail(run.text, 3) || "the exits could not be read";
+  } else {
+    try {
+      exits.doc = lastJson(run.text);
+      exits.state = "read";
+    } catch (error) {
+      exits.state = "refused";
+      exits.note = `the exits could not be read: ${error.message}`;
+    }
+  }
+  renderExits();
+}
+
+// The turn word the terminal prints, from the same thresholds `sockets._turn_word` uses. It is
+// the one number on this card that is a judgement rather than a measurement, so it is shown
+// beside the angle it was read off rather than instead of it.
+//
+// Read off `turn_deg`, the turn measured from where the car enters the last block -- not
+// `angle_deg`, which is measured from where it spawned. On a road with a curve in front of its
+// junction the two disagree, and it was `angle_deg` that had this table calling an arm "left"
+// while the drawing plainly went straight through it.
+function turnWord(socket) {
+  if (socket.is_entry) return "entry";
+  if (Math.abs(socket.turn_deg) < 30) return "straight";
+  return socket.turn_deg > 0 ? "left" : "right";
+}
+
+const signed = (n) => `${n > 0 ? "+" : ""}${n.toFixed(1)}°`;
+
+// No pill of its own: the card already has one for the drawing, and a second reading "idle"
+// beside it would look broken. This section says its own state where the answer will be.
+function renderExits() {
+  refreshRoad();
+  const result = $("exits-result");
+  result.hidden = exits.state === "idle";
+  if (exits.state === "idle") return;
+
+  if (exits.state === "reading") {
+    result.replaceChildren(el("span", { class: "loading", text: `building ${exits.seq}…` }));
+    return;
+  }
+  if (exits.state === "refused") {
+    result.replaceChildren(
+      el("pre", { class: "refusal", text: exits.note }),
+      el("p", { class: "caption",
+                text: "Those are the command's own words. A sequence that does not lay out can "
+                  + "fail at one seed and build at the next; a block MetaDrive names as broken "
+                  + "is broken at every seed." }));
+    return;
+  }
+
+  const doc = exits.doc;
+  // Cells carry markdown, not HTML: `table` runs every one of them through `inline`, so a node
+  // name is backticked here for the same reason it is in the reference tab.
+  const sockets = table(
+    ["socket", "node", { label: "lanes", nowrap: true }, { label: "turn", nowrap: true },
+     { label: "from spawn", nowrap: true }, "which way"],
+    doc.sockets.map((one) => [
+      { html: `\`${one.index}\``, class: "nowrap" },
+      { html: `\`${one.node}\``, class: "nowrap" },
+      { html: String(one.lane_count), class: "num" },
+      { html: signed(one.turn_deg), class: "num" },
+      { html: signed(one.angle_deg), class: "num" },
+      { html: turnWord(one), class: "turn" },
+    ]));
+  // Every rule, including the ones that find nothing. A road is the shape it is, and "no exit
+  // near +90 degrees: closest is 3X2_1_ at +149.5" is why a category cannot be built on it --
+  // which is the whole reason to look at a road here before pinning anything to it.
+  const rules = table(
+    ["rule", "destination", { label: "turn", nowrap: true }],
+    doc.rules.map((outcome) => [
+      { html: `\`${outcome.rule}\``, class: "nowrap" },
+      outcome.refused === null
+        ? { html: `\`${outcome.node}\``, class: "nowrap" }
+        : { html: outcome.refused, class: "refused" },
+      outcome.refused === null
+        ? { html: signed(outcome.turn_deg), class: "num" }
+        : { html: "—", class: "num" },
+    ]));
+
+  // Said only when the two angle columns disagree, which is exactly when the road rotates the
+  // car before its last block. Silent for every single-block road, which is all eleven types.
+  const rotation = doc.sockets.length ? doc.sockets[0].entry_heading_deg : 0;
+  const rotated = Math.abs(rotation) >= 0.05;
+
+  result.replaceChildren(
+    el("h3", { text: `${doc.block_seq} at seed ${doc.seed}` }),
+    ...(rotated
+      ? [el("p", { class: "caption",
+                   html: `This road turns the car <b>${signed(rotation)}</b> before it reaches `
+                     + "the last block, so the two angle columns disagree. <b>turn</b> is what "
+                     + "the driver does at the junction; <b>from spawn</b> is the same arm "
+                     + "measured from where the car set off." })]
+      : []),
+    sockets,
+    el("p", { class: "caption",
+              html: "<b>turn</b> is measured from the heading the car arrives on, so it is what "
+                + "the driver actually does — and it is what the rules below match. "
+                + "<b>from spawn</b> is the arm's final heading relative to the spawn, wrapped "
+                + "into (−180, +180]; it is the angle the drawing's title reports. The arm "
+                + "the car drives in through is not here: a block's sockets are the connections "
+                + "it offers onward, and the one behind it belongs to the block before. Nothing "
+                + "built from the fifteen blocks marks an entry." }),
+    el("h3", { text: "what each exit rule picks" }),
+    rules,
+    el("p", { class: "caption",
+              text: "A rule is how a scenario type names its destination without naming a node: "
+                + "a node is an arm of this seed's road and the next seed may not have it." }));
+}
+
+// ------------------------------------------------------- the destinations reference
+//
+// The one command on this page whose whole output is a document, on the tab for documents the
+// CLI generates. It is checked in, so the card shows the file as it stands and the button
+// re-measures it -- twenty units of work and about a hundred resets, reported as it goes in the
+// same `[n/m]` lines the build bar already reads.
+//
+// The document is collapsed until asked for. This tab's own job is the command reference, and a
+// 34rem document above it would push the index below the fold on every visit.
+
+const dest = { state: "idle", note: null, doc: null, progress: null, showing: false };
+
+async function loadDestinations() {
+  try {
+    dest.doc = await api("/api/reference/destinations");
+  } catch (error) {
+    dest.doc = { written: false, text: null, error: error.message };
+  }
+  renderDestinations();
+}
+
+async function measureDestinations() {
+  dest.state = "measuring";
+  dest.note = null;
+  renderDestinations();
+  try {
+    // No `--out`: the page always rewrites the checked-in reference, which is the only copy
+    // anything reads. A path box here would be a way to measure into somewhere nobody looks.
+    await startJob("destinations", {});
+  } catch (error) {
+    dest.state = "failed";
+    dest.note = error.message;
+    renderDestinations();
+  }
+}
+
+function applyDestinations(job) {
+  if (dest.state !== "measuring") return;
+  const progress = counted(run.text);
+  if (job.state === "running") {
+    dest.progress = progress;
+    renderDestinations();
+    return;
+  }
+  if (job.state === "lost" || job.exit_code !== 0) {
+    dest.state = "failed";
+    dest.note = tail(run.text, 4) || "the measurement ended without saying why";
+    renderDestinations();
+    return;
+  }
+  dest.state = "measured";
+  dest.progress = null;
+  // Re-read rather than trusted: the document on the page is the file on disk, and the command
+  // is what decides what is in it.
+  loadDestinations();
+}
+
+function renderDestinations() {
+  const state = $("dest-state");
+  const measuring = dest.state === "measuring";
+  state.className = `pill${{ measuring: " run", measured: " ok", failed: " bad" }[dest.state]
+                           || ""}`;
+  state.textContent = { idle: "idle", measuring: "measuring…", measured: "re-measured",
+                        failed: "failed" }[dest.state];
+  $("dest-go").disabled = measuring;
+  $("dest-cancel").hidden = !measuring;
+
+  const progress = measuring ? dest.progress : null;
+  $("dest-bar").hidden = !progress;
+  $("dest-count").hidden = !measuring;
+  if (progress) {
+    $("dest-bar-fill").style.width = `${Math.round((progress.done / progress.total) * 100)}%`;
+    $("dest-count").textContent = `${progress.done} of ${progress.total} — ${progress.what}`;
+  } else if (measuring) {
+    $("dest-count").textContent = "starting the simulator…";
+  }
+
+  const log = $("dest-log");
+  log.hidden = dest.state !== "failed";
+  log.textContent = dest.state === "failed" ? dest.note : "";
+
+  // The one line that is always visible: which file this is, and when it was last measured.
+  const where = $("dest-where");
+  const show = $("dest-show");
+  if (!dest.doc) {
+    where.className = "caption";
+    where.textContent = "reading the reference…";
+  } else if (!dest.doc.written) {
+    where.className = "caption failed";
+    where.textContent = dest.doc.error
+      ? `the reference could not be read: ${dest.doc.error}`
+      : "This studio has no destinations reference on disk. Re-measure writes one.";
+  } else {
+    where.className = "caption";
+    where.textContent = `${dest.doc.path} — last written `
+      + new Date(dest.doc.at * 1000).toLocaleString();
+  }
+
+  const readable = Boolean(dest.doc && dest.doc.written);
+  show.hidden = !readable;
+  show.textContent = dest.showing ? "Hide the document" : "Show the document";
+
+  const doc = $("dest-doc");
+  doc.hidden = !(readable && dest.showing);
+  if (doc.hidden) doc.replaceChildren();
+  else doc.replaceChildren(renderMarkdown(dest.doc.text));
+}
+
+// The three blocks `destinations.render` emits: headings, paragraphs and pipe tables. Not a
+// markdown parser -- it is one generated file, and the generator decides its shape. Anything it
+// does not recognise is left as a paragraph, so a new block type reads plainly rather than
+// disappearing.
+function renderMarkdown(text) {
+  const out = document.createDocumentFragment();
+  const lines = text.split("\n");
+  let at = 0;
+  while (at < lines.length) {
+    const line = lines[at];
+    if (!line.trim()) { at += 1; continue; }
+
+    const heading = /^(#{1,6})\s+(.*)$/.exec(line);
+    if (heading) {
+      // The card owns `h2`, so the document starts a level below it and keeps its own nesting.
+      out.appendChild(el(`h${Math.min(heading[1].length + 2, 6)}`,
+                         { html: inline(heading[2]) }));
+      at += 1;
+      continue;
+    }
+
+    if (line.startsWith("|")) {
+      const rows = [];
+      while (at < lines.length && lines[at].startsWith("|")) rows.push(lines[at++]);
+      const cells = (row) => row.slice(1, row.endsWith("|") ? -1 : undefined)
+        .split("|").map((cell) => cell.trim());
+      // The `|---|` rule under the header is a separator, not a row.
+      const body = rows.slice(1).filter((row) => !/^\|[\s:|-]+\|?$/.test(row));
+      out.appendChild(table(cells(rows[0]), body.map(cells)));
+      continue;
+    }
+
+    const paragraph = [];
+    while (at < lines.length && lines[at].trim() && !lines[at].startsWith("|")
+           && !/^#{1,6}\s/.test(lines[at])) paragraph.push(lines[at++]);
+    out.appendChild(el("p", { html: inline(paragraph.join(" ")) }));
+  }
+  return out;
+}
+
 // -------------------------------------------------------------- the reference
 
 // One flag's closed set, out of the reference the page already holds. `docs._choices` reads it
@@ -2539,7 +2940,10 @@ const WATCHERS = {
   // "Add to bank". Which of them is waiting decides where the answer lands.
   add: (job) => (road.add.state === "adding" ? applyRoadAdd(job) : applyEdit(job)),
   remove: applyEdit,
-  sockets: applyExits,
+  // Two screens run `sockets`: the edit panel fills its exit dropdown, and the Roads tab reads a
+  // road nobody has committed to anything. Which of them is waiting decides where the answer goes.
+  sockets: (job) => (edit.busy === "exits" ? applyExits(job) : applyRoadExits(job)),
+  destinations: applyDestinations,
 };
 
 function apply(job) {
@@ -2651,18 +3055,37 @@ referenceReady = Promise.all([api("/api/commands"), api("/api/categories"), api(
     // The road builder's palette, and its rules read off the flag `inspect` itself takes.
     renderPalette(blocks, choicesFor(data, "inspect", "--rule"));
     $("road-go").addEventListener("click", drawRoad);
+    $("exits-go").addEventListener("click", readExits);
     $("road-clear").addEventListener("click", () => {
       $("road-seq").value = "";
       road.state = "idle";
       forgetRoadAdd();
+      // The exits were read off the same box, so they go with it.
+      forgetExits();
+      renderExits();
       renderRoad();
       $("road-seq").focus();
+    });
+    // The eleven types' own roads, out of the same `/api/categories` the gallery is drawn from.
+    // It fills the box and lets go, so the box stays the one thing that says what is measured.
+    fillTypes(categories);
+    $("road-type").addEventListener("change", (event) => {
+      if (!event.target.value) return;
+      $("road-seq").value = event.target.value;
+      event.target.value = "";
+      refreshRoad();
     });
     for (const id of ["road-seq", "road-rule", "road-seed"]) {
       $(id).addEventListener("input", refreshRoad);
     }
     $("road-seq").addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !$("road-go").disabled) drawRoad();
+    });
+    $("dest-go").addEventListener("click", measureDestinations);
+    $("dest-cancel").addEventListener("click", cancelJob);
+    $("dest-show").addEventListener("click", () => {
+      dest.showing = !dest.showing;
+      renderDestinations();
     });
     $("draw").addEventListener("click", drawExamples);
     // Adopt whatever is already running. A reload is not a new session as far as a job is

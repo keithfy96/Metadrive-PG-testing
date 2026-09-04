@@ -14,6 +14,15 @@ import typer
 from scenariobank.categories import SEEDS, get_category
 from scenariobank.cli import _ad_hoc_category, _parse_scan, _parse_seed_options, _parse_seeds
 from scenariobank.options import AXES
+from scenariobank.sockets import SocketReading
+
+#: The four-way junction as this simulator actually builds it, mirroring `test_sockets.FOUR_WAY`.
+#: Kept here too so the rule table is testable without a simulator, which is what it is.
+FOUR_WAY_READINGS = [
+    SocketReading(index=f"1X-socket{n}", node=node, start_node="1X0_0_", lane_count=3,
+                  angle_deg=angle, turn_deg=angle, is_entry=False)
+    for n, (node, angle) in enumerate([("left", 90.0), ("straight", 0.0), ("right", -90.0)])
+]
 
 
 def test_a_bare_seed_list_becomes_the_shared_default():
@@ -236,3 +245,62 @@ def test_a_level_the_bank_would_refuse_leaves_the_command_at_exit_one(tmp_path):
     result = _options_run(tmp_path, "--traffic", "enormous")
     assert result.exit_code == 1
     assert "options failed" in result.output
+
+
+def test_every_exit_rule_is_reported_including_the_ones_that_find_nothing():
+    """The refusal is the useful half of the answer often enough to be a row rather than a gap.
+
+    The table and the studio's exit reader are both drawn from this, so a rule that cannot be
+    satisfied says why in the command's own words instead of quietly disappearing.
+    """
+    from scenariobank.categories import ExitRule
+    from scenariobank.cli import _rule_outcomes
+
+    outcomes = _rule_outcomes(FOUR_WAY_READINGS)
+    # A list, in `ExitRule`'s own order: `json.dumps(sort_keys=True)` would alphabetise a dict,
+    # and the studio would then print these in a different order from the terminal.
+    assert [one["rule"] for one in outcomes] == [rule.value for rule in ExitRule]
+    by_rule = {one["rule"]: one for one in outcomes}
+    assert by_rule["left"] == {
+        "rule": "left",
+        "node": "left",
+        "angle_deg": 90.0,
+        "turn_deg": 90.0,
+        "refused": None,
+    }
+    assert by_rule["sharpest"]["node"] in {"left", "right"}
+    # A crossroads is not a single-exit block, and `only` says so rather than reading as absent.
+    assert by_rule["only"]["node"] is None
+    assert "single-exit block" in by_rule["only"]["refused"]
+
+
+def test_the_sockets_document_names_the_road_it_measured():
+    """`--json` emits one document about *this road at this seed*, not a bare list of sockets.
+
+    Two screens read it -- the edit panel's exit dropdown and the studio's exit reader -- and the
+    second needs the rules, which a list of sockets has nowhere to carry.
+    """
+    from typer.testing import CliRunner
+
+    from scenariobank.cli import app
+
+    result = CliRunner().invoke(app, ["sockets", "--block-seq", "X", "--seed", "0", "--json"])
+    if result.exit_code != 0:
+        pytest.skip("needs_sim: MetaDrive is not installed (uv sync --group sim)")
+    document = json.loads(result.stdout[result.stdout.index("{"):])
+    assert document["block_seq"] == "X"
+    assert document["seed"] == 0
+    # The crossroads as this simulator builds it: three arms, one each way.
+    assert sorted(round(one["angle_deg"]) for one in document["sockets"]) == [-90, 0, 90]
+    # And no entry among them. A block's sockets are the connections it offers onward; the arm
+    # it was driven in through belongs to the block before it, so nothing built from the fifteen
+    # blocks ever marks one.
+    assert not any(one["is_entry"] for one in document["sockets"])
+    # Nothing turns the car before a one-block road's junction, so the two angles agree. They
+    # part company only on a composed road, and it is `turn_deg` the rules match.
+    assert all(one["entry_heading_deg"] == 0 for one in document["sockets"])
+    assert all(one["turn_deg"] == one["angle_deg"] for one in document["sockets"])
+    assert [one["rule"] for one in document["rules"]] == ["only", "left", "right", "straight",
+                                                          "sharpest"]
+    left = next(one for one in document["rules"] if one["rule"] == "left")
+    assert left["angle_deg"] == 90.0

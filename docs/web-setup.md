@@ -163,10 +163,10 @@ It is still the escape hatch for everything the eleven shipped types left out �
 lot, a two-way road, a crossroads with a U-turn — and the place to watch them fail honestly.
 
 **Failing honestly** means the command's own words, not a spinner. Two kinds of refusal reach
-the card. The rule can find no exit: `CCX` at rule `left` is refused with `no exit near +90
-degrees: closest is 3X2_1_ at +149.5`, because two curves rotate the crossroads until none of its
-arms is a left turn from where the car starts — try `sharpest`, or another seed. And MetaDrive can
-refuse the road itself. Type `fS` and draw it:
+the card. The rule can find no exit: `T` at rule `right` is refused with `no exit turning -90
+degrees out of the last block: closest is 1T1_1_ at +0.0`, because a T junction at that seed
+offers a left and a straight and nothing else — try `sharpest`, or another seed, where the arm on
+offer flips. And MetaDrive can refuse the road itself. Type `fS` and draw it:
 
 ```
 inspect failed: seed 0 does not build for block sequence 'fS': Bug exists in this block, Recommend to use Ramp
@@ -181,6 +181,73 @@ The palette is served by `GET /api/blocks` from `categories.BLOCKS`, the table
 `validate_block_seq` checks sequences against; a test asserts every letter and class name against
 MetaDrive's own registry, so the palette cannot offer a block the CLI would refuse or name one
 differently from the reference.
+
+### Read the exits — the same road, the other question
+
+A refused rule tells you the rule failed. It does not tell you which rule would work. **Read the
+exits** does, on the sequence already in the box — the second button on the same form, running
+`scenariobank sockets` where **Draw** runs `inspect`. That is why the two share one card: asking
+this from anywhere else would mean typing the road twice.
+
+Two tables come back. The first is every socket the road's last block offers: its index, the node
+a route would be pinned to, how many lanes it has, and **two** angles — `turn` and `from spawn`.
+**Positive is a left turn** (`straight_lane.py:56`). Two exits of the same sign and similar size
+mean the block is not the shape you think it is.
+
+**`turn` is what the driver does at the junction**, measured from the heading the car arrives on.
+**`from spawn`** is the same arm measured from where the car set off, which is the angle the
+drawing's title reports. On a one-block road they are identical. They come apart the moment the
+road turns the car before its last block, and the card says so above the table when it does:
+
+```
+CSX at seed 0
+  this road turns the car +115.5° before it reaches the last block
+
+  socket        node      lanes    turn   from spawn   which way
+  3X-socket0    3X0_1_        3   +90.0       -154.5   left
+  3X-socket1    3X1_1_        3    -0.0       +115.5   straight
+  3X-socket2    3X2_1_        3   -90.0        +25.5   right
+```
+
+The curve in front of the crossroads swings the car +115.5°, so from the spawn the three arms sit
+at −154.5 / +115.5 / +25.5 — no two of which look like a crossroads. From the junction they are the
++90 / 0 / −90 that they plainly are in the drawing. **The rules match `turn`.** They used to match
+`from spawn`, which is why `CSX` with rule `right` was refused on a road with an obvious right
+turn, and why rule `left` answered `3X1_1_` — the arm the drawing goes *straight* up.
+
+None of the eleven shipped scenario types is affected: they are single-block roads, or they use
+rule `only`, which ignores angles. `docs/reference/destinations.md` re-measures byte-for-byte
+identical. It was only ever composed roads — the ones this card exists for — that read wrong.
+
+**The arm the car drives in through is not in the list.** A block's sockets are the connections
+it offers onward, and the one behind it belongs to the block before — so `X` reads as exactly
+three exits, at +90, 0 and −90. Measured across all fifteen block ids: of the twelve that build,
+not one marks an entry. `SocketReading.is_entry` and the filter every rule applies stay, guarding
+a case MetaDrive does not currently produce, but nothing composed from these blocks fills that
+column in.
+
+The second table is what each of the five exit rules picks, **including the ones that pick
+nothing**, in the command's own words:
+
+```
+only      ExitRule.ONLY needs a single-exit block, but this one offers 2: [...]. Use an angle rule.
+left      1T0_1_    +90.0°
+right     no exit turning -90 degrees out of the last block: closest is 1T1_1_ at +0.0.
+straight  1T1_1_     +0.0°
+sharpest  1T0_1_    +90.0°
+```
+
+So the `T` refusal above resolves in one press: `right` never will at seed 0, `sharpest` gives
+`1T0_1_`. It is also where a scenario type's rule can be justified — `t_junction` uses `sharpest`
+because
+the arm on offer flips with the seed, and reading `T` at seed 0 (`right` refused) and at seed 2
+(`left` refused) is the evidence for that.
+
+Both buttons are held while either is running: the studio runs one job at a time, so a second
+click would be a refusal rather than a second answer.
+
+This is *inspection only*. Nothing here changes an existing scenario's exit — that is the Bank
+tab's edit panel, under **Editing, adding and removing an item** below.
 
 ## Looking at a bank
 
@@ -493,6 +560,33 @@ one field.
 "never set" and "set to zero" are one state. A 1.1 bank this build edits comes back stamped 1.2,
 for the reason 1.0 banks come back 1.1.
 
+## The destinations reference
+
+On the **Reference** tab, above the command reference, is `docs/reference/destinations.md` — where
+every scenario type's route ends, at every seed, with the route lengths, the turns taken, the
+spawn lanes and how alike the closest two roads of each sequence are. It is checked in, so the
+card names the file and when it was last measured; **Show the document** renders it in place. It
+is collapsed by default because this tab's own job is the command reference, and an always-open
+document would push the index below the fold on every visit.
+
+**Re-measure** rewrites it, in place. There is no path box: the page always rewrites the one copy
+anything reads. It is twenty units of work — nine block sequences fingerprinted, then eleven
+categories resolved and driven at five seeds each, roughly a hundred resets — and reports as it
+goes in the same `[n/m]` lines the build bar reads. One count across both passes, so the bar does
+not refill halfway and read as a job starting over. `destinations` in `README.md` has the measured
+wall-clock figure.
+
+**Re-measure after a MetaDrive bump.** Every figure in that file comes from a reset on the
+simulator `doctor` reports, and regenerating it is how a change in block geometry becomes visible.
+On an unchanged simulator the file comes back byte-identical, so `git diff` is the check: an empty
+diff means nothing moved.
+
+The document is served as text by `GET /api/reference/destinations` and rendered on the page by
+`renderMarkdown`, which handles the three blocks `destinations.render` emits — headings,
+paragraphs and pipe tables — reusing the same table and inline-markdown helpers the command
+reference uses. Text rather than a parsed structure, because the generator is the authority on
+that file's shape and re-parsing it in the API would be a second opinion about it.
+
 ## What it will and will not do to your files
 
 - **Reads** `--banks-root` for directories holding a `manifest.json`, and serves thumbnails from
@@ -501,8 +595,10 @@ for the reason 1.0 banks come back 1.1.
   whatever a command you ran was told to write — `generate -o ./banks/b` writes a bank, exactly as
   it would from a terminal, **Use this seed** rewrites one row of one manifest and redraws its
   thumbnail, **Add to bank** appends one scenario to the bank you picked from the list, and the
-  option dropdowns rewrite one field of one manifest and rebuild nothing. `.studio/` is gitignored and disposable: a job is re-runnable, so nothing in it is
-  worth keeping.
+  option dropdowns rewrite one field of one manifest and rebuild nothing. **Re-measure** on the
+  Reference tab rewrites `docs/reference/destinations.md` — the one thing this page writes that is
+  not under `.studio/` and not in a bank. `.studio/` is gitignored and disposable: a job is
+  re-runnable, so nothing in it is worth keeping.
 - **Deletes** exactly two things, both of them yours to ask for: **Remove this one** deletes a
   scenario's thumbnail with its row, and a rebuild deletes a thumbnail it did not redraw. A picture
   of a scenario the manifest no longer describes is wrong, not merely stale.
@@ -565,6 +661,8 @@ design is arranged to prevent. Existing examples of the pattern: `/api/doctor` r
 | removing is refused, naming the scenario | it is the last one in the bank. Delete the directory instead |
 | a comparison says `incomparable` | the two cards are different scenario types. There is no gap between categories, only between scenarios of one — the fields are still shown side by side |
 | a bank is listed as `unreadable` | its `manifest.json` does not parse or does not validate — opening it names the reason. A bank written by an older schema reads exactly like this |
+| the destinations card on the Reference tab says no reference is on disk | the studio was started outside the checkout, so `docs/reference/destinations.md` is not where it looks. **Re-measure** writes one where it is |
+| **Re-measure** changed `destinations.md` | the simulator is not the one the file was measured on. That is the command working: read the diff |
 | **Generate** is greyed out and says banks live outside the working directory | the studio was started with a `--banks-root` outside its own checkout; no job may write out there. Restart it inside the directory you want the bank in |
 
 ## What exists today
@@ -588,6 +686,9 @@ done. Currently live:
     gallery is eleven cards and a full bank is 55 scenarios
 12. the road builder — any block sequence, an exit rule and a seed, drawn and measured, and
     added to a bank under a name derived from the road and the rule
+13. the road utilities — **Read the exits** beside the road builder, which says what each rule
+    picks from a road and why the ones that fail fail; and the destinations reference on the
+    **Reference** tab, shown as the document it is and re-measured on demand
 
-Still to come are the road utilities and submitting a run to the queue. See
+Still to come is submitting a run to the queue, which is blocked on the queue itself. See
 **Phase 2c** in `IMPLEMENTATION_PLAN.md`.

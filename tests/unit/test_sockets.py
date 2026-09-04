@@ -12,14 +12,17 @@ needs_sim = pytest.mark.skipif(
 )
 
 
-def reading(node, angle, *, is_entry=False):
+def reading(node, angle, *, is_entry=False, turn=None, entry_heading=0.0):
+    """A socket at `angle` from the spawn. `turn` defaults to it, as on any unrotated road."""
     return SocketReading(
         index=f"1X-{node}",
         node=node,
         start_node=f"{node}_in",
         lane_count=3,
         angle_deg=angle,
+        turn_deg=angle if turn is None else turn,
         is_entry=is_entry,
+        entry_heading_deg=entry_heading,
     )
 
 
@@ -193,3 +196,66 @@ def test_a_route_past_a_u_turn_reports_its_true_rotation_not_the_wrapped_one():
     assert abs(measured.net_rotation_deg) > 180.0
     assert abs(exit_socket.angle_deg) <= 180.0
     assert measured.net_rotation_deg > 0 > exit_socket.angle_deg, "the fold flips the sign"
+
+
+def test_the_turn_word_and_the_rules_read_the_junction_not_the_spawn():
+    """The pure half of the `CSX` bug: two arms, only one of which is a left turn.
+
+    Both sit +115.5 degrees from where the car set off, because a curve turned it that far before
+    the junction. Measured from the junction one is straight ahead and the other is a left, and
+    it is that number every rule matches. Reading `angle_deg` instead answered `left` with the
+    arm the driver goes straight through.
+    """
+    from scenariobank.categories import ExitRule
+    from scenariobank.sockets import _turn_word
+
+    ahead = reading("ahead", 115.5, turn=0.0, entry_heading=115.5)
+    leftward = reading("leftward", -154.5, turn=90.0, entry_heading=115.5)
+    sockets = [ahead, leftward]
+
+    assert _turn_word(ahead.turn_deg) == "straight"
+    assert ahead.describe().endswith("straight")
+    assert select_exit(sockets, ExitRule.STRAIGHT).node == "ahead"
+    assert select_exit(sockets, ExitRule.LEFT).node == "leftward"
+    assert select_exit(sockets, ExitRule.SHARPEST).node == "leftward"
+
+
+@needs_sim
+def test_a_road_that_curves_before_its_junction_still_reads_ninety_degree_turns():
+    """The measured half of the same bug, on the road that exposed it.
+
+    `CSX` seed 0 runs a curve into a crossroads, and the curve swings the car +115.5 degrees on
+    the way. From the spawn its three arms read -154.5 / +115.5 / +25.5, from which `right` found
+    nothing inside its tolerance and refused -- on a crossroads. From the junction they are the
+    +90 / 0 / -90 a crossroads has, and all three rules resolve.
+    """
+    from scenariobank.categories import ExitRule
+    from scenariobank.sockets import read_sockets
+
+    readings = read_sockets("CSX", 0)
+    assert readings[0].entry_heading_deg == pytest.approx(115.5, abs=1.0)
+    assert sorted(round(one.turn_deg) for one in readings) == [-90, 0, 90]
+    # The angles from the spawn are the ones that made the old reading refuse; they are kept.
+    assert sorted(round(one.angle_deg) for one in readings) != [-90, 0, 90]
+
+    chosen = {rule: select_exit(readings, rule).node for rule in
+              (ExitRule.LEFT, ExitRule.RIGHT, ExitRule.STRAIGHT)}
+    assert len(set(chosen.values())) == 3
+    # And the one the card asked for: `left` is no longer the arm the drawing goes straight up.
+    assert chosen[ExitRule.STRAIGHT] == "3X1_1_"
+    assert chosen[ExitRule.LEFT] != "3X1_1_"
+
+
+@needs_sim
+def test_a_single_block_road_measures_the_same_turn_from_either_end():
+    """The invariant that keeps the eleven shipped categories honest.
+
+    Nothing rotates the car before a one-block road's junction, so the entry heading is zero and
+    `turn_deg` is `angle_deg`. That is why moving the rules onto `turn_deg` left every checked-in
+    destination byte-for-byte unchanged.
+    """
+    from scenariobank.sockets import read_sockets
+
+    for readings in (read_sockets("X", 0), read_sockets("T", 0), read_sockets("O", 0)):
+        assert readings[0].entry_heading_deg == pytest.approx(0.0, abs=0.5)
+        assert all(one.turn_deg == pytest.approx(one.angle_deg, abs=0.5) for one in readings)

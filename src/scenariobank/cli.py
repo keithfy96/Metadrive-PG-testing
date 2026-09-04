@@ -97,6 +97,45 @@ def categories() -> None:
         )
 
 
+def _rule_outcomes(readings: list) -> list[dict[str, object]]:
+    """What each exit rule resolves to on these sockets, and why it does not where it does not.
+
+    Every rule, including the ones that find nothing: "no exit near +90 degrees: closest is
+    3X2_1_ at +149.5" is the useful half of the answer when a road is not the shape a category
+    assumes, and dropping it was what made the terminal's table quieter than it should be.
+
+    A list rather than a dict so the order survives `json.dumps(sort_keys=True)`: the studio
+    prints these in the order the terminal does, and `ExitRule` is where that order is declared.
+    """
+    from scenariobank.categories import ExitRule
+
+    outcomes: list[dict[str, object]] = []
+    for rule in ExitRule:
+        try:
+            chosen = select_exit(readings, rule)
+        except SocketError as error:
+            outcomes.append(
+                {
+                    "rule": rule.value,
+                    "node": None,
+                    "angle_deg": None,
+                    "turn_deg": None,
+                    "refused": str(error),
+                }
+            )
+        else:
+            outcomes.append(
+                {
+                    "rule": rule.value,
+                    "node": chosen.node,
+                    "angle_deg": chosen.angle_deg,
+                    "turn_deg": chosen.turn_deg,
+                    "refused": None,
+                }
+            )
+    return outcomes
+
+
 @app.command()
 def sockets(
     block_seq: Annotated[
@@ -131,21 +170,38 @@ def sockets(
         typer.echo(f"sockets failed: {error}", err=True)
         raise typer.Exit(code=1) from error
 
+    rules = _rule_outcomes(readings)
     if as_json:
-        typer.echo(json.dumps([vars(reading) for reading in readings], indent=2, sort_keys=True))
+        # A document about *this road at this seed*, not a bare list of sockets: the rules are
+        # what turn an exit into a destination, and a rule that finds nothing says why. Computed
+        # here, where the table already computed it, so the page cannot reach a different answer
+        # from the terminal.
+        document = {
+            "block_seq": block_seq,
+            "seed": seed,
+            "sockets": [vars(reading) for reading in readings],
+            "rules": rules,
+        }
+        typer.echo(json.dumps(document, indent=2, sort_keys=True))
         return
     typer.echo(f"{block_seq} seed {seed}")
-    typer.echo(f"  {'socket':<16} {'node':<12} {'angle':>7}  turn")
+    # Only worth saying when the two angle columns disagree, which is exactly when the road
+    # rotates the car before its last block. Silent for every single-block road.
+    rotation = readings[0].entry_heading_deg if readings else 0.0
+    if abs(rotation) >= 0.05:
+        typer.echo(
+            f"  the road turns the car {rotation:+.1f} deg before its last block, "
+            f"so the two angles differ; the rules use 'turn'"
+        )
+    typer.echo(f"  {'socket':<16} {'node':<12} {'turn':>7} {'from spawn':>11}   which way")
     for reading in readings:
         typer.echo(f"  {reading.describe()}")
-    for rule_name in ("left", "right", "straight", "sharpest", "only"):
-        try:
-            from scenariobank.categories import ExitRule
-
-            chosen = select_exit(readings, ExitRule(rule_name))
-        except SocketError:
-            continue
-        typer.echo(f"  rule {rule_name:<9} -> {chosen.node} ({chosen.angle_deg:+.1f})")
+    for outcome in rules:
+        name = outcome["rule"]
+        if outcome["refused"] is None:
+            typer.echo(f"  rule {name:<9} -> {outcome['node']} (turn {outcome['turn_deg']:+.1f})")
+        else:
+            typer.echo(f"  rule {name:<9} -- {outcome['refused']}")
 
 
 @app.command("inspect")
@@ -796,11 +852,17 @@ def commands(
     typer.echo(f"commands written: {write(out)}")
 
 
+#: Where the destinations reference lives, relative to the directory the studio runs in. Named
+#: once and shared with `web.api`, which reads the document back out to show it on the page:
+#: a command that writes somewhere the page does not look would be a screen that never updates.
+DESTINATIONS_DOC = Path("docs/reference/destinations.md")
+
+
 @app.command()
 def destinations(
     out: Annotated[
         Path, typer.Option("--out", "-o", help="Reference document to write.")
-    ] = Path("docs/reference/destinations.md"),
+    ] = DESTINATIONS_DOC,
 ) -> None:
     """Resolve every category at every seed and write the destinations reference.
 
@@ -811,7 +873,9 @@ def destinations(
     from scenariobank.destinations import write
 
     try:
-        path = write(out, SEEDS)
+        # One line per road and per category as it lands, for the reason `examples` reports the
+        # same way: this is twenty seconds of work and the studio shows what it says while it runs.
+        path = write(out, SEEDS, progress=typer.echo)
     except SocketError as error:
         typer.echo(f"destinations failed: {error}", err=True)
         raise typer.Exit(code=1) from error
