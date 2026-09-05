@@ -1,0 +1,6 @@
+# The studio image copies exactly two files (`pyproject.toml`, `uv.lock`); everything else in this
+# directory is context sent to the daemon for nothing. `.venv` alone is gigabytes, and `banks/`
+# grows without limit once real-world datasets are imported.
+*
+!pyproject.toml
+!uv.lock

@@ -94,6 +94,9 @@ def test_the_toll_gate_is_spelled_out_rather_than_dropped_from_a_name():
 
 def test_every_composed_name_is_one_the_studio_can_serve():
     """A scenario id becomes a URL segment and a PNG filename, so the name has to survive both."""
+    pytest.importorskip(
+        "fastapi", reason="needs_web: FastAPI is not installed (uv sync --group web)"
+    )
     from scenariobank.web.api import _NAME
 
     for block in BLOCKS:

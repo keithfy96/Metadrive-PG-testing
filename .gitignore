@@ -12,3 +12,9 @@ banks/
 # The studio's job logs and scratch figures (Phase 2c). Derived from runs that already
 # happened; a job is re-runnable, so none of this is worth keeping.
 .studio/
+
+# Results written by `docker compose run --rm run ... --out /out/...`. The directory itself is
+# tracked (out/.gitkeep) because the Docker daemon creates a missing bind source as root; what
+# lands in it is a run's output and belongs with the run, not in git.
+out/*
+!out/.gitkeep

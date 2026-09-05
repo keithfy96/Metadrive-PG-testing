@@ -102,14 +102,14 @@ def _ranking():
 
 
 def _seeds_run(monkeypatch, *flags):
-    from click.testing import CliRunner
+    from typer.testing import CliRunner
 
     from scenariobank import cli, variety
 
     monkeypatch.setattr(cli, "has_simulator", lambda: True)
     monkeypatch.setattr(variety, "scan", lambda *args, **kwargs: _ranking())
     result = CliRunner().invoke(
-        typer.main.get_command(cli.app),
+        cli.app,
         ["seeds", "--category", "curve", "--keep", "0,1", "--scan", "0-22", *flags],
     )
     assert result.exit_code == 0, result.output
@@ -199,12 +199,12 @@ def _bank_for_options(tmp_path):
 
 
 def _options_run(tmp_path, *flags):
-    from click.testing import CliRunner
+    from typer.testing import CliRunner
 
     from scenariobank import cli
 
     return CliRunner().invoke(
-        typer.main.get_command(cli.app),
+        cli.app,
         ["options", "--bank", str(tmp_path), *flags],
     )
 

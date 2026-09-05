@@ -20,6 +20,12 @@ def test_a_non_loopback_bind_is_refused_before_anything_is_served(host):
 @pytest.mark.parametrize("host", sorted(_LOOPBACK))
 def test_every_loopback_spelling_gets_past_the_guard(host, monkeypatch, tmp_path):
     """The refusal above is only worth having if it does not also reject the valid cases."""
+    # Inside the body, not at module scope: the refusal test above is the security one in this
+    # file, it passes without the web group because the guard fires before `studio` imports
+    # anything, and a module-level skip would take it down with this one.
+    pytest.importorskip(
+        "fastapi", reason="needs_web: FastAPI is not installed (uv sync --group web)"
+    )
     served: dict[str, object] = {}
     monkeypatch.setattr(
         "uvicorn.run",

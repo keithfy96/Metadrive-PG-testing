@@ -1,0 +1,4 @@
+# Kept so that `compose.yaml`'s `${OUT_DIR:-./out}:/out` has an existing directory to bind. A
+# missing bind source is created by the Docker daemon, which runs as root -- so without this file
+# the first `docker compose run` leaves a root-owned `out/` in the working tree that the studio
+# then cannot write into.

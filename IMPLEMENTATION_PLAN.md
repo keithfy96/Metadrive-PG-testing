@@ -564,9 +564,10 @@ metadrive-PG/
       supervise.py          #   log file + exit-code file. No state held anywhere.
       archive.py            #   evidence, written before the run touches anything
   rigs/av3.txt              # the six AV3 cameras, ported from the converter
-  docker/Dockerfile         # adapted from converter-scenarionet-stage2-redesign/docker/Dockerfile
-  compose.yaml
+  docker/studio.Dockerfile  # the studio image: FROM metadrive-wingfin-sim, plus the web group
+  compose.yaml              # `run` on the reused sim image, `studio` on ours. No build for `run`.
   scripts/bank-check.sh     # ruff -> pytest
+  scripts/sim-image.sh      # is the base image here, and does its label carry what we need
   tests/
   docs/reference/
     destinations.md         # the resolved destination socket per category (Phase 1)
@@ -580,8 +581,8 @@ metadrive-PG/
 
 ## Reading the markers
 
-Every phase heading carries one, and so does every step inside Phase 2c, Phase 3, Phase 4 and
-Phase 7:
+Every phase heading carries one, and so does every step inside Phase 2c, Phase 3, Phase 4,
+Phase 5 and Phase 7:
 
 | marker | means |
 |---|---|
@@ -2102,7 +2103,9 @@ The command that turns a workspace into a bank under `--banks-root`, beside the 
   shipped to a rig; a path into somebody's home directory is not. Cost: `junction-1` is 5.5 MB at
   10 Hz and **48 MB at 100 Hz** (150 actors × 3782 frames), while `mosque` is 1.3/1.5 MB because it
   has no actors at all. A 35-scenario real-world bank could reach ~1.7 GB, which is the first thing
-  in this project that makes a bank expensive to move.
+  in this project that makes a bank expensive to move. **The mounts themselves are described once**,
+  in Phase 5 Step 1: the runner takes the repo read-only and writes to `/out` alone, so a bank
+  this large is carried in, never written back.
 - **Import at 100 Hz, and set the physics step to match.** ScenarioNet replay advances **one
   recorded frame per `env.step`**, so the recording's rate *is* the env's rate — and MetaDrive's
   default does not match it. Measured: `physics_world_step_size=0.02` × `decision_repeat=5` is an
@@ -2415,6 +2418,14 @@ placing anything — the same class of bug as floor equals ceiling.
 in `wingfin-osm-scenarionet-converter/` and is already MetaDrive-shaped — **port it, do not
 rewrite it**. This step ports the rig half only:
 
+**No new container for any of this** *(added 2026-09-06, Phase 5)*. `metadrive-wingfin-sim`
+already carries the whole rig stack, and the gate that decides whether a rendered frame can stay
+in GPU memory — `base_camera.py:10-18`, one `try:` over cupy, PyOpenGL and `cuda.cudart` — was
+measured **open** in it: cupy 14.2.0, PyOpenGL 3.1.10, cuda-python 12.9.7. That gate does not
+fall back when it is shut, it trips an assert whose hint names cupy even when what is missing is
+one of the other two, so having it verified in the image this runs in is worth more than the
+version numbers are.
+
 - `tools/camera_rig.py` — `load_rig()`, `CameraRig.sensors/mount/read`
 - `rigs/av3.txt` — the six AV3 cameras, ISO-8855 → CARLA sign rules applied, datum resolved onto
   MetaDrive's `DefaultVehicle`
@@ -2463,7 +2474,10 @@ The other half of the port, plus the two things about it that are not a copy:
   `ego_state`, `navigation`, `waypoints`
 - `tools/openpilot_policy.py` — `BridgeConnection`, `OpenpilotDriver`, `to_metadrive_action`
 - `metadrive-complete/openpilot/bridge/` — the zapeta bridge image (Python 3.8, its own container).
-  Use **our own** openpilot bridge, not wing-sim's.
+  Use **our own** openpilot bridge, not wing-sim's — and that tree is **byte-identical** to the
+  one baked into the already-built `metadrive-wingfin-openpilot:prod` (`diff -rq`, empty), which
+  is what makes "our own" checkable rather than asserted. **Nothing to build**: the image mounts
+  no volumes and needs no repo, and `scripts/bridge.sh start` runs it. See Phase 5 Step 3.
 
 - **The submitted `model_dev.yml` is not the converter's.** Both repos have a file by that name
   with different schemas. `tools/av3_model.load_config` **requires every field and defaults none**
@@ -2534,57 +2548,181 @@ separated success rates, measured rather than guessed, and `options.py` matches 
 
 ---
 
-# Phase 5 — Container ⬜
+# Phase 5 — Containers ⬜
 
-> **Machine-run.** The image's entrypoint calls `run_bank()` directly — the container is not a
-> person at a terminal, and it is not "running the CLI". `selftest` is an internal build check.
-> See **What a person actually uses**.
+> **Machine-run.** These are entered by CI, by the orchestrator and by the studio's own worker, not
+> by a person at a terminal — with one exception, `docker compose up studio`, which serves a page a
+> person does use. See **What a person actually uses**.
 
 **Goal:** the same numbers on your machine, in CI, and on the frontend's host.
 
-**Build — adapt, do not reinvent.** Start from
-`converter-scenarionet-stage2-redesign/docker/Dockerfile`, which already solves the hard parts:
-`ubuntu:22.04`, `uv` copied from `ghcr.io/astral-sh/uv`, `UV_PROJECT_ENVIRONMENT=/opt/venv`,
-`RUN python -m metadrive.pull_asset` baked in, the panda3d `Config.prc` patch preferring
-`libp3headlessgl.so` (EGL) over GLX for display-free rendering, the `glvnd/egl_vendor.d` manifest,
-and `HOME=/tmp`.
+**Reuse, do not rebuild.** This phase used to say "adapt `docker/Dockerfile` from the converter" and
+list the hard parts it already solves — `ubuntu:22.04`, `uv`, `UV_PROJECT_ENVIRONMENT=/opt/venv`,
+`metadrive.pull_asset`, the panda3d `Config.prc` patch preferring EGL over GLX, the
+`glvnd/egl_vendor.d` manifest, `HOME=/tmp`. That was written before anyone checked whether the
+image those lines produce already runs this repo. **It does**, measured 2026-09-06:
 
-Changes for scenariobank:
-- Top-down rendering is pygame/CPU only, so `generate` needs **no GPU**. Keep the EGL
-  layer anyway — Phase 8's lights and any camera-model run need real 3D, and the AV3 runner will
-  later want the same image. One image, not two.
-- `ENV SDL_VIDEODRIVER=dummy MPLBACKEND=Agg`.
-- Build-time smoke test: generate one scenario and render one thumbnail. Fail the build if it fails.
-- `scenariobank selftest`: build one known seed, assert it resets and that the map measures
-  **left-side drive**. It proves the image can generate at all; it deliberately does not compare
-  the road against a baked-in value, because roads are not promised stable between batches.
-- Mount banks **read-only** (`compose.yaml` already uses `${RIG_DIR}:/rig:ro`, `${MODEL_DIR}:/models:ro`
-  — follow that pattern with `${BANK_DIR}:/bank:ro`). Do not bake banks into the image.
-
-**How you test it**
-```bash
-docker build -f docker/Dockerfile -t scenariobank:85e5dad .
-docker run --rm scenariobank:85e5dad doctor
 ```
-**Expect:** the *same* commit + asset_version your host `doctor` printed in Phase 0.
-
-```bash
-docker run --rm scenariobank:85e5dad selftest        # exit 0, prints "drive side: left"
+$ docker run --rm -v $PWD:/work:ro metadrive-wingfin-sim:latest python -m scenariobank doctor
+commit:        85e5dadc6c7436d324348f6e3d8f8e680c06b4db     requested: 85e5dadc
+asset_version: 0.4.3    python: 3.10.21    numpy: 2.2.6
+obs_space:     Box(-0.0, 1.0, (19,), float32)               drive_side: left
 ```
 
-**The acceptance test — host vs container must agree:**
+No build, no install, no `PYTHONPATH` — and that output *is* what this phase's acceptance asks for.
+So the from-scratch Dockerfile is cut, and what replaces it is one two-line image for the studio.
+
+**Why no `PYTHONPATH`.** The base image's editable install is a single bare path line,
+`/work/src`. `site` evaluates it at every interpreter start, so whatever is mounted at `/work` has
+its `src/` on `sys.path`; `/work` is also that image's `WORKDIR`, so `banks/curve` resolves the way
+it does on the host. The cost is that the mount shadows the converter's own source, so
+`import osm_scenario` does not work in there — nothing of ours imports it.
+
+**R1 is untouched.** We import none of that repo's code. We name one of its build products, the way
+a lockfile names a wheel.
+
+## Three containers, one of them ours
+
+| | image | who builds it |
+|---|---|---|
+| 1 | `metadrive-wingfin-sim` | the converter repo. **Reused unchanged** — `generate`, `run`, the camera rig, the AV3 model |
+| 2 | `metadrive-wingfin-openpilot:prod` | the converter repo. **Reused unchanged** — the control stack behind TCP 5558 |
+| 3 | `scenariobank-studio` | **here.** `FROM` #1 plus fastapi, uvicorn, httpx2 |
+
+**Phase 7 adds no fourth image.** Its Step 1 runner image is "extends Phase 5", and its Step 3
+launches each run as a *sibling container* — a run of #1 under a supervisor, not an image to build.
+
+## What is already in the base, measured by import rather than read off a label
+
+| | version | matters to |
+|---|---|---|
+| metadrive | `85e5dadc` — **the commit `pyproject.toml` pins** | everything |
+| numpy / pydantic / structlog / typer | 2.2.6 / 2.13.4 / 25.5.0 / 0.27.0 | all inside our declared ranges |
+| matplotlib | 3.10.9 | `figures.py` |
+| pytest / ruff | 8.4.2 / 0.16.1 | the suite runs in there |
+| torch / tensorrt | 2.8.0+cu128 / 10.12.0.36 | Phase 4 Step 7 |
+| cupy / PyOpenGL / cuda-python | 14.2.0 / 3.1.10 / 12.9.7 — the `image_on_cuda` gate is **open** | Phase 4 Step 6 |
+| `metadrive.envs.scenario_env` | imports | Phase 3 |
+| fastapi / uvicorn / httpx | **absent** | the studio, and only the studio |
+
+So **Phase 4 Steps 6 and 7 need no new container**, and neither does Phase 3.
+
+**Size costs disk, not startup, and this is measured so it is not re-argued.** `docker run` on the
+13.4 GB base exits in **0.29 s**, against **0.27 s** for a 78 MB `ubuntu:22.04` — the layers are
+already unpacked and a run mounts an overlay and execs. What costs time is imports, and they are
+the same libraries in any image: bare interpreter 17 ms, `import scenariobank.cli` **204 ms**,
+`import metadrive` 2.3 s, `import torch` 1.3 s. The studio pays only the 204 ms; the 2.3 s is per
+*job subprocess*; the 10.5 GB of torch/TensorRT/CuPy is never imported at all unless the AV3 policy
+runs. It is inert weight on disk, not latency and not memory. A right-sized studio image was
+considered and rejected on the same measurement: ~3 GB alone, but it shares almost no layers with
+the base, so on a machine that has both — which every machine does, the runner needs #1 regardless
+— it *adds* ~2.9 GB where the layer adds 40 MB.
+
+## Steps
+
+### Step 1 — `compose.yaml`: our repo, their image, no build ⬜
+
+Two services over one image, plus `scripts/sim-image.sh`, which is the guard.
+
+- **`image:` with no `build:` key on the runner.** A `docker compose build` in this repo must be
+  unable to produce something under the tag `metadrive-wingfin-sim`; that is the failure the
+  converter's own `wingfin.groups` label exists to catch, and the cheapest fix is to make it
+  impossible here.
+- **The runner mounts `.:/work:ro`.** Read-only *is* the test: a runner that can rewrite the bank
+  it is scoring makes "the same numbers everywhere" uncheckable. `${OUT_DIR:-./out}:/out` is the
+  only writable path.
+- **The studio mounts `.:/work` writable**, because authoring is the point — `generate` writes into
+  `banks/`, `replace` rewrites a row, and the job log and queue live in `.studio/`.
+- `user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"` with `/etc/passwd:ro` and `/etc/localtime:ro`.
+  Neither is tidiness and both are inherited traps: without the passwd mount
+  `pwd.getpwuid(os.getuid())` raises and `torch_tensorrt` calls it at **module scope**, so
+  `import torch_tensorrt` dies with `KeyError: getpwuid()` before the model can load; without the
+  clock mount glibc falls back to UTC and a bank's `generated_utc` comes out hours adrift of the
+  same run made outside the container.
+- **`gpus: all` on the runner only.** `generate` needs no GPU — top-down rendering is pygame on the
+  CPU — so the studio asks for none and a machine with no NVIDIA runtime can still author.
+- **Entry is `python -m scenariobank`, never the console script**: that script is not in the base
+  image, and `__main__.py` exists precisely because this is already how the studio spawns jobs.
+- **`scripts/sim-image.sh`** reports what is present, reads the `wingfin.groups` label the way that
+  repo's own `sim.sh` does, and — the whole reason it exists — replaces compose's `pull access
+  denied for metadrive-wingfin-sim`, which names a registry that was never involved. An image with
+  *no* label is reported as silent, not as stale: the label was added after the groups were.
+
+**Verify alone:** `doctor` in the container prints the same commit and `drive_side: left` as the
+host; a `generate --out /work/banks/x` inside the runner fails on the read-only mount; the guard
+names the build command on a machine without the image.
+
+### Step 2 — `docker/studio.Dockerfile`: the one image built here ⬜
+
+`FROM metadrive-wingfin-sim:latest`, then the web group. Nothing else — no `pull_asset`, no EGL
+patch, no glvnd manifest, all inherited.
+
+- **`uv pip install`, never `uv sync`.** A sync makes the environment match the lock *exactly*, so
+  it would strip MetaDrive, torch, TensorRT and CuPy back out of `/opt/venv` — the entire thing
+  being inherited. The versions still come from `uv.lock` rather than a second list:
+  `uv export --frozen --only-group web` resolves that group out of it, so the three packages and
+  the seventeen they pull are declared once, in the file that already declares them.
+- **No `chmod -R /opt/venv`.** On overlayfs, modifying a file in a lower layer copies it up, so a
+  recursive chmod writes a fresh 13 GB copy of the venv into a layer whose content is 40 MB. uv
+  writes 644/755 under the build's umask, which the runtime uid reads.
+- **`--network host`, not `ports:`.** `cli.py:955` refuses any `--host` outside `_LOOPBACK`, so a
+  published port — which needs a bind to `0.0.0.0` inside — is refused by our own guard, correctly.
+  Host networking means the server binds the host's real 127.0.0.1, so the guard keeps meaning what
+  it says.
+- **Only `pyproject.toml` and `uv.lock` are copied**, so editing any source file leaves the layer
+  cached; `.dockerignore` keeps `.venv` and `banks/` out of the context.
+
+**Jobs stay subprocesses, and this records the decision not to change that.** `web/invoke.py` runs
+`sys.executable -m scenariobank <cmd>`, so a job is a child of the studio process and runs in the
+studio's own container — which is the whole reason this image carries MetaDrive. The alternative is
+Phase 7 Step 3's shape, a sibling container per job through the docker socket. Rejected here on
+three grounds: it rewrites `invoke.py` and `jobs.py` for no behaviour a person would notice; it
+mounts `/var/run/docker.sock` into a server with no authentication, the same exposure `cli.py:955`
+exists to limit; and Phase 7's supervisor is unwritten, so converging on it now means guessing at
+an interface its own step has not defined. Revisit when Phase 7 Step 3 is real.
+
+**Verify alone:** the studio comes up on 127.0.0.1:8770, the Run tab lists the commands, and a
+`generate` job launched from the page writes a bank into the mounted repo — which is the claim that
+this image must contain MetaDrive.
+
+### Step 3 — the bridge: confirm, do not build ⬜
+
+`metadrive-wingfin-openpilot:prod` is reused as it stands. This step exists so that "nothing to do"
+is a checked fact and not an assumption.
+
+- It mounts nothing and needs no repo: `bridge.sh start` is `docker run -d --network host … python3
+  -m zapeta.server`, and the wire protocol is 29 lines of length-prefixed JSON on TCP 5558.
+- The vendored fork at `metadrive-complete/openpilot/` and the image's own build context are the
+  same tree — `diff -rq` is empty. Record that; it is what makes "our own bridge, not wing-sim's"
+  checkable rather than asserted.
+- **One coupling worth writing down for future users:** `AV3_MPC_MENU="4 16 20 32"` prebuilds one
+  acados solver per waypoint count. A model with a count outside that menu still runs — the solver
+  is generated and compiled on first use — but the first decision then pays a compile it should not.
+- We port the client, not the container: `tools/openpilot_policy.py` → `src/scenariobank/av3/`,
+  which Phase 4 Step 7 owns.
+
+**Verify alone:** `bridge.sh status` reports the image present and something listening on
+127.0.0.1:5558, and the ported client's `init` handshake gets `ready` back with nothing rebuilt.
+
+### Step 4 — host and container agree ⬜  ⟵ *gate*
+
 ```bash
-docker run --rm -v $PWD/banks/pg-bank-2026-08:/bank:ro -v $PWD/out:/out scenariobank:85e5dad \
-  run --bank /bank --categories intersection_left \
-      --policy scenariobank.policies:ExpertPolicy --out /out/docker.json
+docker compose run --rm run run --bank /work/banks/pg-bank-2026-08 \
+    --categories intersection_left \
+    --policy scenariobank.policies:ExpertPolicy --out /out/docker.json
 diff <(jq 'del(.started_utc)|del(.results[].wall_time_s)' out/docker.json) \
      <(jq 'del(.started_utc)|del(.results[].wall_time_s)' ceiling.json)
 ```
-**Expect: empty.** If it is not, the bank is not portable and the whole premise needs revisiting
-before the frontend touches it. Also confirm the read-only mount holds: a `generate --out /bank`
-inside the container must fail.
 
-**Done when:** the host/container diff is empty and `selftest` passes on a fresh `--no-cache` build.
+**Expect: empty.** If it is not, the bank is not portable and the premise needs revisiting before
+the frontend touches it.
+
+There is no `selftest` command and this phase no longer asks for one. It was going to build a known
+seed and assert left-side drive as a build check for an image we now do not build — and `doctor`
+already prints `drive_side` from a real reset, in the container, on demand.
+
+**Done when:** the diff is empty, the read-only mount refuses a write, and the studio image serves
+a page that can launch a job.
 
 ---
 
@@ -2747,6 +2885,14 @@ because it can be driven by hand with `curl` long before a queue is involved.
 
 Extends Phase 5. The container reads an options file plus a scenario list, calls `run_bank()`,
 writes `results.json`, exits 0. Four additions, all so a supervisor never has to parse prose:
+
+**And one question this step inherits, deliberately unanswered until here.** Phase 5 reuses
+`metadrive-wingfin-sim`, an image built by the converter repo and published to no registry. That
+is right for a laptop, where the image is already present. A rig is the other case, and it has two
+answers: carry the image across (`docker save | gzip`, the way `bridge.sh save` already does for
+the bridge — 13.4 GB), or build a runner image from **our** `uv.lock`, which owes the converter
+nothing and drops the ~10 GB of osmnx, geopandas, torch and TensorRT a `run` never imports. Decide
+it when there is a rig to decide it on; do not pre-empt it in Phase 5.
 
 - **Structured JSON lines on stdout.** One object per event. No regexes — his `rig/progress.py`
   scrapes four prose patterns out of CARLA's log because it has no choice; we do not.
@@ -3089,6 +3235,11 @@ colleague moving between the two should not have to relearn anything.
     table: identity minted before launch, `skipped` distinct from `failed`.
 - `converter-scenarionet-stage2-redesign/tools/signal_control.py` — the phase model Phase 8 ports,
   including the timestep and per-group-offset traps already paid for there.
-- `converter-scenarionet-stage2-redesign/docker/Dockerfile` — the base for Phase 5.
+- `wingfin-osm-scenarionet-converter/docker/Dockerfile` — **not a recipe to copy any more.** The
+  image it builds, `metadrive-wingfin-sim`, is what Phase 5 reuses; read it for the reasoning
+  behind the EGL patch, the glvnd manifest and the `uv cache clean` in the same layer, all of
+  which our studio image inherits rather than repeats.
+- `wingfin-osm-scenarionet-converter/docker/openpilot/Dockerfile` and `scripts/bridge.sh` — the
+  bridge image Phase 4 Step 7 talks to, reused unchanged. `bridge.sh` is how it is started.
 - `converter-scenarionet-stage2-redesign/src/osm_scenario/acquisition.py:199-247` — the manifest
   writer to model `manifest.py` on.

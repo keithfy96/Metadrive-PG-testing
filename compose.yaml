@@ -1,0 +1,102 @@
+# Running scenariobank in a container, on an image this repo does not build.
+#
+#   docker compose run --rm run doctor
+#   docker compose run --rm run generate --category curve --count 3 --out /out/curve
+#   docker compose up studio          # http://127.0.0.1:8770/
+#
+# `scripts/sim-image.sh` first, on a machine that has never done this -- the `run` service names an
+# image built by the converter repo, and compose's own error for a missing image says only "pull
+# access denied", which is wrong and sends people looking for a registry.
+#
+# **Why an image from another repo.** Measured before this file existed: `metadrive-wingfin-sim`
+# runs `python -m scenariobank doctor` unmodified and reports commit 85e5dadc -- the same commit
+# our own `pyproject.toml` pins -- with asset_version 0.4.3 and `drive_side: left`. That is Phase
+# 5's whole acceptance criterion, passing against an image nobody wrote for this repo, so building
+# a second one from our own lock would spend a 13 GB build to arrive back where we started. R1 is
+# untouched: we import none of that repo's code, we name one of its build products.
+#
+# Phase 7 revisits it, because a rig is a different question -- see IMPLEMENTATION_PLAN.md.
+name: scenariobank
+
+# Everything both services share. `run` and `studio` differ in exactly three ways: the image, the
+# writability of /work, and the network.
+x-common: &common
+  working_dir: /work
+  # The host's uid, or every bank and PNG written through the mount belongs to root. There is no
+  # matching entry in the image's /etc/passwd, which is why HOME is set below.
+  user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
+  volumes:
+    # The host's user list, read-only. The container runs as the host's uid and the image has no
+    # passwd entry for it, so `pwd.getpwuid(os.getuid())` raises -- and `torch_tensorrt` calls it
+    # at module scope, so `import torch_tensorrt` dies with `KeyError: getpwuid(): uid not found`
+    # before the model can load. Only the name field is read. Measured in the converter's own
+    # container; inherited here along with the image.
+    - /etc/passwd:/etc/passwd:ro
+    # Without this the image has no zoneinfo and glibc falls back to UTC, so a bank's
+    # `generated_utc` and a result's `started_utc` come out hours adrift of the same run made
+    # outside the container. Docker resolves the host's symlink and mounts the TZif file itself,
+    # which is all glibc needs when TZ is unset.
+    - /etc/localtime:/etc/localtime:ro
+  environment:
+    # The uid has no home. panda3d caches compiled shaders and matplotlib writes a font list;
+    # both need somewhere to go. The image already sets these -- repeated here so that overriding
+    # `user:` cannot silently take them away.
+    HOME: /tmp
+    MPLCONFIGDIR: /tmp/matplotlib
+
+services:
+  # One command, then exit. `run` rather than `sim`, because that is what it does and because
+  # `metadrive-wingfin-sim` is a name that already means something else on this machine.
+  run:
+    <<: *common
+    # NO `build:` KEY, DELIBERATELY. This image is built by
+    # ../wingfin-osm-scenarionet-converter (`docker compose build sim`), and a `build:` here would
+    # let `docker compose build` in this repo quietly produce a *different* image under the same
+    # tag -- which is the failure the converter's own `wingfin.groups` label exists to catch.
+    image: metadrive-wingfin-sim:latest
+    # The camera rig (Phase 4 Step 6) and the AV3 model (Step 7) need it; `generate` does not --
+    # top-down rendering is pygame on the CPU. Comment this out on a machine with no NVIDIA
+    # runtime and everything except those two steps still works.
+    gpus: all
+    volumes:
+      - !reset null
+      - /etc/passwd:/etc/passwd:ro
+      - /etc/localtime:/etc/localtime:ro
+      # **Read-only, and that is the test.** A runner reads a bank and writes results; if it can
+      # also rewrite the bank it is scoring, "the same numbers on your machine and on the
+      # frontend's host" stops being checkable. Phase 5 Step 4 asserts a `generate --out` in here
+      # fails.
+      #
+      # The repo enters at /work because the image's editable install is the single bare path
+      # line `/work/src` -- so `site` puts our `src/` on `sys.path` at every interpreter start and
+      # no PYTHONPATH is needed. It also means this mount shadows the converter's own source, so
+      # `import osm_scenario` does not work in here. Nothing of ours imports it.
+      - .:/work:ro
+      # Where results go, and the only writable path. Set OUT_DIR in the environment to send them
+      # somewhere outside the repo.
+      - "${OUT_DIR:-./out}:/out"
+    entrypoint: ["python", "-m", "scenariobank"]
+
+  # The authoring studio: FastAPI, uvicorn, and the page. The one image this repo builds.
+  studio:
+    <<: *common
+    build:
+      context: .
+      dockerfile: docker/studio.Dockerfile
+    image: scenariobank-studio:85e5dad
+    volumes:
+      - !reset null
+      - /etc/passwd:/etc/passwd:ro
+      - /etc/localtime:/etc/localtime:ro
+      # **Writable, unlike `run` above.** The studio's whole purpose is authoring: `generate`
+      # writes into `banks/`, `replace` rewrites a row, and the job log and queue live in
+      # `.studio/`. A read-only mount here would serve a page whose every button fails.
+      - .:/work
+    # **Host networking, not `ports:`.** `cli.py` refuses any --host outside `_LOOPBACK`, because
+    # these routes run subprocesses that write into the repository and there is no authentication.
+    # A published port needs a bind to 0.0.0.0 inside the container, which that guard refuses --
+    # correctly. Host networking means the server binds the host's real 127.0.0.1, so the guard
+    # keeps meaning what it says and the page is still reachable at
+    # http://127.0.0.1:8770/.
+    network_mode: host
+    command: ["python", "-m", "scenariobank", "studio"]
