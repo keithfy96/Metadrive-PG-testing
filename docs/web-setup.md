@@ -162,25 +162,60 @@ name — which is the point of deriving it.
 It is still the escape hatch for everything the eleven shipped types left out — a fork, a parking
 lot, a two-way road, a crossroads with a U-turn — and the place to watch them fail honestly.
 
-**Failing honestly** means the command's own words, not a spinner. Two kinds of refusal reach
+**Failing honestly** means the command's own words, not a spinner. Three kinds of refusal reach
 the card. The rule can find no exit: `T` at rule `right` is refused with `nothing here turns
 right. The closest is 1T1_1_, which carries straight on`, because a T junction at that seed offers
 a left and a straight and nothing else — try `sharpest`, or another seed, where the arm on offer
-flips. And MetaDrive can refuse the road itself. Type `fS` and draw it:
+flips. MetaDrive can refuse the road itself. Type `fS` and draw it:
 
 ```
 inspect failed: seed 0 does not build for block sequence 'fS': Bug exists in this block, Recommend to use Ramp
 ```
 
-That sentence is the simulator's, quoted through `sockets.reset_or_explain`. Map layout is a
+That sentence is the simulator's, quoted through `sockets.explain_build_failure`. Map layout is a
 backtracking search, so a sequence can fail at one seed and build at the next; a block MetaDrive
-names as broken is broken at every seed. The palette lists `f` anyway — a palette that quietly
+names as broken is broken at every seed. **Both forks are broken, not just `f`** — measured at
+seeds 0–4, `f` and `F` refuse identically. The palette lists them anyway: a palette that quietly
 dropped a block would be asserting something about the simulator that only the simulator can say.
+
+And a block can need a particular road *in front of it*, which is the third kind and the one the
+first two used to be mistaken for.
+
+### What a block needs before it — the note under the palette
+
+`P` was the case that made this necessary. Clicking `S`, `P`, `S` and pressing **Draw** produced
+`seed 0 does not build for block sequence 'SPS': Lane number of previous block must be 1 in each
+direction` — MetaDrive's internal `assert` (`parking_lot.py:30`), which names no block, offers no
+remedy, and arrives behind a sentence of ours that blames the seed. Going to seed 1 returned a
+byte-identical error, because the seed had nothing to do with it.
+
+`ParkingLot` needs the road feeding it to be one lane in each direction, and a road starts at
+three. Measured at seeds 0–4: **only the lane merge `y` narrows a road and only the lane split
+`Y` widens one** — every other block passes the count through. One merge drops one or two lanes
+depending on the seed (`Merge` draws `DiscreteSpace(min=1, max=2)` floored at `max(1, …)`), so
+`yP` builds at seeds 0, 1 and 4 and not at 2 and 3, while `yyP` builds at all five.
+
+So three of the fifteen blocks carry a `categories.BlockNeeds` — `f`, `F` and `P` — and the
+studio shows it **under the palette, the moment the block lands in the box**, before anything is
+pressed. For `P` it also offers the repair: type `SPS` and the note says *your sequence would
+build as `SyyPS`*. The panel holds no copy of the rule. `after_any` (which blocks in front would
+help) and `insert` (what to put there) are served with each block by `GET /api/blocks`, and they
+are the same fields `categories.validate_block_seq` refuses on — so pressing **Draw** anyway
+refuses in under a second, before an env is built, and suggests the same sequence the panel did.
+
+The two are split on purpose. `f` and `F` fail *themselves*, and that judgement stays MetaDrive's
+to make and to word, so nothing pre-empts it — their `after_any` is empty and `unmet_need`
+ignores them. `P` fails because of what is *before* it, which is a property of the sequence, and
+checking sequence properties is what `validate_block_seq` was already for. Lane arithmetic is
+deliberately not modelled: `yYP` narrows and then widens again, and MetaDrive refuses that one,
+because a second implementation of a simulator's geometry is a second thing to be wrong.
 
 The palette is served by `GET /api/blocks` from `categories.BLOCKS`, the table
 `validate_block_seq` checks sequences against; a test asserts every letter and class name against
-MetaDrive's own registry, so the palette cannot offer a block the CLI would refuse or name one
-differently from the reference.
+MetaDrive's own registry — and a `needs_sim` test asserts the parking-lot rule the same way, that
+`SP` really is refused at every seed and that the `SyyP` the refusal suggests really builds. So
+the palette cannot offer a block the CLI would refuse, name one differently from the reference,
+or claim a condition the simulator does not impose.
 
 ### Read the exits — the same road, the other question
 
@@ -255,7 +290,9 @@ read wrong.
 
 **The way the car came in is never listed.** A block's sockets are the connections it offers
 onward, and the one behind it belongs to the block before — so `X` reads as exactly three exits.
-Measured across all fifteen block ids: of the twelve that build, not one marks an entry.
+Measured across all fifteen block ids: of the twelve that build alone, not one marks an entry.
+(The three that do not are `f` and `F`, which MetaDrive names as broken, and `P`, which is not
+broken — it needs a road narrowed to one lane first, and `yyP` reads back one exit.)
 `SocketReading.is_entry` and the filter every rule applies stay, guarding a case MetaDrive does not
 currently produce, but nothing composed from these blocks fills that column in.
 

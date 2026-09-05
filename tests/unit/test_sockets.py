@@ -261,3 +261,39 @@ def test_a_single_block_road_measures_the_same_turn_from_either_end():
     for readings in (read_sockets("X", 0), read_sockets("T", 0), read_sockets("O", 0)):
         assert readings[0].entry_heading_deg == pytest.approx(0.0, abs=0.5)
         assert all(one.turn_deg == pytest.approx(one.angle_deg, abs=0.5) for one in readings)
+
+
+# ------------------------------------------- the words a failed build comes back in (step 10d)
+
+
+def test_a_layout_failure_is_still_quoted_with_the_seed_that_produced_it():
+    from scenariobank.sockets import explain_build_failure
+
+    said = explain_build_failure(RuntimeError("Bug exists in this block"), "fS", 3)
+    assert said == "seed 3 does not build for block sequence 'fS': Bug exists in this block"
+
+
+def test_a_tail_is_appended_only_to_the_failures_the_seed_explains():
+    """`bank._reset` adds a sentence about seeds not being substituted. It fits one case."""
+    from scenariobank.sockets import explain_build_failure
+
+    tail = ". The seed is not substituted."
+    assert explain_build_failure(RuntimeError("nope"), "CC", 0, tail=tail).endswith(tail)
+    assert not explain_build_failure(
+        AssertionError("Lane number of previous block must be 1 in each direction"), "yP", 2,
+        tail=tail,
+    ).endswith(tail)
+
+
+def test_the_parking_lot_assert_comes_back_as_the_condition_it_stands_for():
+    """The raw assert names no block and no remedy, and reads as a bug rather than a rule."""
+    from scenariobank.sockets import explain_build_failure
+
+    said = explain_build_failure(
+        AssertionError("Lane number of previous block must be 1 in each direction"), "yP", 2)
+    assert "Lane number of previous block" not in said
+    assert "parking lot" in said and "one lane in each direction" in said
+    # The seed is still named: `yP` really does build at seeds 0, 1 and 4 and not at 2 and 3,
+    # because one merge drops one or two lanes depending on the draw.
+    assert "seed 2" in said
+    assert "Two merges" in said

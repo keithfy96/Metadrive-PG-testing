@@ -21,10 +21,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from scenariobank.categories import (
+    BLOCKS,
     TARGET_ANGLE,
     Category,
     CategoryError,
     ExitRule,
+    plain_needs,
     validate_block_seq,
 )
 
@@ -117,21 +119,55 @@ def read_sockets(block_seq: str, seed: int) -> list[SocketReading]:
         env.close()
 
 
+#: The one MetaDrive refusal that is a precondition rather than a layout failure, matched on its
+#: own text (`parking_lot.py:30`). It arrives as a bare `AssertionError` with no block named and
+#: no remedy, and -- worse -- it is the same at every seed, so the seed prefix every other
+#: failure earns actively misdirects. Matched on a fragment rather than the whole sentence so a
+#: reworded assert degrades to the generic message instead of raising something else.
+_LANE_NUM_ASSERT = "Lane number of previous block must be 1"
+
+
+def explain_build_failure(
+    error: BaseException, block_seq: str, seed: int, *, tail: str = ""
+) -> str:
+    """The sentence a failed `env.reset` becomes. One wording, for `read_sockets` and `bank`.
+
+    Map generation is a backtracking search (`BIG.py:91-103`), so a block sequence can simply
+    fail to plug in at a given seed, and two blocks -- `f` and `F` -- refuse outright with
+    MetaDrive's own "Bug exists in this block". For all of those the simulator's words are
+    quoted, because they are the only account of the refusal there is, and the seed is named
+    because the seed is genuinely what varied.
+
+    The parking lot is the exception this function exists for. `seed 1 does not build for block
+    sequence 'SPS'` was true but useless: the reader goes to the seed box, tries seed 2, and gets
+    a byte-identical error, because the lane count in front of a `ParkingLot` has nothing to do
+    with the seed. `categories.validate_block_seq` now refuses that sequence before an env is
+    ever built; what still reaches here is a road that narrows and then widens again (`yYP`), or
+    one merge that happened to drop only a single lane at this seed (`yP` at seeds 2 and 3). So
+    the seed is still named -- for `yP` it really is the variable -- but the condition is stated
+    in words that say what to do about it.
+    """
+    if _LANE_NUM_ASSERT in str(error):
+        parking = next(block for block in BLOCKS if block.id == "P")
+        return (
+            f"seed {seed} does not build for block sequence {block_seq!r}: the road reaching the "
+            f"parking lot is wider than one lane. {plain_needs(parking)} Two merges immediately "
+            f"in front of it reach one lane at every seed."
+        )
+    return f"seed {seed} does not build for block sequence {block_seq!r}: {error}{tail}"
+
+
 def reset_or_explain(env, seed: int, block_seq: str) -> None:
     """Reset onto `seed`, turning a layout failure into a sentence that names what failed.
 
-    Map generation is a backtracking search (`BIG.py:91-103`), so a block sequence can simply
-    fail to plug in at a given seed -- and one block, `InFork`, refuses outright with MetaDrive's
-    own "Bug exists in this block". Either way the simulator's words are quoted, because they are
-    the only account of the refusal there is. `bank._reset` says the same thing as a `BankError`;
-    this is the one for a command answering one question about one road.
+    `bank._reset` says the same thing as a `BankError`; this is the one for a command answering
+    one question about one road. Both go through `explain_build_failure`, so the two cannot
+    describe the same refusal differently.
     """
     try:
         env.reset(seed=seed)
     except Exception as error:
-        raise SocketError(
-            f"seed {seed} does not build for block sequence {block_seq!r}: {error}"
-        ) from error
+        raise SocketError(explain_build_failure(error, block_seq, seed)) from error
 
 
 def _entry_heading(road_map, spawn_heading: float) -> float:

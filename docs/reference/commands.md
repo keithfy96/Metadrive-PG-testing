@@ -77,7 +77,7 @@ not what you think it is -- stop and look before pinning anything to it.
 
 | flag | | repeats | meaning |
 |---|---|---|---|
-| `--block-seq/-b <str>` | optional |  | Read the exits of this road. Any string of these 15 block ids: `C` curve, `S` straight, `r` on-ramp, `R` off-ramp, `X` crossroads, `T` T junction, `O` roundabout, `f` fork in, `F` fork out, `y` lane merge, `Y` lane split, `P` parking lot, `$` toll gate, `B` two-way road, `U` crossroads with U-turn. `I` is prepended automatically and is never written into a sequence. |
+| `--block-seq/-b <str>` | optional |  | Read the exits of this road. Any string of these 15 block ids: `C` curve, `S` straight, `r` on-ramp, `R` off-ramp, `X` crossroads, `T` T junction, `O` roundabout, `f` fork in, `F` fork out, `y` lane merge, `Y` lane split, `P` parking lot, `$` toll gate, `B` two-way road, `U` crossroads with U-turn. `I` is prepended automatically and is never written into a sequence. `f`: MetaDrive refuses to build it at any seed. `F`: MetaDrive refuses to build it at any seed. `P`: needs a road already narrowed to one lane each way — put `yy` in front of it. |
 | `--category/-c <str>` | optional |  | Use this category's block sequence. One of: `intersection_left`, `intersection_right`, `intersection_straight`, `t_junction`, `roundabout`, `curve`, `ramp_traffic_merge`, `off_ramp_hold`, `lane_merge`, `lane_split`, `tollgate`. |
 | `--seed/-s <int>` | default `0` |  | Map seed. Any non-negative integer. |
 | `--json` | default `false` |  | Emit the readings as JSON instead of a table. |
@@ -110,7 +110,7 @@ adds `composed_name`, the category `add --block-seq` would file this road under.
 | flag | | repeats | meaning |
 |---|---|---|---|
 | `--category/-c <str>` | optional |  | Use this category's road and exit rule. One of: `intersection_left`, `intersection_right`, `intersection_straight`, `t_junction`, `roundabout`, `curve`, `ramp_traffic_merge`, `off_ramp_hold`, `lane_merge`, `lane_split`, `tollgate`. |
-| `--block-seq/-b <str>` | optional |  | Build this road instead of a category's. Any string of these 15 block ids: `C` curve, `S` straight, `r` on-ramp, `R` off-ramp, `X` crossroads, `T` T junction, `O` roundabout, `f` fork in, `F` fork out, `y` lane merge, `Y` lane split, `P` parking lot, `$` toll gate, `B` two-way road, `U` crossroads with U-turn. `I` is prepended automatically and is never written into a sequence. |
+| `--block-seq/-b <str>` | optional |  | Build this road instead of a category's. Any string of these 15 block ids: `C` curve, `S` straight, `r` on-ramp, `R` off-ramp, `X` crossroads, `T` T junction, `O` roundabout, `f` fork in, `F` fork out, `y` lane merge, `Y` lane split, `P` parking lot, `$` toll gate, `B` two-way road, `U` crossroads with U-turn. `I` is prepended automatically and is never written into a sequence. `f`: MetaDrive refuses to build it at any seed. `F`: MetaDrive refuses to build it at any seed. `P`: needs a road already narrowed to one lane each way — put `yy` in front of it. |
 | `--rule <str>` | optional |  | Which exit to drive to. Required with --block-seq. One of: `only`, `left`, `right`, `straight`, `sharpest`. |
 | `--seed/-s <int>` | default `0` |  | Map seed. Any non-negative integer. |
 | `--out/-o <path>` | optional |  | PNG to write. Defaults under docs/. |
@@ -294,7 +294,7 @@ earns -- `step_budget` of the length just measured, the number `inspect --json` 
 | `--bank <path>` | **required** |  | Bank directory holding the manifest to edit. |
 | `--seed/-s <int>` | **required** |  | Seed to build it at. Any non-negative integer. |
 | `--category/-c <str>` | optional |  | Which category to add a scenario to. One of: `intersection_left`, `intersection_right`, `intersection_straight`, `t_junction`, `roundabout`, `curve`, `ramp_traffic_merge`, `off_ramp_hold`, `lane_merge`, `lane_split`, `tollgate`. |
-| `--block-seq/-b <str>` | optional |  | Compose a road instead of naming a category. Any string of these 15 block ids: `C` curve, `S` straight, `r` on-ramp, `R` off-ramp, `X` crossroads, `T` T junction, `O` roundabout, `f` fork in, `F` fork out, `y` lane merge, `Y` lane split, `P` parking lot, `$` toll gate, `B` two-way road, `U` crossroads with U-turn. `I` is prepended automatically and is never written into a sequence. |
+| `--block-seq/-b <str>` | optional |  | Compose a road instead of naming a category. Any string of these 15 block ids: `C` curve, `S` straight, `r` on-ramp, `R` off-ramp, `X` crossroads, `T` T junction, `O` roundabout, `f` fork in, `F` fork out, `y` lane merge, `Y` lane split, `P` parking lot, `$` toll gate, `B` two-way road, `U` crossroads with U-turn. `I` is prepended automatically and is never written into a sequence. `f`: MetaDrive refuses to build it at any seed. `F`: MetaDrive refuses to build it at any seed. `P`: needs a road already narrowed to one lane each way — put `yy` in front of it. |
 | `--rule <str>` | optional |  | Which exit to drive to. Required with --block-seq. One of: `only`, `left`, `right`, `straight`, `sharpest`. |
 | `--thumbnails/--no-thumbnails` | default `true` |  | Draw the new scenario's PNG. |
 

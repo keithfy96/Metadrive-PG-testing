@@ -306,3 +306,26 @@ def test_the_sockets_document_names_the_road_it_measured():
                                                           "sharpest"]
     left = next(one for one in document["rules"] if one["rule"] == "left")
     assert left["angle_deg"] == 90.0
+
+
+def test_a_parking_lot_with_no_merge_before_it_is_refused_without_starting_a_simulator():
+    """`SPS` used to spend a minute booting MetaDrive to arrive at an assert about lane numbers.
+
+    Both commands that take a `--block-seq` refuse it now, in words that name the block and the
+    sequence that would build, before an env exists. Not marked `needs_sim` on purpose: it must
+    pass with MetaDrive absent, which is the proof that nothing here reaches the simulator.
+    """
+    from typer.testing import CliRunner
+
+    from scenariobank.cli import app
+
+    for argv in (["inspect", "--block-seq", "SPS", "--rule", "left", "--seed", "0"],
+                 ["sockets", "--block-seq", "SPS", "--seed", "1"]):
+        result = CliRunner().invoke(app, argv)
+        assert result.exit_code == 1, argv
+        said = result.stdout + str(result.stderr or "")
+        assert "parking lot" in said
+        assert "'SyyPS'" in said
+        assert "No seed changes this" in said
+        # The old wording put the seed first and sent every reader to the seed box.
+        assert "does not build for block sequence" not in said

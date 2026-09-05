@@ -30,6 +30,37 @@ from enum import Enum
 SEEDS: tuple[int, ...] = (0, 1, 2, 3, 4)
 
 @dataclass(frozen=True)
+class BlockNeeds:
+    """What a block wants in front of it before it will build -- as data, not only as prose.
+
+    Three blocks of fifteen carry one, and they carry it for two different reasons. `f` and `F`
+    do not build at all, at any seed, and say so in MetaDrive's own words. `P` builds perfectly
+    well, but only behind a road already narrowed to one lane in each direction -- a *precondition
+    on the sequence*, which MetaDrive states as a bare `assert` naming no remedy
+    (`parking_lot.py:30`).
+
+    Structured rather than a sentence because three separate readers need the rule, and three
+    copies of a rule is three chances to disagree: `validate_block_seq` refuses on it, the
+    refusal it raises quotes `text`, and the studio's road builder renders `text` and offers
+    `insert` as a repair. `tests/unit/test_categories.py` asserts all three fields against the
+    simulator, which is what keeps them honest.
+    """
+
+    #: What to tell a reader, in plain English. Markdown -- the studio runs it through the same
+    #: `inline` every other caption uses, and a refusal quotes it with the markers stripped.
+    text: str
+    #: The same thing in one clause, for a flag table that repeats its cell in three places.
+    #: Not derivable from `text` by truncation: the short form has to stay a whole sentence.
+    short: str
+    #: Block ids, at least one of which must appear *earlier* in the sequence for this block to
+    #: have any chance of building. Empty means nothing in front of it can help.
+    after_any: str = ""
+    #: What to put in front of this block when nothing in `after_any` precedes it. Empty when
+    #: there is no repair to offer, which is the same case as an empty `after_any`.
+    insert: str = ""
+
+
+@dataclass(frozen=True)
 class Block:
     """One of the pieces a road is spelled from: the letter, MetaDrive's class, and what it is."""
 
@@ -41,6 +72,36 @@ class Block:
     #: What the block is, in words. Ours, not MetaDrive's: the class names say `InRampOnStraight`
     #: and `Bidirection`, and a palette button has to say on-ramp and two-way road.
     label: str
+    #: What the block needs in front of it, or `None` for the twelve that need nothing.
+    needs: BlockNeeds | None = None
+
+
+#: Both forks, measured at seeds 0-4. `MetaDrive` names them broken and they are broken at every
+#: seed, so there is no repair to offer -- `after_any` and `insert` stay empty.
+_FORK_IS_BROKEN = BlockNeeds(
+    text="MetaDrive refuses to build this block at any seed \u2014 *\"Bug exists in this block, "
+    "Recommend to use Ramp\"*. It is in the palette anyway, because that refusal is the "
+    "simulator's to make and not the studio's to hide.",
+    short="MetaDrive refuses to build it at any seed",
+)
+
+#: `ParkingLot` asserts `positive_lane_num == 1` (`parking_lot.py:30`) and a map starts at
+#: `lane_num=3`, so a parking lot behind an unnarrowed road fails at every seed.
+#:
+#: Measured at seeds 0-4: every block passes the lane count through unchanged except `y`, which
+#: narrows, and `Y`, which widens. One `y` reaches one lane at seeds 0, 1 and 4 but stops at two
+#: on seeds 2 and 3 -- `Merge` drops `DiscreteSpace(min=1, max=2)` lanes floored at `max(1, ...)`
+#: (`bottleneck.py:48-50`, `pg_space.py:317`) -- so `yP` builds at three seeds of five and `yyP`
+#: at all five, which is why `insert` is two merges and not one.
+_PARKING_LOT_NEEDS_ONE_LANE = BlockNeeds(
+    text="A parking lot needs the road in front of it to be **one lane in each direction**, and "
+    "a road starts at three. Only the lane merge `y` narrows a road: one merge drops one or two "
+    "lanes depending on the seed, so two of them reach one lane at *every* seed. Only the lane "
+    "split `Y` widens it again \u2014 every other block passes the count through.",
+    short="needs a road already narrowed to one lane each way \u2014 put `yy` in front of it",
+    after_any="y",
+    insert="yy",
+)
 
 
 #: Every block ID `BLOCK_TYPE_DISTRIBUTION_V2` can produce (`blocks_prob_dist.py:22-41`), by the
@@ -51,10 +112,14 @@ class Block:
 #: `sim` group; `tests/unit/test_categories.py` asserts it against MetaDrive so it cannot drift.
 #:
 #: In MetaDrive's own registration order, which is the order the studio's palette lays them out
-#: in: the plain pieces first, the junctions, then the odd ones. `f` (`InFork`) is listed even
-#: though MetaDrive refuses to build it ("Bug exists in this block, Recommend to use Ramp"):
-#: the refusal is the simulator's to make and its to quote, and a palette that quietly dropped
-#: a block would be asserting something about the simulator that only the simulator can say.
+#: in: the plain pieces first, the junctions, then the odd ones.
+#:
+#: **Twelve of the fifteen build on their own.** Measured at seeds 0-4: `f` and `F` -- both forks,
+#: not just `f` -- refuse outright with "Bug exists in this block, Recommend to use Ramp", and `P`
+#: refuses behind a three-lane road, which is every road until a merge narrows one. All three are
+#: listed anyway: a palette that quietly dropped a block would be asserting something about the
+#: simulator that only the simulator can say. What they carry instead is a `BlockNeeds`, so the
+#: condition is stated *before* the click rather than as an assertion afterwards.
 BLOCKS: tuple[Block, ...] = (
     Block("C", "Curve", "curve"),
     Block("S", "Straight", "straight"),
@@ -63,11 +128,11 @@ BLOCKS: tuple[Block, ...] = (
     Block("X", "StdInterSection", "crossroads"),
     Block("T", "StdTInterSection", "T junction"),
     Block("O", "Roundabout", "roundabout"),
-    Block("f", "InFork", "fork in"),
-    Block("F", "OutFork", "fork out"),
+    Block("f", "InFork", "fork in", _FORK_IS_BROKEN),
+    Block("F", "OutFork", "fork out", _FORK_IS_BROKEN),
     Block("y", "Merge", "lane merge"),
     Block("Y", "Split", "lane split"),
-    Block("P", "ParkingLot", "parking lot"),
+    Block("P", "ParkingLot", "parking lot", _PARKING_LOT_NEEDS_ONE_LANE),
     Block("$", "TollGate", "toll gate"),
     Block("B", "Bidirection", "two-way road"),
     Block("U", "StdInterSectionWithUTurn", "crossroads with U-turn"),
@@ -136,12 +201,12 @@ class Category:
         validate_block_seq(self.block_seq, category=self.name)
 
 
-def validate_block_seq(block_seq: str, *, category: str | None = None) -> None:
-    """Raise `CategoryError` unless every character is a block MetaDrive can actually build.
+def validate_block_ids(block_seq: str, *, category: str | None = None) -> None:
+    """Raise `CategoryError` unless every character in `block_seq` is a registered block id.
 
-    Worth doing at load time rather than at generation: an unknown ID surfaces as a failure deep
-    inside `BIG`'s backtracking search, where it reads as "this seed could not be laid out"
-    rather than as "this character is not a block".
+    The spelling half of the check, on its own, because naming a road is not the same question
+    as building one: `composed_name` wants a typo caught and has no opinion on whether the road
+    lays out.
     """
     where = f" for category {category!r}" if category else ""
     if not block_seq:
@@ -153,6 +218,92 @@ def validate_block_seq(block_seq: str, *, category: str | None = None) -> None:
             f"{''.join(sorted(VALID_BLOCK_IDS))}. 'I' is prepended automatically and is never "
             "written into a sequence."
         )
+
+
+def validate_block_seq(block_seq: str, *, category: str | None = None) -> None:
+    """Raise `CategoryError` unless this is a sequence MetaDrive could actually build.
+
+    Worth doing at load time rather than at generation: an unknown ID surfaces as a failure deep
+    inside `BIG`'s backtracking search, where it reads as "this seed could not be laid out"
+    rather than as "this character is not a block". A block whose `BlockNeeds` the sequence
+    cannot satisfy surfaces there too, and reads even worse -- as a bare `assert` about lane
+    numbers, at every seed, which is what `unmet_need` exists to head off.
+    """
+    validate_block_ids(block_seq, category=category)
+    unmet = unmet_need(block_seq)
+    if unmet is not None:
+        # The sentence already names the sequence, and `cli._ad_hoc_category` names a composed
+        # road after its sequence -- so saying both would read "of 'SPS' for category 'SPS'".
+        where = f" for category {category!r}" if category and category != block_seq else ""
+        raise CategoryError(unmet.sentence(where))
+
+
+@dataclass(frozen=True)
+class UnmetNeed:
+    """A block in a sequence whose `BlockNeeds` the sequence does not satisfy.
+
+    Held as a value rather than raised directly because two callers want different things from
+    it: `validate_block_seq` wants a `CategoryError`, and the studio wants the repair on its own
+    so it can offer it as a suggestion before anything is pressed.
+    """
+
+    #: The offending block, and where in the sequence it sits (0-based).
+    block: Block
+    at: int
+    #: The sequence as written, and the same sequence with `needs.insert` put in front of the
+    #: offending block. Both, because every reader wants to show the second beside the first.
+    block_seq: str
+    repair: str
+
+    def sentence(self, where: str = "") -> str:
+        """Why this cannot build, and what to type instead. The one wording, for every reader."""
+        return (
+            f"{self.block.id!r} ({self.block.label}) at position {self.at + 1} of "
+            f"{self.block_seq!r}{where} cannot build. "
+            f"{plain_needs(self.block)} "
+            f"Nothing in front of it does that, so try {self.repair!r} instead. "
+            "No seed changes this."
+        )
+
+
+def unmet_need(block_seq: str) -> UnmetNeed | None:
+    """The first block in `block_seq` whose `BlockNeeds` nothing in front of it satisfies.
+
+    Only blocks that declare both an `after_any` and an `insert` are checked, which today means
+    only `P`. The two forks declare neither: they fail *themselves*, and that judgement is
+    MetaDrive's to make and to word, so nothing here pre-empts it. What is checked is a property
+    of the *sequence* -- and catching those before `BIG`'s backtracking search turns them into
+    "this seed could not be laid out" is the whole reason this module validates sequences at all.
+
+    Deliberately not modelled: lane arithmetic. `yYP` narrows and then widens again and is
+    refused by MetaDrive, not here. Answering that would mean reimplementing `Bottleneck`, and a
+    second implementation of a simulator's geometry is a second thing to be wrong.
+    """
+    by_id = {block.id: block for block in BLOCKS}
+    for at, char in enumerate(block_seq):
+        needs = by_id[char].needs
+        if needs is None or not needs.after_any or not needs.insert:
+            continue
+        if any(earlier in needs.after_any for earlier in block_seq[:at]):
+            continue
+        return UnmetNeed(
+            block=by_id[char],
+            at=at,
+            block_seq=block_seq,
+            repair=block_seq[:at] + needs.insert + block_seq[at:],
+        )
+    return None
+
+
+def plain_needs(block: Block) -> str:
+    """A block's `needs.text` with its markdown stripped, for a terminal that has no bold.
+
+    The studio renders the same string through `inline`, so both readers are showing one
+    sentence rather than two that have to be kept in step by hand.
+    """
+    if block.needs is None:
+        return ""
+    return block.needs.text.replace("**", "").replace("*", "").replace("`", "'")
 
 
 #: The one block id that is not a letter. Spelled out rather than dropped, because a name with the
@@ -171,8 +322,12 @@ def composed_name(block_seq: str, rule: ExitRule) -> str:
     Case is kept: `r` is the on-ramp and `R` the off-ramp, and folding them together would file
     two different roads under one name. The result always matches the studio's name pattern, so
     a scenario id built from it stays servable as a URL segment.
+
+    Only the ids are validated, not the sequence: this names a road, and `P` names one perfectly
+    well whether or not the road in front of it lets it build. The build check belongs on the
+    paths that build -- `Category`, `read_sockets`, `add`.
     """
-    validate_block_seq(block_seq)
+    validate_block_ids(block_seq)
     spelled = "".join(_SPELLED.get(char, char) for char in block_seq)
     return f"{spelled}_{ExitRule(rule).value}"
 

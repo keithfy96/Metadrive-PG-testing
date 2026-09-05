@@ -987,3 +987,15 @@ def test_a_studio_with_no_reference_measured_is_told_so_rather_than_refused(clie
     assert body == {
         "path": "docs/reference/destinations.md", "written": False, "text": None, "at": None
     }
+
+
+def test_the_palette_is_served_the_rule_and_not_only_a_sentence_about_it(client):
+    """The road builder offers `SyyPS` for `SPS`, so it needs `after_any` and `insert` as data.
+
+    Held to `categories.BLOCKS` rather than restated in JavaScript: the page's note and the CLI's
+    refusal are then one declaration read twice, and cannot come to differ.
+    """
+    rows = {row["id"]: row["needs"] for row in client.get("/api/blocks").json()}
+    assert {block_id for block_id, needs in rows.items() if needs} == {"f", "F", "P"}
+    assert rows["P"]["after_any"] == "y" and rows["P"]["insert"] == "yy"
+    assert all(rows[block.id] is None for block in BLOCKS if block.id not in {"f", "F", "P"})

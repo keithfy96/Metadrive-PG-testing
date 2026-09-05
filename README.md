@@ -193,9 +193,16 @@ look before pinning anything to it.
 
 **The arm the ego drives in through is not listed.** A block's sockets are the connections it
 offers onward; the one behind it belongs to the block before. Measured across all fifteen block
-ids: none of the twelve that build marks an entry. `SocketReading.is_entry` and the filter every
-rule applies stay — they guard a case MetaDrive does not currently produce — but nothing composed
-from these blocks fills that column in.
+ids: none of the twelve that build alone marks an entry. `SocketReading.is_entry` and the filter
+every rule applies stay — they guard a case MetaDrive does not currently produce — but nothing
+composed from these blocks fills that column in.
+
+**Three of the fifteen do not build on their own,** and for two different reasons. `f` and `F`
+are broken — MetaDrive refuses both at every seed in its own words. `P` is not: a parking lot
+needs the road in front of it to be one lane in each direction, and a road starts at three. Only
+the lane merge `y` narrows one, so `SP` is refused at every seed and `SyyP` builds at all of
+them. That condition is declared once, on `categories.BLOCKS`, and read by the CLI's refusal, the
+studio's palette and the command reference alike.
 
 **Writes:** nothing.
 
@@ -215,7 +222,8 @@ of the fifteen blocks, and **Draw** is this command with `--json`, whose output 
 `earned_max_steps` — the budget a category on that road would be given — and `composed_name`, the
 category the road would be filed under if it were added. Drawing reaches no bank; `add
 --block-seq` is what does. A road MetaDrive will not build (`fS`, say) is refused in MetaDrive's
-own words.
+own words; a road that cannot build because of what a block needs in front of it (`SPS`, say) is
+refused before a simulator starts, and names the sequence that would build instead.
 
 Draws the road network in grey with the **pinned route in red**, a blue arrow at the spawn pose
 and a green star at the destination. Headless — no display, no window, no image buffer. The route

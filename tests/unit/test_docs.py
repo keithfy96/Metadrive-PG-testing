@@ -115,3 +115,25 @@ def test_a_flags_own_row_lists_the_values_it_accepts():
     for row in block_rows:
         for block in VALID_BLOCK_IDS:
             assert f"`{block}`" in row
+
+
+def test_the_palette_is_served_what_a_block_needs_and_not_only_that_it_needs_something():
+    """The studio offers the repair, so it needs the rule, not a sentence describing the rule."""
+    from scenariobank.docs import block_rows
+
+    rows = {row["id"]: row["needs"] for row in block_rows()}
+    assert {block_id for block_id, needs in rows.items() if needs} == {"f", "F", "P"}
+    assert rows["P"]["after_any"] == "y"
+    assert rows["P"]["insert"] == "yy"
+    assert "one lane in each direction" in rows["P"]["text"]
+    # The forks fail themselves, so there is nothing to put in front of them.
+    assert rows["f"]["after_any"] == "" and rows["f"]["insert"] == ""
+    assert rows["C"] is None
+
+
+def test_the_block_seq_reference_names_every_block_that_will_not_simply_build():
+    from scenariobank.docs import _value_notes
+
+    note = _value_notes()["--block-seq"]
+    assert "`P`: needs a road already narrowed to one lane each way" in note
+    assert note.count("MetaDrive refuses to build it at any seed") == 2

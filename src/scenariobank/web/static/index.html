@@ -196,6 +196,15 @@ button.ghost[hidden] { display: none; }
 }
 .palette button:hover { border-color: var(--ink-2); color: var(--ink); }
 .palette button code { margin-right: 0.4rem; }
+/* Guidance before a failure, not a report of one -- so a muted inset, never the red a refusal
+   gets. It sits under the palette because that is where the block was just clicked. */
+.block-note { margin: 0.5rem 0 0.2rem; padding: 0.55rem 0.7rem; background: var(--inset);
+              border: 1px solid var(--hair); border-radius: 6px; font-size: 12.5px;
+              color: var(--muted); line-height: 1.5; }
+.block-note + .block-note { margin-top: 0.35rem; }
+.block-note b { color: var(--ink-2); }
+.block-note p { margin: 0; }
+.block-note p + p { margin-top: 0.35rem; }
 input#road-seq { width: 11rem; font-family: var(--mono); font-size: 13px; letter-spacing: 0.1em; }
 input#road-seed { width: 4.5rem; font-family: var(--mono); font-size: 12.5px; }
 select#road-rule { width: auto; font-family: var(--mono); font-size: 12.5px; }
@@ -547,6 +556,11 @@ select#road-type { width: auto; max-width: 10rem; font-family: var(--mono); font
       <div class="palette" id="palette">
         <span class="loading">loading the blocks…</span>
       </div>
+      <!-- What a block wants in front of it, said the moment the block is in the box rather than
+           as an assertion two minutes later. Three of the fifteen carry one; for the other twelve
+           this stays hidden. `GET /api/blocks` serves the whole rule, so the repair offered here
+           is the same one `validate_block_seq` suggests when you press Draw anyway. -->
+      <div class="block-note" id="block-note" hidden></div>
       <div class="row">
         <label class="lab" for="road-seq">blocks</label>
         <input type="text" id="road-seq" placeholder="e.g. CCX" spellcheck="false"
@@ -923,7 +937,11 @@ const roadName = () => `road-${road.seq.replace(/\$/g, "toll")}-${road.rule}-see
 
 function paletteButton(block) {
   const button = el("button", {
-    type: "button", title: `${block.cls} — MetaDrive's ${block.id}`,
+    type: "button",
+    // The caveat is on the button too, so hovering answers the question before the click. The
+    // panel below is the real answer; this is for the reader who is scanning the palette.
+    title: `${block.cls} — MetaDrive's ${block.id}`
+      + (block.needs ? `\n\n${block.needs.text.replace(/[`*]/g, "")}` : ""),
     html: `<code>${escape(block.id)}</code>${escape(block.label)}`,
   });
   button.addEventListener("click", () => {
@@ -943,6 +961,51 @@ function renderPalette(blocks, rules) {
   refreshRoad();
 }
 
+// What the blocks in the box need in front of them, if anything. One panel per such block, in
+// the order they appear, so `Pf` explains both.
+//
+// The page holds no copy of the rule: `after_any` and `insert` arrive on each block from
+// `GET /api/blocks`, which is `categories.BLOCKS`, which is what `validate_block_seq` refuses
+// on. All this does is read them. The repair line is offered only when nothing in `after_any`
+// precedes the block -- the case where inserting `insert` is unambiguously the fix. When a `y`
+// is already there (`yP`, where one merge reaches one lane at three seeds of five) the prose
+// shows without a repair, because whether that builds is a question only the simulator answers.
+function blockNotes(seq) {
+  const notes = [];
+  for (let at = 0; at < seq.length; at += 1) {
+    const block = road.blocks.find((b) => b.id === seq[at]);
+    if (!block || !block.needs) continue;
+    if (notes.some((note) => note.id === block.id)) continue;
+    const needs = block.needs;
+    const satisfied = needs.after_any
+      && [...seq.slice(0, at)].some((earlier) => needs.after_any.includes(earlier));
+    notes.push({
+      id: block.id,
+      html: `<b><code>${escape(block.id)}</code> ${escape(block.label)}</b> — ${inline(needs.text)}`,
+      repair: satisfied || !needs.insert
+        ? null
+        : seq.slice(0, at) + needs.insert + seq.slice(at),
+    });
+  }
+  return notes;
+}
+
+function renderBlockNotes() {
+  const box = $("block-note");
+  const notes = blockNotes($("road-seq").value.trim());
+  box.hidden = notes.length === 0;
+  box.replaceChildren(...notes.flatMap((note) => {
+    const parts = [el("p", { html: note.html })];
+    if (note.repair) {
+      parts.push(el("p", {
+        html: `Your sequence would build as <b><code>${escape(note.repair)}</code></b>. `
+          + "No seed changes this.",
+      }));
+    }
+    return parts;
+  }));
+}
+
 // Both buttons are live only for a sequence the CLI would take, and each line under the row is
 // the command that button would run. One reader of the box, because there is one box: the real
 // check is `invoke.py`'s and then `categories.validate_block_seq`, and this only brings the
@@ -960,6 +1023,7 @@ function refreshRoad() {
     ? `not a block: ${unknown.join(" ")}`
     : (seq ? "" : "click a block above, or pick a type");
   check.classList.toggle("hint", !unknown.length && !seq);
+  renderBlockNotes();
   $("road-go").disabled = !ok || busy;
   $("exits-go").disabled = !ok || busy;
   $("road-argv").textContent = ok
@@ -1068,11 +1132,15 @@ function renderRoad() {
   } else if (road.state === "refused") {
     side.appendChild(el("p", {
       class: "caption",
-      text: "Declined, and those are the command's own words. A rule that finds no exit is "
-        + "the road's shape at this seed -- try another rule, or another seed, since the last "
-        + "block's rotation follows the curves before it. A sequence that does not lay out can "
-        + "fail at one seed and build at the next; a block MetaDrive names as broken is broken "
-        + "at every seed.",
+      // Three causes, because two of them used to send every reader to the seed box. A parking
+      // lot behind a three-lane road is refused identically at every seed, and the caption that
+      // said "try another seed" was what made that look like a bug in the block.
+      text: "Declined, and those are the command's own words. Three things cause it. A rule that "
+        + "finds no exit is the road's shape at this seed -- try another rule, or another seed, "
+        + "since the last block's rotation follows the curves before it. A sequence that does "
+        + "not lay out can fail at one seed and build at the next. And a block can need a "
+        + "particular road in front of it, which no seed will change -- the note under the "
+        + "palette says which, and what to type instead.",
     }));
   }
   result.replaceChildren(shot, side);
@@ -2591,7 +2659,9 @@ function renderExits() {
       el("p", { class: "caption",
                 text: "Those are the command's own words. A sequence that does not lay out can "
                   + "fail at one seed and build at the next; a block MetaDrive names as broken "
-                  + "is broken at every seed." }));
+                  + "is broken at every seed; and a block that needs a particular road in front "
+                  + "of it is refused at every seed until it gets one -- the note under the "
+                  + "palette says what to type instead." }));
     return;
   }
 
@@ -2619,17 +2689,30 @@ function renderExits() {
         : { html: "—", class: "num" },
     ]));
 
+  // How wide the road leaving this block is. Measured on every socket and served all along, but
+  // nothing displayed it after the per-arm table was measured away -- and it is exactly the
+  // number that decides whether a parking lot can follow, so it belongs in the sentence rather
+  // than in a table. One number when the arms agree, which is every block MetaDrive builds;
+  // when they do not, the sentence says so and the disclosure carries the per-arm column.
+  const laneCounts = [...new Set(doc.sockets.map((one) => one.lane_count))];
+  const lanes = laneCounts.length === 1
+    ? `, on a road ${laneCounts[0] === 1 ? "one lane" : `${laneCounts[0]} lanes`} wide in each `
+      + "direction"
+    : ", on arms of differing width — see the measurements below";
+
   // The measurements the plain view drops, kept one click away rather than deleted: they are
   // what a road that is not the shape you assumed shows up in.
   const rotation = doc.sockets.length ? doc.sockets[0].entry_heading_deg : 0;
   const rotated = Math.abs(rotation) >= 0.05;
   const rawTable = table(
-    ["socket", "node", { label: "turn", nowrap: true }, { label: "from spawn", nowrap: true }],
+    ["socket", "node", { label: "turn", nowrap: true }, { label: "from spawn", nowrap: true },
+     "lanes"],
     doc.sockets.map((one) => [
       { html: `\`${one.index}\``, class: "nowrap" },
       { html: `\`${one.node}\``, class: "nowrap" },
       { html: signed(one.turn_deg), class: "num" },
       { html: signed(one.angle_deg), class: "num" },
+      { html: String(one.lane_count), class: "num" },
     ]));
 
   result.replaceChildren(
@@ -2637,8 +2720,8 @@ function renderExits() {
     el("p", { class: "caption",
               html: `This road ends at a <b>${escape(lastBlockName(doc.block_seq))}</b>, so the `
                 + `car has ${doc.sockets.length === 1 ? "one way" : `${doc.sockets.length} ways`}`
-                + " to leave it. Nothing here changes anything — the road is built once and"
-                + " measured." }),
+                + ` to leave it${lanes}. Nothing here changes anything — the road is built once`
+                + " and measured." }),
     ruleTable,
     el("p", { class: "caption",
               html: "Set <b>exit</b> at the top of this card to one of these and press "

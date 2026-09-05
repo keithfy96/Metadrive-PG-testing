@@ -224,12 +224,19 @@ def _value_notes() -> dict[str, str]:
     categories = ", ".join(f"`{name}`" for name in CATEGORIES)
     rules = ", ".join(f"`{rule.value}`" for rule in ExitRule)
     blocks = ", ".join(f"`{block.id}` {block.label}" for block in BLOCKS)
+    # Generated from the blocks that declare a `BlockNeeds`, so the reference cannot claim a
+    # different set of caveats from the one the CLI refuses on and the studio's palette explains.
+    # One clause per block rather than grouped: two blocks sharing a caveat would need the verb
+    # to agree with the count, and a table cell is not worth a pluraliser.
+    caveats = " ".join(
+        f"`{block.id}`: {block.needs.short}." for block in BLOCKS if block.needs is not None
+    )
     return {
         "--category": f"One of: {categories}.",
         "--rule": f"One of: {rules}.",
         "--block-seq": (
             f"Any string of these {len(VALID_BLOCK_IDS)} block ids: {blocks}. "
-            "`I` is prepended automatically and is never written into a sequence."
+            f"`I` is prepended automatically and is never written into a sequence. {caveats}"
         ),
         "--seed": "Any non-negative integer.",
         "--seeds": (
@@ -422,10 +429,28 @@ def block_rows() -> list[dict[str, Any]]:
 
     The studio's road builder lays its palette out from this, in this order. `categories.BLOCKS`
     owns the table; the test that asserts it against MetaDrive is what keeps the palette honest.
+
+    `needs` carries the whole `BlockNeeds`, not just its sentence, so the page can *offer* the
+    repair rather than describe it -- and so the rule the CLI refuses on and the rule the page
+    explains are one declaration read twice.
     """
     from scenariobank.categories import BLOCKS
 
-    return [{"id": block.id, "cls": block.cls, "label": block.label} for block in BLOCKS]
+    return [
+        {
+            "id": block.id,
+            "cls": block.cls,
+            "label": block.label,
+            "needs": None
+            if block.needs is None
+            else {
+                "text": block.needs.text,
+                "after_any": block.needs.after_any,
+                "insert": block.needs.insert,
+            },
+        }
+        for block in BLOCKS
+    ]
 
 
 def category_rows() -> list[dict[str, Any]]:

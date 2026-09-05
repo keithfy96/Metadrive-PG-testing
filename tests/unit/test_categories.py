@@ -12,6 +12,7 @@ from scenariobank.categories import (
     composed_name,
     get_category,
     step_budget,
+    unmet_need,
     validate_block_seq,
 )
 from scenariobank.doctor import has_simulator
@@ -241,3 +242,98 @@ def test_every_block_names_the_class_metadrive_registers_under_its_id():
     assert [(block.id, block.cls) for block in BLOCKS] == [
         (cls.ID, cls.__name__) for cls in registered
     ]
+
+
+# ------------------------------------------- what a block needs in front of it (parking lot fix)
+
+
+def test_three_blocks_of_fifteen_declare_what_they_need_and_the_rest_declare_nothing():
+    # Measured at seeds 0-4: `f` and `F` refuse outright and `P` refuses behind a three-lane
+    # road. The other twelve build on their own, so a `needs` on any of them would be a claim
+    # about the simulator that the simulator does not make.
+    assert {block.id for block in BLOCKS if block.needs is not None} == {"f", "F", "P"}
+    assert all(block.needs.text and block.needs.short
+               for block in BLOCKS if block.needs is not None)
+
+
+def test_only_the_parking_lot_offers_a_repair_because_only_it_has_one():
+    # The forks fail *themselves* at every seed: nothing in front of them helps, so they carry
+    # no `after_any` and no `insert`, and `unmet_need` leaves them to MetaDrive to refuse.
+    forks = [block.needs for block in BLOCKS if block.id in {"f", "F"}]
+    assert all(not needs.after_any and not needs.insert for needs in forks)
+    parking = next(block.needs for block in BLOCKS if block.id == "P")
+    assert parking.after_any == "y" and parking.insert == "yy"
+
+
+@pytest.mark.parametrize("block_seq", ["P", "SP", "SPS", "YP", "XPX", "PP"])
+def test_a_parking_lot_with_nothing_narrowing_in_front_of_it_is_refused(block_seq):
+    with pytest.raises(CategoryError, match="parking lot"):
+        validate_block_seq(block_seq)
+
+
+@pytest.mark.parametrize("block_seq", ["yP", "yyP", "SyyPX", "yPP", "CyyPS"])
+def test_a_parking_lot_behind_a_merge_is_left_to_the_simulator(block_seq):
+    # `yP` builds at three seeds of five and `yyP` at all five. Which of those a given sequence
+    # is, is a question only MetaDrive can answer, so this check does not try to.
+    validate_block_seq(block_seq)
+
+
+def test_the_refusal_names_the_position_and_offers_a_sequence_that_would_build():
+    unmet = unmet_need("SPS")
+    assert unmet is not None
+    assert (unmet.block.id, unmet.at, unmet.block_seq, unmet.repair) == ("P", 1, "SPS", "SyyPS")
+    sentence = unmet.sentence()
+    assert "'SPS'" in sentence and "'SyyPS'" in sentence and "No seed changes this" in sentence
+    # The one wording: the sentence quotes the block's own `needs.text`, markers stripped.
+    assert "one lane in each direction" in sentence
+    assert "**" not in sentence and "`" not in sentence
+
+
+def test_nothing_shipped_or_composed_is_caught_by_the_new_rule():
+    assert unmet_need("CCX") is None
+    for category in CATEGORIES.values():
+        assert unmet_need(category.block_seq) is None
+
+
+def test_naming_a_road_does_not_require_it_to_build():
+    # `composed_name` answers "what is this road called", which `P` has an answer to whether or
+    # not the road in front of it lets it build. Only the ids are checked.
+    assert composed_name("P", ExitRule.ONLY) == "P_only"
+    with pytest.raises(CategoryError, match="unknown block id"):
+        composed_name("PZ", ExitRule.ONLY)
+
+
+@needs_sim
+@pytest.mark.parametrize("seed", list(SEEDS))
+def test_the_parking_lot_rule_is_what_the_simulator_actually_does(seed):
+    """The claim in `BlockNeeds` is about MetaDrive, so MetaDrive is what has to confirm it.
+
+    Three halves of one rule: the refused sequence really is refused, the repair the refusal
+    offers really builds, and the reason really is the lane count rather than the seed.
+    """
+    from scenariobank.sockets import read_sockets
+
+    with pytest.raises(AssertionError, match="Lane number of previous block must be 1"):
+        _build_ignoring_our_own_check("SP", seed)
+    assert read_sockets("SyyP", seed)
+    # And the count itself: two merges reach one lane at every seed, which is why `insert` is
+    # `yy` and not `y`.
+    assert [reading.lane_count for reading in read_sockets("yy", seed)] == [1]
+
+
+def _build_ignoring_our_own_check(block_seq: str, seed: int):
+    """Reset MetaDrive on `block_seq` with neither our check nor our wording in the way.
+
+    Bare `env.reset`, so what surfaces is MetaDrive's own `AssertionError`. That is the point:
+    the test above is checking our rule against the simulator's, and routing it through
+    `read_sockets` or `reset_or_explain` would only check our rule against our own two sentences.
+    """
+    from metadrive.envs.metadrive_env import MetaDriveEnv
+
+    from scenariobank.config import base_config
+
+    env = MetaDriveEnv(base_config(map=block_seq, start_seed=seed, num_scenarios=1))
+    try:
+        env.reset(seed=seed)
+    finally:
+        env.close()

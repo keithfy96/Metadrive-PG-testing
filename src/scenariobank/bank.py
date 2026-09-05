@@ -50,6 +50,7 @@ from scenariobank.handedness import DRIVE_SIDE_LEFT
 from scenariobank.options import AXES, LEVEL_NAMES, Level
 from scenariobank.sockets import (
     SocketError,
+    explain_build_failure,
     read_sockets_from_env,
     route_rotation,
     select_exit,
@@ -323,15 +324,24 @@ def _reset(env, seed: int, block_seq: str):
 
     Map generation is a backtracking search (`BIG.py:91-103`), so a block sequence can simply
     fail to plug in at a given seed. With the seeds fixed that is a hard failure and not a scan:
-    it is reported, never silently substituted.
+    it is reported, never silently substituted -- which is what the tail says, and why the tail
+    is not appended to a refusal the seed had nothing to do with.
+
+    `sockets.explain_build_failure` owns the wording, so a `generate` and an `inspect` cannot
+    describe the same refusal in two different ways.
     """
     try:
         env.reset(seed=seed)
     except Exception as error:
         raise BankError(
-            f"seed {seed} does not build for block sequence {block_seq!r}: {error}. "
-            "Map layout is a backtracking search and can fail for a specific seed; the seed is "
-            "not substituted, because a bank whose seeds moved silently is not the bank asked for."
+            explain_build_failure(
+                error,
+                block_seq,
+                seed,
+                tail=". Map layout is a backtracking search and can fail for a specific seed; "
+                "the seed is not substituted, because a bank whose seeds moved silently is not "
+                "the bank asked for.",
+            )
         ) from error
 
 
