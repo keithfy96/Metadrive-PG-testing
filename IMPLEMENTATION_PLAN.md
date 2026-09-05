@@ -580,7 +580,8 @@ metadrive-PG/
 
 ## Reading the markers
 
-Every phase heading carries one, and so does every step inside Phase 2c and Phase 7:
+Every phase heading carries one, and so does every step inside Phase 2c, Phase 3, Phase 4 and
+Phase 7:
 
 | marker | means |
 |---|---|
@@ -1958,13 +1959,227 @@ measured as unusable; ad-hoc roads as bank rows.
 
 ---
 
-# Phase 3 — *(deleted)*
+# Phase 3 — Import: stored scenarios from the converter ⬜  ⟵ *the number is reused*
 
-`scenariobank verify` was the gate over `map_id`, `config_hash` and the recorded MetaDrive commit.
-All three are cut with the durable-bank premise (see Phase 2, **Scope**). Of its seven checks, the
-drive-side measurement moved into Phase 2's `generate` and into `doctor`; the rest were
-reproducibility checks that a per-batch bank does not need. Later phases are deliberately **not**
-renumbered.
+> **This is not the old Phase 3.** `scenariobank verify` was the gate over `map_id`, `config_hash`
+> and the recorded MetaDrive commit; all three were cut with the durable-bank premise on
+> 2026-08-31 (see Phase 2, **Scope**). Of its seven checks the drive-side measurement moved into
+> Phase 2's `generate` and into `doctor`, and the rest were reproducibility checks a per-batch bank
+> does not need. Later phases were deliberately **not** renumbered then, which left the number
+> free; it now holds the import, and no phase after it moved.
+
+**Goal:** a scenario somebody already generated and saved — a real road, from OSM, with recorded
+actors — sits in a bank beside the procedural ones and runs through the same runner.
+
+## What a stored scenario is, next to a generated one
+
+*(Asked for 2026-09-05, Keith: "i eventually want to add the scenarios i generated via scenario net
+to this application ... in those cases i would have already fully generated and saved the scenario
+before it is run".)*
+
+One correction to the premise that followed, because it decides the shape of Phase 4: **env
+construction is still required.** A stored scenario needs `ScenarioEnv(...)` exactly as a PG road
+needs `MetaDriveEnv(...)`. What goes away is the **seed → map contract**. Measured on
+`workspaces/junction-1`:
+
+| | PG (`MetaDriveEnv`) | stored (`ScenarioEnv`) |
+|---|---|---|
+| construct | 9 ms | 2 ms |
+| cold reset | 39-354 ms, ~50 ms per block | 488 ms at 10 Hz, **1.5 s at 100 Hz** |
+| warm reset | 5-35 ms | 66 ms |
+| one step | 0.46 ms | 2.9-4.1 ms (151 tracks replayed) |
+| what `seed` means | the map generator's seed | an **index** into the dataset |
+| `num_scenarios` | bounds an index (`num_scenarios_for`) | a real count; `-1` means all |
+| `horizon` | our `max_steps` | `None` — and it does **not** end the episode |
+
+So opening a stored scenario is *slower* than generating a PG road, not faster: the map is
+deserialised and rebuilt from 974 stored features. "Already generated" does not mean "free to
+open", and `start_seed` / `num_scenarios_for` / `set_route` — the whole apparatus of Phase 4's env
+construction — does not apply on this path.
+
+**Feasibility is settled, not assumed.** `junction-1` loads and runs in the pinned MetaDrive with
+no conversion, at both rates: reset OK, `ScenarioMap` built, 24 traffic objects spawned, light
+manager live, `route_completion` climbing.
+
+## Steps
+
+### Step 1 — read a converter workspace ⬜
+
+A reader over `wingfin-osm-scenarionet-converter/workspaces/<name>/`. No writing, no env. Inputs
+are `source/manifest.json` — the converter's own provenance chain — and
+`scenarionet-<rate>/dataset_summary.pkl`. **R1 holds:** read the files, do not import the
+converter. The format read here is ScenarioNet's, which is MetaDrive's, not Tyrone's.
+
+**It ships as `scenariobank workspace <path>`** — one word, like every other command in this CLI.
+Not `inspect-workspace`: nothing here is hyphenated, and `inspect` already means "draw a route".
+
+**That is all it takes to reach the studio**, in two of the three senses — and the third is the
+only page work this phase has:
+
+- **The Reference tab is automatic.** `docs.reference()` walks the Typer app, `/api/commands`
+  serves that dict, the tab renders it. The command, its help and its flags appear with no page
+  code, `docs/reference/commands.md` regenerates from the same dict, and
+  `test_the_checked_in_reference_matches_the_cli` fails until it does.
+- **The Run tab is automatic.** `catalog()` (`web/invoke.py:30`) is that same reference minus
+  `NOT_RUNNABLE`, which today holds only `studio`. So `/api/runnable` offers the command, the page
+  builds the form from its flags, and `POST /api/jobs` runs it as
+  `sys.executable -m scenariobank workspace ...` with `shell=False` — validation and a streamed log
+  for free. Nothing is added to a list anywhere, which is what `invoke.py`'s opening docstring
+  exists to guarantee.
+- **A screen of its own is not automatic.** The road builder, the gallery and the bank list are
+  hand-built. Here that is Steps 4 and 5.
+
+**Verify alone:** `scenariobank workspace <path>` prints identity, drive side, rate, the route
+table and the actor counts for both `junction-1` and `mosque`, building nothing; the studio's
+Reference and Run tabs both show it without either file being edited.
+
+### Step 2 — what must be brought over: the `junction-1` checklist ⬜
+
+*(Asked for 2026-09-05, Keith: "please take all the necessary inputs from junction one, highlight
+what needs to be brought over so future users will know".)*
+
+It becomes `docs/reference/importing.md`, **generated** the way `commands.md` and
+`destinations.md` are, so the checklist and the reader cannot drift apart.
+
+**The dataset — all three files, from `scenarionet-<rate>/`.** ScenarioNet needs the triple:
+`dataset_summary.pkl`, `dataset_mapping.pkl`, and each `sd_*.pkl`. `data_directory` points at this
+directory and nothing else in the workspace is read at run time.
+
+**Identity and provenance**, from `source/manifest.json` and mirrored in the summary's
+`metadata.provenance`:
+
+| field | `junction-1` | why it must come |
+|---|---|---|
+| `driving_side` + `driving_side_source` | `left`, `explicit_cli` | the one field that silently invalidates every result — the reason Phase 2 measures drive side from the map |
+| `provenance.generation_fingerprint` | `57dcd345…` | names the exact lane model this was built from |
+| `provenance.source_osm_sha256` | `4607fd46…` | the OSM extract |
+| `provenance.reviewed_lane_model_sha256` | `fc205bca…` | the human-reviewed model, stage 4 |
+| `provenance.stage_5_status` | `passed` | refuse anything else at import |
+| `stage_6.step_hz` | `100.0` | the rate the tracks were sampled at — see Step 3 |
+| `metadata.coordinate` | `metadrive` | already in MetaDrive's frame; no transform on our side |
+| `stage_1b.projection.origin` | 3.18589 N, 101.61155 E | where on earth this is; a PG bank has no such thing |
+| `graph.bounds_wgs84` | the extract box | ditto |
+| `attribution` | `OpenStreetMap contributors` | a licence obligation, and it must survive into a result |
+| `tool_versions` | osmnx 2.0.7, pyproj 3.7.1, … | the analogue of `manifest.metadrive` |
+
+**Per scenario**, from `metadata.sdc_route` (equivalently `stage_6.routes[]`): `name` → the row id;
+`start_lane` / `end_lane` / `lanes[]` → the route, which is what `destination` is on the PG side;
+`distance_m` (395.11) → `route_length_m`; `duration_s` (37.82) with the scenario's own `length`
+(3782 at 100 Hz, 379 at 10 Hz) → the step budget, **measured rather than chosen**, which is the one
+place a real-world bank is better off than a PG one; plus `speed_kph`, `slowest_kph`,
+`lane_changes` (3), `junction_movements` (14), `waiting_s` and `stops[]`.
+
+**What replaces the six option axes.** They are not knobs here. They are contents of the recording,
+and the bank records what is in it rather than pretending it can set it:
+
+- tracks: **101 `PEDESTRIAN`, 25 `CYCLIST`, 24 `TRAFFIC_BARRIER`, 1 `VEHICLE`** — that one is the ego
+- `dynamic_map_states`: **8 `TRAFFIC_LIGHT`**, three phase groups, a 60 s cycle
+- `map_features`: 974 — 434 lane surfaces, 455 road edges, 85 broken white lines
+- and the signals note, carried **verbatim** into the manifest because it is a caveat about the
+  data and not about us: OSM records only that a signal exists, so every cycle, split and offset
+  was *synthesised* in the Stage 6 signal builder, never surveyed.
+
+**Brought over as artefacts:** `stage-6-map-<rate>.png` becomes the thumbnail — a real-world bank
+has no `figures.render_route` to draw — and `reports/scenario-conversion-<rate>.json`.
+
+**Deliberately not brought over:** `bags/`, `drives/`, `inspection/*.html` (about 1 MB each),
+`lane-model/*.json` (1.5 MB), `normalized/`, `source/map.osm`. A bank records their **checksums**,
+which `source/manifest.json` already carries for every one of them. Same choice Phase 2 made about
+`base_config`: a *record* of the input, not the input.
+
+### Step 3 — `scenariobank import`, and schema 1.3 ⬜
+
+The command that turns a workspace into a bank under `--banks-root`, beside the PG ones.
+
+- **`Manifest.source`** — `"pg"` by default, so every existing bank reads as 1.2 → 1.3 unchanged,
+  or the summary's own `metadata.dataset` value, which for these is `"osm-scenario"`.
+  `extra="forbid"` forces the version bump, exactly as 1.1 → 1.2 did for `options`.
+- A real-world category carries `dataset_dir`, `step_hz`, `origin`, `attribution` and the
+  provenance block where a PG category carries `block_seq` and `exit_rule`; a row carries
+  `scenario_index`, `route` and the measured budget where a PG row carries `seed` and
+  `destination`.
+- **The dataset is copied into the bank, not referenced.** A bank is mounted into the container and
+  shipped to a rig; a path into somebody's home directory is not. Cost: `junction-1` is 5.5 MB at
+  10 Hz and **48 MB at 100 Hz** (150 actors × 3782 frames), while `mosque` is 1.3/1.5 MB because it
+  has no actors at all. A 35-scenario real-world bank could reach ~1.7 GB, which is the first thing
+  in this project that makes a bank expensive to move.
+- **Import at 100 Hz, and set the physics step to match.** ScenarioNet replay advances **one
+  recorded frame per `env.step`**, so the recording's rate *is* the env's rate — and MetaDrive's
+  default does not match it. Measured: `physics_world_step_size=0.02` × `decision_repeat=5` is an
+  env dt of 0.1 s, i.e. 10 Hz. A 100 Hz recording opened at that default replays every actor at a
+  tenth of its speed **silently**: the map is right, the tracks are right, nothing raises. So a
+  real-world category records `step_hz`, and the runner sets
+  `physics_world_step_size = 1 / step_hz` with `decision_repeat = 1`. Verified on the 48 MB
+  `scenarionet-100hz`: env dt 0.0100 s, 3782 frames, 4000 steps at 2.87 ms/step.
+
+  This is gotcha 3 of Phase 4 Step 6 from the other side — `--step-hz 100` is the sim rate the AV3
+  rig already wants, so a 100 Hz import is the one that agrees with it.
+- `--rate` stays a flag, but **100 Hz is the default and the choice is asymmetric**: `--decision-hz`
+  is a stride in our own loop and is never stored in a bank, so it stays adjustable per run
+  forever, while `step_hz` is fixed when the pickle is written. A 100 Hz import keeps every
+  decision rate that divides 100 available; a 10 Hz import caps you at 10 and cannot be undone
+  without going back to the converter. It costs bytes, and it is the only one of the two choices
+  that is irreversible.
+- `import` refuses `stage_5_status != "passed"`, and refuses a drive side that disagrees with the
+  installed handedness — reusing `doctor.measure_drive_side`, the check Phase 2 kept from the old
+  Phase 3.
+
+**Verify alone:** import `junction-1` and `mosque` into a scratch root; both manifests validate,
+`review` runs, the thumbnail resolves, and no bank under `banks/` is opened for writing.
+
+### Step 4 — the studio splits its bank list ⬜
+
+*(Asked for 2026-09-05, Keith: "currently bank just shows the different banks generated in a list,
+but lets split it up by PG banks and real world simulations".)*
+
+Today `GET /api/banks` returns one flat list (`web/api.py:218`) and `renderBankList`
+(`index.html:1448`) filters and renders it in one column.
+
+- The endpoint gains `source` per entry, read from the manifest. No new endpoint and no second
+  listing, because the discriminator is already in the file Step 3 writes.
+- `renderBankList` groups the filtered rows under two headings — **Procedural** and **Real world** —
+  each hidden when empty, so a studio with only PG banks looks exactly as it does now. One search
+  box, filtering across both.
+- A real-world row shows what a PG row cannot: the place, the rate, and the actor counts. A PG row
+  is unchanged.
+
+**Verify alone:** studio on a scratch root holding `curve` and an imported `junction-1`; two
+sections, the search filters both, and a PG-only root shows one section with no empty heading.
+
+### Step 5 — `review` for a bank with no seeds ⬜
+
+`review`, the duplicate detection and the coverage chips are built on seeds, block sequences and
+turn pairs. None of those exist here. This step decides what a real-world bank's review *is* —
+route length, duration, actor mix, signal coverage — and makes the dataset tab render that instead
+of the PG chips.
+
+**Verify alone:** open an imported bank in the studio; every chip shown is a measured property of
+the recording, and nothing reads "0 duplicates" from a computation that never ran.
+
+### Step 6 — the one-scenario round trip ⬜  ⟵ *gate*
+
+An imported bank drives one episode end to end under a diagnostic policy, and the result record has
+the same shape as a PG one. This is what says the two bank kinds are one runner, before Phase 4
+builds on the assumption.
+
+**Two things this step must get right, both measured rather than assumed:**
+
+- **Nothing ends the episode on its own.** `ScenarioEnv` ran 4000 steps on a 3782-frame scenario
+  with `max_step: False` and `horizon: None` — it does **not** truncate at the end of the
+  recording. The cap comes from the scenario's own `length`, enforced in our step loop. Phase 4's
+  "enforce the same cap in our own step loop as well" stops being defence in depth here and becomes
+  the only thing that ends a stored episode.
+- **The 19-dimensional observation is a PG fact.** With `agent_observation=StateObservation` a
+  stored scenario observes **41** dimensions, because `ScenarioEnv`'s navigation module reports
+  differently; the default with no override is 161. See **The observation ceiling**, which was
+  written from `MetaDriveEnv` alone.
+
+**Verify alone:** `junction-1` route-1 runs to its own length and terminates; `--decision-hz` 20,
+10 and 5 each act on the expected stride of a 100 Hz import; the result row carries the provenance
+fingerprint and the attribution string.
+
+**Done when:** Steps 1-6 are ✅ and `docs/reference/importing.md` is checked in and reproduces from
+the reader.
 
 ---
 
@@ -1977,101 +2192,170 @@ renumbered.
 
 **Goal:** the piece the frontend calls.
 
-**Build**
-- **The model boundary is an AV3 camera submission** *(amended 2026-08-30; replaces the
-  `policy(observation: Box(19,)) -> [steer, throttle]` contract)*. Everything needed already exists
-  in `wingfin-osm-scenarionet-converter/` and is already MetaDrive-shaped — **port it, do not
-  rewrite it**, and use our own openpilot bridge, not wing-sim's:
+## Steps — the runner first, the cameras on top of it
 
-  - `tools/camera_rig.py` — `load_rig()`, `CameraRig.sensors/mount/read`
-  - `rigs/av3.txt` — the six AV3 cameras, ISO-8855 → CARLA sign rules applied, datum resolved onto
-    MetaDrive's `DefaultVehicle`
-  - `tools/av3_model.py` — `AV3Model.observe/predict_with_navigation`, `FrameHistory`, `preprocess`,
-    `ego_state`, `navigation`, `waypoints`
-  - `tools/openpilot_policy.py` — `BridgeConnection`, `OpenpilotDriver`, `to_metadrive_action`
-  - `metadrive-complete/openpilot/bridge/` — the zapeta bridge image (Python 3.8, its own container)
-  - `tools/av3_probe.py` + `scripts/av3-probe.sh` — the sign-convention probe
+Eight checkpoints, each one testable alone. **They deliberately do not run in the order the
+build notes were written in.** The notes lead with the AV3 port because that is the interesting
+part; the work leads with `resolve_options` and env construction because a runner that is
+reproducible against a two-line `ConstantPolicy` is the thing every later step is debugged
+against. Steps 1-5 need no camera, no bridge and no GPU, and they end at **Test 3, the one that
+matters**. Steps 6-8 are the port, and they land on a runner that is already known-good — so
+when a six-camera run disagrees with a diagnostic one, the disagreement is the rig.
 
-  `rigs/av3.txt`'s header records two open gaps, and they stay open: fisheye is rendered as an
-  unwarped pinhole, and 4:3 is rendered then squashed by preprocess, never native 16:9.
+Markers follow the table under **Reading the markers**: ⬜ not started, 🔨 started, ✅ done when
+that step's **Verify alone** is met.
 
-  Six things that bite, in the order they will bite:
+**Every step below is written for a procedural bank.** Phase 3 adds a second kind, and the four
+places that differ are marked *(PG only)* where they appear. The seam that keeps them one runner
+is a single function between "a category and its rows" and "an env plus a per-row prepare step":
+`MetaDriveEnv` + `set_route` for PG, `ScenarioEnv` + `start_scenario_index` for a stored scenario.
+Above that line the run loop, the result record and the reproducibility diff never learn which kind
+they are driving.
 
-  1. **`image_observation=True` is mandatory, and not for the observation.** `base_env.py:342-347`
-     filters **every `BaseCamera` out of `config["sensors"]`** when `use_render` and
-     `image_observation` are both false, to save render passes in headless mode. Leave it off and
-     the six-camera rig is silently deleted — no error until `env.engine.get_sensor(camera.name)`
-     raises inside `CameraRig.mount()`. It stays on purely to keep the cameras alive; the
-     observation it would produce is overridden by `agent_observation` anyway (see **No lidar**).
-     Set `vehicle_config["image_source"]` to a rig camera via `CameraRig.image_source()` while you
-     are there: left at its `"rgb_camera"` default it registers a **seventh** 320x240 camera that
-     nothing reads, renders it every step, and spends one of the nine buffers gotcha 6 is rationing.
-  2. **A partial `sensors=` override wipes `rgb_camera`** and kills the env at construction. Mount
-     through `CameraRig.sensors()`, never by hand.
-  3. **Rates: `--step-hz 100 --decision-hz 20`.** The bridge's `_DT_MDL` is 0.05 s. `--decision-hz`
-     is a stride counted in our own loop — it is *not* a MetaDrive config key.
-  4. **Both ends negate.** MetaDrive is left-positive, CARLA right-positive, so the waypoints' `y`
-     and the action's steering each flip. Six conversions stand between the model and the car and
-     **not one of them raises when it is wrong** — which is why `scripts/av3-probe.sh` runs before
-     anything is scored.
-  5. **A rig's `tick_rate` must equal the interval it is actually read at.** Nothing resamples.
-  6. **`MAX_IMAGE_BUFFERS = 9` is a hard cap.** panda3d fails *intermittently* past it, so a rig one
-     camera over the line looks like it works and then fails on a run somebody is relying on.
+### Step 1 — `resolve_options()`: names in, numerics out ⬜
 
-  The camera rig is selected as a **path, not a registry entry**: `--camera-rig rigs/av3.txt`.
+The only piece of this phase with no environment in it, so it goes first and stays unit-tested.
 
-  Cost, and it drives the ETA model in Phase 7 Step 8: **the AV3 forward pass is ~1 s**, about 20x a
-  50 ms decision. Price a 35-scenario bank before quoting anyone a runtime.
+- `resolve_options()` reads `manifest.options` as its defaults, expands tiers, applies explicit
+  flag overrides, and returns level names *and* numerics.
+- The axis names and levels already exist in `options.py` (schema 1.2, `scenariobank options`);
+  only the `LEVELS` numerics and this resolver are new. `LEVELS` is Phase 4b's to calibrate — this
+  step ships placeholder numerics and the resolver that reads them, not the values.
+- The resolver is `options_for(entry, row)` from the start (Step 10c), so per-scenario overrides
+  can be added later without touching a call site.
+- **The six axes are PG-only.** On a stored scenario (Phase 3) traffic, cones, barriers and lights
+  come from the recording, and `ScenarioEnv` offers `no_traffic`, `no_light` and `reactive_traffic`
+  instead. `resolve_options` must not assume an axis name means the same thing on both kinds; the
+  resolved record says which kind it resolved for.
 
-- **The submitted `model_dev.yml` is not the converter's.** Both repos have a file by that name with
-  different schemas. `tools/av3_model.load_config` **requires every field and defaults none** —
-  deliberately — and reads `MODEL_CONFIG`, defaulting to the converter's `config/model_dev.yml`. In
-  the container, read the **submitted** one from the staged tree. Map it onto `Config`'s required
-  keys at load, or widen the loader, but **keep the no-defaults rule**: a silently defaulted
-  preprocessing field is a wrong score, not a crash. Load the submission's `modifiers.py`
-  explicitly, never by importing whatever is on the path.
+**Verify alone:** unit tests only, no simulator. A bank pinned at `traffic medium` resolves to
+`medium` with no flags, to `hard`'s numerics under `--tier hard`, and to `low` under an explicit
+`--traffic low` over a `--tier hard`; every returned record carries both the name and the number.
 
-- **One interpreter, not two.** The converter's host setup splits MetaDrive (3.8 / numpy 1.24) from
-  the converter (3.10 / numpy 2.2), which is why `tools/` uses path-inserted imports and exchanges
-  through files. This container does not inherit that — it pins MetaDrive at `85e5dadc` on one 3.10
-  interpreter, as the converter's own `docker/Dockerfile` already does. So the ported tools become
-  ordinary package modules under `src/scenariobank/av3/`, and `_PortablePickler` is unnecessary. The
-  only real process boundary left is the zapeta bridge, which stays 3.8 in its own container.
+### Step 2 — env construction from a bank ⬜  *(PG only)*
 
-- **Diagnostic policies keep the old signature.** `load_policy("pkg.mod:Name")` still instantiates
-  and checks callability, and `ConstantPolicy` / `ExpertPolicy` still take
-  `(observation: np.ndarray) -> Sequence[float]`. They are CLI-only floor and ceiling checks, never
-  the thing under evaluation.
-- **Options resolution:** `resolve_options()` reads `manifest.options` as its defaults, expands
-  tiers, applies explicit flag overrides, and returns level names *and* numerics. The axis names
-  and levels already exist in `options.py` (schema 1.2, `scenariobank options`); only the `LEVELS`
-  numerics and this resolver are new. Registers `VRUManager` and (Phase 8)
-  `PGTrafficLightManager` only when their axis is above `none` — the obstacle manager is
-  MetaDrive's own and `metadrive_env.py:296-300` already registers it conditionally.
-- **Env construction:** `start_seed = min(seeds)`, `num_scenarios = max(seeds) - min(seeds) + 1`,
-  because `base_env.py:926` asserts `start_index <= seed < start_index + num_scenarios`. Group
-  scenarios by category so one env serves a category and `horizon` = that category's `max_steps`.
-  Set `vehicle_config["destination"]` from the manifest per scenario. **`horizon` is the config key**
-  (`metadrive_env.py:60`, default 1000) — `max_step` is a `TerminationState` field and setting it
-  does nothing. **Enforce the same cap in our own step loop as well**, so a `horizon` that failed to
-  take is a bounded run rather than a silent 1000-step one.
+Build the env the manifest describes, and prove the three config keys that silently do nothing
+when they are wrong. **A bank is a recipe, not a saved scenario** — see Phase 2's **Scope** and
+**Stored normalized, applied at run time** — so this step is that recipe's reader, and everything
+in it is procedural-only: a stored scenario has no seed, no `start_seed` and no `horizon`.
+
+**Already built — reuse it, do not restate it.** Three of the things this step used to describe as
+new work already exist, with the reasoning in their own docstrings:
+
+- **`num_scenarios_for(seeds)` — `bank.py:256`**, whose docstring already carries the
+  `base_env.py:926` argument: `num_scenarios` reads as a count and is not one, it bounds an
+  *index*, and sizing it `len(seeds)` raises `scenario_index (seed) should be in [0:N)` the moment
+  the seeds are not contiguous. That is live rather than hypothetical — `banks/curve` holds seeds
+  `[30, 1, 2, 3, 22]`, so its `num_scenarios` is 30 for five scenarios, and
+  `banks/t-junction-left-intersection` holds `[0, 28, 2, 4]`.
+- **Grouping and `start_seed` — `bank.py:411-412`.** `generate` already groups by
+  `(block_seq, seeds)`; the runner groups by **category** instead, because what it needs one env
+  for is one `horizon`.
+- **`base_config()` — `config.py:38`**, with `_PER_RUN_KEYS` (`bank.py:80`) already naming `map`,
+  `start_seed` and `num_scenarios` as the three a caller supplies.
+
+**New here:**
+
+- **`horizon` = the category's `max_steps`.** `base_config` pins `horizon: 1000` (`config.py:80`)
+  and nothing maps a category onto it yet, which matters — `t_junction` is 320 and `CCS_only` 1320.
+  **`horizon` is the config key** (`metadrive_env.py:60`); `max_step` is a `TerminationState` field
+  and setting it does nothing.
+- **The step loop enforces `budget_for(row)`** (`bank.py:165`), which is a *per-row* cap: a row's
+  own `max_steps` when it declares one, else its category's. One env cannot carry two horizons, so
+  these two are not the same number — `horizon` is a coarse env-level guard, and the loop cap is
+  what actually bounds the episode and what the result records. It is also what makes a `horizon`
+  that failed to take a bounded run rather than a silent 1000-step one.
+- **Pin the destination *after* the reset**, with `navigation.set_route(env.agent.lane_index,
+  node)` as `bank.py:1121` and `variety.py:124` already do — **not** through
+  `vehicle_config["destination"]`, which is read at construction. Destinations vary *inside* a
+  category: `banks/t-junction`'s `t_junction` is `1T0_1_` at seeds 0 and 4 and `1T2_1_` at 2 and 3,
+  because `StdTInterSection` exposes a different arm per seed. One env per category and a
+  construction-time destination cannot both hold. `set_route` is reproducibility-safe for the
+  reason Phase 2 recorded — `auto_assign_task` draws its throwaway destination from
+  `get_np_random(random_seed)`, a *fresh* generator rather than a manager's stream — and it raises
+  on an unreachable node (`bank.py:1093`), which is the failure you want.
+  **`bank.py:10-12` says the opposite and must be corrected with this step**: the module docstring
+  tells the runner to pin `vehicle_config["destination"]`, which is where this step's wording came
+  from.
+- Register `VRUManager` and (Phase 8) `PGTrafficLightManager` only when their axis is above
+  `none` — the obstacle manager is MetaDrive's own and `metadrive_env.py:296-300` already
+  registers it conditionally.
 - Wire `crash_human_penalty` / `crash_human_cost`, mirroring `crash_object`'s 5.0 / 1.0 —
   termination is already wired, the reward/cost pair is not (`metadrive_env.py:74-83`).
+  `grep -rn crash_human src/` returns nothing today.
+
+**No map cache on disk — measured, do not re-propose.** `store_map=True` is MetaDrive's own default
+(`metadrive_env.py:34`) and `base_config` does not touch it, so `PGMapManager.maps`
+(`pg_map_manager.py:23`) already caches per seed within an env: `reset()` builds only when
+`self.maps[current_seed] is None`. Five seeds per road, measured:
+
+| road | blocks | cold reset (mean) | warm reset |
+|---|---|---|---|
+| `T` | 1 | 39 ms | 5 ms |
+| `C` | 1 | 48 ms | 6 ms |
+| `CC` | 2 | 79 ms | 10 ms |
+| `CCS` | 3 | 93 ms | 12 ms |
+| `SCXCS` | 5 | 182 ms | 18 ms |
+| `OSCTSCO` | 7 | 354 ms | 35 ms |
+
+Linear at roughly 50 ms per block cold, 5 ms warm; env construction is 9 ms and a step is 0.46 ms.
+A 35-scenario bank of 1-3 block roads costs 2-3 s of generation **once per run**, all-7-block roads
+about 12 s — against Step 8's own figure of ~64 s per scenario for AV3, or ~37 minutes for 35. That
+is about 0.1% of a run. A persistent cache would buy those seconds back while re-introducing the
+cross-batch map identity the old Phase 3's `verify` existed to prove, and that was deleted on
+2026-08-31.
+
+**Verify alone:** drive a bank category with zero actions and no result file. Every seed in the
+manifest resets without the `start_index` assert; an episode on a category whose `max_steps` is
+200 ends at 200 steps and not 1000; a row with its own budget ends at *its* number; and the ego's
+route matches the manifest row on a category whose destinations differ by seed.
+
+### Step 3 — the result record, and a batch that never aborts ⬜
+
+The schema everything downstream reads. Built before any policy worth scoring, so the record is
+designed once rather than grown around whatever the first run happened to emit.
+
 - Per scenario record: `success` (`info["arrive_dest"]`), `failure_reason` taken from the
   `TerminationState` fields — `arrive_dest, out_of_road, max_step, crash_vehicle, crash_object,
   crash_human, crash_building, crash_sidewalk, idle` — as a **string, not a boolean**, plus steps,
   cumulative reward, cumulative cost, wall time, and the fully expanded options.
-- **Collision accounting** (needed by Phase 4b, cheap to build now): record ego-involved collisions
-  separately from total, and count a collision **once per vehicle per episode, not per step**. Your
-  converter's note: a per-step count "reports one collision as thirty, and the number describes the
-  frame rate."
+- **Collision accounting** (needed by Phase 4b, cheap to build now): record ego-involved
+  collisions separately from total, and count a collision **once per vehicle per episode, not per
+  step**. Your converter's note: a per-step count "reports one collision as thirty, and the number
+  describes the frame rate."
 - `--save-trajectories` optional (off by default; the only large artifact).
 - **Never abort the batch**: catch per-episode, record `status:"error"` + traceback, continue.
-- Reference policies shipped: `ConstantPolicy` (fixed action) and `ExpertPolicy`, a wrapper around
-  MetaDrive's bundled PPO expert (`metadrive/examples/ppo_expert/`). Per the **No lidar** section,
-  `ExpertPolicy` holds the env and ignores its `observation` argument.
+- **The step-loop cap is not only defence in depth.** On a stored scenario `horizon` is `None` and
+  `ScenarioEnv` runs past the end of its recording without truncating — measured, 4000 steps on a
+  3782-frame scenario with `max_step: False`. There the cap is the *only* thing that ends the
+  episode, so it belongs here rather than in Step 2 with the PG env keys.
 
-**How you test it**
+**Verify alone:** *(old test 4)*
+
+```bash
+uv run scenariobank run --policy scenariobank.policies:RaisingPolicy ...
+```
+
+**Expect:** every scenario present in `results` with `status:"error"` and a traceback; the process
+still exits 0 and writes the file.
+
+### Step 4 — the reference policies: floor and ceiling ⬜
+
+- **Diagnostic policies keep the old signature.** `load_policy("pkg.mod:Name")` still instantiates
+  and checks callability, and `ConstantPolicy` / `ExpertPolicy` still take
+  `(observation: np.ndarray) -> Sequence[float]`. They are CLI-only floor and ceiling checks,
+  never the thing under evaluation.
+- Two are shipped: `ConstantPolicy` (a fixed action) and `ExpertPolicy`, a wrapper around
+  MetaDrive's bundled PPO expert (`metadrive/examples/ppo_expert/`). Per the
+  **No lidar** section, it holds the env and ignores its `observation` argument.
+- The runner records the observation shape *after* the last expert episode and **fails the run if
+  it moved**: `numpy_expert.py:48-49` admits its config restore is incomplete. The check is *"the
+  shape did not move during this run"*, **not** a literal 19: measured, the same
+  `agent_observation` on a stored scenario observes 41, because `ScenarioEnv`'s navigation module
+  reports differently.
+
+**Verify alone:** *(old tests 1, 2 and 2b)*
+
 ```bash
 # 1. Floor: a constant-action policy should mostly fail
 uv run scenariobank run --bank ./banks/pg-bank-2026-08 \
@@ -2095,8 +2379,15 @@ actually feeding actions to the env — that is the bug this test exists to catc
 # 2b. The expert must not leak lidar back into the env config
 jq '.env.observation_space_after' ceiling.json
 ```
-**Expect:** `[19]`. `numpy_expert.py:48-49` admits its config restore is incomplete, so the runner
-records the obs shape *after* the last expert episode and fails the run if it moved.
+**Expect:** `[19]` — for a **PG** bank. 19 is a fact about `MetaDriveEnv` with our
+`agent_observation`, not about MetaDrive; the assertion is that it did not move mid-run.
+
+### Step 5 — reproducibility, and options that do something ⬜  ⟵ *gate*
+
+Nothing after this step is worth debugging until this step passes, which is why the AV3 port
+starts on the other side of it.
+
+**Verify alone:** *(old tests 3 and 6)*
 
 ```bash
 # 3. Reproducibility — the real acceptance test
@@ -2109,13 +2400,6 @@ diff <(jq 'del(.started_utc) | del(.results[].wall_time_s)' r1.json) \
 with `--tier hard` so the reproducibility claim covers the option managers too, not just the map.
 
 ```bash
-# 4. Batch resilience
-uv run scenariobank run --policy scenariobank.policies:RaisingPolicy ...
-```
-**Expect:** every scenario present in `results` with `status:"error"` and a traceback; the process
-still exits 0 and writes the file.
-
-```bash
 # 6. Options actually do something
 uv run scenariobank run --categories intersection_left --tier easy --policy ...:ExpertPolicy --out easy.json
 uv run scenariobank run --categories intersection_left --tier hard --policy ...:ExpertPolicy --out hard.json
@@ -2124,7 +2408,95 @@ jq -s '[.[0].summary.success_rate, .[1].summary.success_rate]' easy.json hard.js
 **Expect:** hard is lower than easy. If they match, the option managers are registered but not
 placing anything — the same class of bug as floor equals ceiling.
 
-**Done when:** tests 1-6 all behave as described. Test 3 is the one that matters.
+### Step 6 — the camera rig: six cameras alive on `DefaultVehicle` ⬜
+
+**The model boundary is an AV3 camera submission** *(amended 2026-08-30; replaces the
+`policy(observation: Box(19,)) -> [steer, throttle]` contract)*. Everything needed already exists
+in `wingfin-osm-scenarionet-converter/` and is already MetaDrive-shaped — **port it, do not
+rewrite it**. This step ports the rig half only:
+
+- `tools/camera_rig.py` — `load_rig()`, `CameraRig.sensors/mount/read`
+- `rigs/av3.txt` — the six AV3 cameras, ISO-8855 → CARLA sign rules applied, datum resolved onto
+  MetaDrive's `DefaultVehicle`
+- `tools/av3_probe.py` + `scripts/av3-probe.sh` — the sign-convention probe
+
+`rigs/av3.txt`'s header records two open gaps, and they stay open: fisheye is rendered as an
+unwarped pinhole, and 4:3 is rendered then squashed by preprocess, never native 16:9.
+
+The camera rig is selected as a **path, not a registry entry**: `--camera-rig rigs/av3.txt`.
+
+Six things that bite, in the order they will bite:
+
+1. **`image_observation=True` is mandatory, and not for the observation.** `base_env.py:342-347`
+   filters **every `BaseCamera` out of `config["sensors"]`** when `use_render` and
+   `image_observation` are both false, to save render passes in headless mode. Leave it off and
+   the six-camera rig is silently deleted — no error until `env.engine.get_sensor(camera.name)`
+   raises inside `CameraRig.mount()`. It stays on purely to keep the cameras alive; the
+   observation it would produce is overridden by `agent_observation` anyway (see **No lidar**).
+   Set `vehicle_config["image_source"]` to a rig camera via `CameraRig.image_source()` while you
+   are there: left at its `"rgb_camera"` default it registers a **seventh** 320x240 camera that
+   nothing reads, renders it every step, and spends one of the nine buffers gotcha 6 is rationing.
+2. **A partial `sensors=` override wipes `rgb_camera`** and kills the env at construction. Mount
+   through `CameraRig.sensors()`, never by hand.
+3. **Rates: `--step-hz 100 --decision-hz 20`.** The bridge's `_DT_MDL` is 0.05 s. `--decision-hz`
+   is a stride counted in our own loop — it is *not* a MetaDrive config key, and it is never stored
+   in a bank, so it stays adjustable per run on both bank kinds. `--step-hz` is not free in the
+   same way: on a **stored** scenario it must equal the recording's `step_hz`, because ScenarioNet
+   replay advances one recorded frame per `env.step`. See Phase 3 Step 3.
+4. **Both ends negate.** MetaDrive is left-positive, CARLA right-positive, so the waypoints' `y`
+   and the action's steering each flip. Six conversions stand between the model and the car and
+   **not one of them raises when it is wrong** — which is why `scripts/av3-probe.sh` runs before
+   anything is scored.
+5. **A rig's `tick_rate` must equal the interval it is actually read at.** Nothing resamples.
+6. **`MAX_IMAGE_BUFFERS = 9` is a hard cap.** panda3d fails *intermittently* past it, so a rig one
+   camera over the line looks like it works and then fails on a run somebody is relying on.
+
+**Verify alone:** `scripts/av3-probe.sh` passes on one scenario — six named sensors mounted,
+buffer count at or under nine, no seventh camera registered, and every sign convention confirmed
+by the probe rather than by reading. No model, no bridge.
+
+### Step 7 — the AV3 model and the openpilot bridge ⬜
+
+The other half of the port, plus the two things about it that are not a copy:
+
+- `tools/av3_model.py` — `AV3Model.observe/predict_with_navigation`, `FrameHistory`, `preprocess`,
+  `ego_state`, `navigation`, `waypoints`
+- `tools/openpilot_policy.py` — `BridgeConnection`, `OpenpilotDriver`, `to_metadrive_action`
+- `metadrive-complete/openpilot/bridge/` — the zapeta bridge image (Python 3.8, its own container).
+  Use **our own** openpilot bridge, not wing-sim's.
+
+- **The submitted `model_dev.yml` is not the converter's.** Both repos have a file by that name
+  with different schemas. `tools/av3_model.load_config` **requires every field and defaults none**
+  — deliberately — and reads `MODEL_CONFIG`, defaulting to the converter's
+  `config/model_dev.yml`. In the container, read the **submitted** one from the staged tree. Map
+  it onto `Config`'s required keys at load, or widen the loader, but **keep the no-defaults rule**:
+  a silently defaulted preprocessing field is a wrong score, not a crash. Load the submission's
+  `modifiers.py` explicitly, never by importing whatever is on the path.
+- **One interpreter, not two.** The converter's host setup splits MetaDrive (3.8 / numpy 1.24)
+  from the converter (3.10 / numpy 2.2), which is why `tools/` uses path-inserted imports and
+  exchanges through files. This container does not inherit that — it pins MetaDrive at `85e5dadc`
+  on one 3.10 interpreter, as the converter's own `docker/Dockerfile` already does. So the ported
+  tools become ordinary package modules under `src/scenariobank/av3/`, and `_PortablePickler` is
+  unnecessary. The only real process boundary left is the zapeta bridge, which stays 3.8 in its
+  own container.
+
+**Verify alone:** one scenario, `--camera-rig rigs/av3.txt`, bridge up. The model returns an
+action per decision tick at `--decision-hz 20`, a deliberately missing field in the submitted
+`model_dev.yml` raises at load rather than defaulting, and steering sign matches Step 6's probe.
+
+### Step 8 — an AV3 submission scored end to end ⬜  ⟵ *gate*
+
+Steps 1-5 with Step 7's policy in place of `ExpertPolicy`. Nothing new is built here; this is the
+step that says the two halves are one runner.
+
+Cost, and it drives the ETA model in Phase 7 Step 8: **the AV3 forward pass is ~1 s**, about 20x a
+50 ms decision. Price a 35-scenario bank before quoting anyone a runtime — and record the measured
+per-scenario wall time here, because Phase 7 Step 8 reads it rather than re-measuring it.
+
+**Verify alone:** Step 5's reproducibility diff, run against the AV3 policy on a small category,
+is still empty; the run records the rig path, the resolved options and a per-scenario wall time.
+
+**Done when:** every step above is ✅. Step 5 is the one that matters.
 
 ---
 
