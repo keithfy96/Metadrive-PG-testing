@@ -532,6 +532,10 @@ metadrive-PG/
                             #         distinct pair a sequence already has
     bank.py                 # generate(): the maps + thumbnails, and the pydantic Manifest
                             #             models that describe what it wrote
+    workspace.py            # Phase 3 — reads a converter workspace: manifest, every dataset
+                            #   directory found by walking, the rate measured off `ts`, the route
+                            #   and who is recorded in it. Imports neither the converter nor
+                            #   MetaDrive, and reads its pickles through an allowlist.
     obstacles.py            # ObstacleManager  — cones, barriers
     actors.py               # VRUManager       — pedestrians, cyclists
     lights.py               # PGTrafficLightManager  (Phase 8)
@@ -1960,7 +1964,10 @@ measured as unusable; ad-hoc roads as bank rows.
 
 ---
 
-# Phase 3 — Import: stored scenarios from the converter ⬜  ⟵ *the number is reused*
+# Phase 3 — Import: stored scenarios from the converter 🔨  ⟵ *the number is reused*
+
+**Status:** Step 1 is built — `scenariobank workspace` reads a converter workspace and says what is
+in it. Step 2, the `junction-1` checklist as a generated page, is next.
 
 > **This is not the old Phase 3.** `scenariobank verify` was the gate over `map_id`, `config_hash`
 > and the recorded MetaDrive commit; all three were cut with the durable-bank premise on
@@ -2004,7 +2011,7 @@ manager live, `route_completion` climbing.
 
 ## Steps
 
-### Step 1 — read a converter workspace ⬜
+### Step 1 — read a converter workspace ✅
 
 A reader over `wingfin-osm-scenarionet-converter/workspaces/<name>/`. No writing, no env. Inputs
 are `source/manifest.json` — the converter's own provenance chain — and
@@ -2021,18 +2028,65 @@ only page work this phase has:
   serves that dict, the tab renders it. The command, its help and its flags appear with no page
   code, `docs/reference/commands.md` regenerates from the same dict, and
   `test_the_checked_in_reference_matches_the_cli` fails until it does.
-- **The Run tab is automatic.** `catalog()` (`web/invoke.py:30`) is that same reference minus
-  `NOT_RUNNABLE`, which today holds only `studio`. So `/api/runnable` offers the command, the page
-  builds the form from its flags, and `POST /api/jobs` runs it as
-  `sys.executable -m scenariobank workspace ...` with `shell=False` — validation and a streamed log
-  for free. Nothing is added to a list anywhere, which is what `invoke.py`'s opening docstring
-  exists to guarantee.
+- **The Run tab is automatic — and then refuses the path.** `catalog()` (`web/invoke.py:30`) is
+  that same reference minus `NOT_RUNNABLE`, which today holds only `studio`, so `/api/runnable`
+  does offer `workspace` with no list edited anywhere. But `invoke._one_value` applies one rule to
+  every flag whose type is `path`: it must resolve **inside the directory the studio was started
+  in**. Measured — a submitted `--path` of
+  `~/Desktop/work/wingfin/metadrive-complete/wingfin-osm-scenarionet-converter/workspaces/junction-1`
+  is refused with *"--path must stay inside …"*. Every workspace is out of tree by construction, so
+  the Run tab lists this command and cannot run it. That containment rule is what keeps a typo in a
+  text box from writing outside the checkout and is **not** loosened here for a command that only
+  reads; telling a read-only path from a written one is Step 4's, when the studio grows a place to
+  put one.
 - **A screen of its own is not automatic.** The road builder, the gallery and the bank list are
   hand-built. Here that is Steps 4 and 5.
 
 **Verify alone:** `scenariobank workspace <path>` prints identity, drive side, rate, the route
 table and the actor counts for both `junction-1` and `mosque`, building nothing; the studio's
 Reference and Run tabs both show it without either file being edited.
+
+*(Done 2026-09-06. `src/scenariobank/workspace.py` + `scenariobank workspace --path/-p`, 37 tests
+in `tests/unit/test_workspace.py`, **428 pass**, ruff clean. `docs/reference/commands.md`
+regenerated; no page file edited.*
+
+*Four things came out of the reading that the step did not assume, all measured on
+`wingfin-osm-scenarionet-converter/workspaces/` rather than read off the manifest:*
+
+*1. **`stage_6` is one conversion's record, not the workspace's index.** `junction-1` holds three
+dataset directories — `scenarionet/`, `scenarionet-100hz/`, `scenarionet-10hz/` — and names one.
+`mosque-1`'s `dataset_dir` is `null` while `mosque-1/scenarionet/` holds a converted scenario. So
+datasets are **discovered by walking the workspace**. A reader that trusted `stage_6` would have
+reported a third of `junction-1` and would not have said so.*
+
+*2. **The rate is measured from `ts`, not read from `step_hz`.** `junction-1`'s manifest says
+`100.0`; `scenarionet-10hz/` steps at 10 — the same 37.8 s drive in 379 steps rather than 3782.
+That is the difference between a 379-step budget and a 3782-step one, so it is measured per file
+and a disagreement with the manifest is a warning rather than a silent correction.*
+
+*3. **The actor counts are not in `dataset_summary.pkl`.** They are in the `sd_*.pkl`, which is
+~1 MB and unpickles in 0.02 s, so it is read. This confirms Step 2's checklist from the files:
+`junction-1` at both rates carries **101 `PEDESTRIAN`, 25 `CYCLIST`, 24 `TRAFFIC_BARRIER`, 1
+`VEHICLE`** and **8 `TRAFFIC_LIGHT`**, route `route-1`, 395.11 m, 37.82 s, 14 junction movements,
+974 map features — asserted in `test_the_junction_1_checklist_is_what_the_files_say` so the day a
+conversion changes, the checklist is rewritten from files rather than from memory. `mosque`'s
+10 Hz conversion carries a fifth type the checklist does not name, `TRAFFIC_CONE`.*
+
+*4. **Workspace pickles are read through a restricted unpickler.** This is the command you point at
+somebody else's conversion, and a pickle is code. All 21 pickles across the four workspaces name
+exactly one global between them, `numpy.array`, so the allowlist is tight enough to be worth
+having; anything else is refused by name and the file is not read.*
+
+*The report also carries a `warnings` list, on the model of `review`'s: an unrecorded dataset
+directory, a rate that disagrees with the manifest, a stage 5 that did not pass, a summary naming a
+file that is not on disk, a scenario built from a different lane model than the manifest's, a
+missing `stage-6-map` thumbnail, and a recording holding nothing but the ego. `junction-1a` has no
+dataset at all and says so.*
+
+*The flag is `--path/-p`, not a bare positional: `docs._params` and `invoke.build_argv` both key on
+a flag string, so a Typer `Argument` would have published a row reading `` `path <path>` `` in the
+reference and built `scenariobank workspace path <value>` from the page. Teaching both about
+positionals touches `index.html` too, which is a page change this step is not owed.)
 
 ### Step 2 — what must be brought over: the `junction-1` checklist ⬜
 

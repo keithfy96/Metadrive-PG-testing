@@ -20,6 +20,7 @@ Every command is `uv run scenariobank <command>`.
 | see which exits a road offers | [`sockets`](#sockets) |
 | check which simulator this is | [`doctor`](#doctor) |
 | re-measure the destinations reference | [`destinations`](#destinations) |
+| see what is in a converter workspace before importing it | [`workspace`](#workspace) |
 | set the traffic level once instead of on every run | [`options`](#options) |
 | do all of that by looking rather than typing | [`studio`](#studio) |
 
@@ -203,6 +204,31 @@ destination is reachable and measure the route.
 
 ```bash
 uv run scenariobank destinations
+```
+
+### `workspace`
+
+Read a converter workspace: what a stored scenario is, before importing anything.
+
+A workspace is what `converter-scenarionet` leaves on disk for one place on earth. This says
+what is in one -- identity and provenance, which side of the road it drives on, every dataset
+directory it holds, the rate each was sampled at, the ego's route, and who else is recorded in
+it -- and **writes nothing**. No environment is built and no simulator is imported, so it runs
+on a machine with neither.
+
+The datasets are found by walking the workspace rather than read out of `stage_6`, and each
+one's rate is measured from its own timestamps. `stage_6` records the conversion that ran last,
+which on `junction-1` is one of three; trusting it would hide the other two and report the
+wrong rate for both.
+
+| flag | | repeats | meaning |
+|---|---|---|---|
+| `--path/-p <path>` | **required** |  | A converter workspace directory, the one holding source/manifest.json. |
+| `--json` | default `false` |  | Emit the report as JSON instead of aligned text. |
+
+```bash
+uv run scenariobank workspace -p ../wingfin-osm-scenarionet-converter/workspaces/junction-1                                            # what is in a stored conversion
+uv run scenariobank workspace -p ../wingfin-osm-scenarionet-converter/workspaces/mosque --json | jq '.datasets[].scenarios[].step_hz'  # the rate each dataset was sampled at
 ```
 
 ## Build and correct

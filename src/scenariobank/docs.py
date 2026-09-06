@@ -37,7 +37,7 @@ GROUPS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     (
         "Look before you commit",
         "Measure and draw. Still nothing written into a bank.",
-        ("inspect", "examples", "seeds", "review", "destinations"),
+        ("inspect", "examples", "seeds", "review", "destinations", "workspace"),
     ),
     (
         "Build and correct",
@@ -99,6 +99,19 @@ EXAMPLES: dict[str, tuple[tuple[str, str], ...]] = {
         ),
     ),
     "destinations": (("uv run scenariobank destinations", ""),),
+    "workspace": (
+        (
+            "uv run scenariobank workspace"
+            " -p ../wingfin-osm-scenarionet-converter/workspaces/junction-1",
+            "what is in a stored conversion",
+        ),
+        (
+            "uv run scenariobank workspace"
+            " -p ../wingfin-osm-scenarionet-converter/workspaces/mosque"
+            " --json | jq '.datasets[].scenarios[].step_hz'",
+            "the rate each dataset was sampled at",
+        ),
+    ),
     "generate": (
         ("uv run scenariobank generate -o ./banks/b --bank-id b", "all 55 scenarios"),
         (
@@ -173,6 +186,7 @@ INDEX: tuple[tuple[str, str], ...] = (
     ("see which exits a road offers", "sockets"),
     ("check which simulator this is", "doctor"),
     ("re-measure the destinations reference", "destinations"),
+    ("see what is in a converter workspace before importing it", "workspace"),
     ("set the traffic level once instead of on every run", "options"),
     ("do all of that by looking rather than typing", "studio"),
 )

@@ -833,6 +833,44 @@ def review_bank(
     typer.echo(f"\n{report.options_line}")
 
 
+@app.command("workspace")
+def workspace_cmd(
+    path: Annotated[
+        Path,
+        typer.Option(
+            "--path",
+            "-p",
+            help="A converter workspace directory, the one holding source/manifest.json.",
+        ),
+    ],
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Emit the report as JSON instead of aligned text.")
+    ] = False,
+) -> None:
+    """Read a converter workspace: what a stored scenario is, before importing anything.
+
+    A workspace is what `converter-scenarionet` leaves on disk for one place on earth. This says
+    what is in one -- identity and provenance, which side of the road it drives on, every dataset
+    directory it holds, the rate each was sampled at, the ego's route, and who else is recorded in
+    it -- and **writes nothing**. No environment is built and no simulator is imported, so it runs
+    on a machine with neither.
+
+    The datasets are found by walking the workspace rather than read out of `stage_6`, and each
+    one's rate is measured from its own timestamps. `stage_6` records the conversion that ran last,
+    which on `junction-1` is one of three; trusting it would hide the other two and report the
+    wrong rate for both.
+    """
+    from scenariobank.workspace import WorkspaceError, format_report, read_workspace
+
+    try:
+        report = read_workspace(path)
+    except WorkspaceError as error:
+        typer.echo(f"workspace failed: {error}", err=True)
+        raise typer.Exit(code=1) from error
+
+    typer.echo(report.model_dump_json(indent=2) if as_json else format_report(report))
+
+
 @app.command()
 def commands(
     out: Annotated[
