@@ -183,12 +183,68 @@ class Scenario(BaseModel):
     step_hz: float | None
     duration_s: float | None
     map_features: int | None
+    #: The same features split by ScenarioNet type -- `LANE_SURFACE_STREET`,
+    #: `ROAD_EDGE_BOUNDARY`, `ROAD_LINE_BROKEN_SINGLE_WHITE`. The total says how big the map is;
+    #: the split says what kind of map it is, and a conversion that dropped its lane markings
+    #: reads identically to one that dropped its road edges until they are counted apart.
+    map_feature_types: dict[str, int]
     #: Track counts by ScenarioNet type: `VEHICLE`, `PEDESTRIAN`, `CYCLIST`, `TRAFFIC_BARRIER`.
     #: This is what replaces the six option axes -- contents of a recording rather than knobs.
     tracks: dict[str, int]
     lights: dict[str, int]
     route: Route | None
     provenance: Provenance
+
+
+class Signals(BaseModel):
+    """The traffic-light plan, and the sentence that has to travel with it.
+
+    Read because it is a caveat about the data rather than about us. OSM records only that a signal
+    exists -- it carries no cycle, no split and no offset -- so every number here was
+    **synthesised** by the converter's stage 6 signal builder, and none of it was surveyed.
+    `note` is the converter's own wording, carried verbatim rather than paraphrased: a result
+    scored against these lights is scored against an invented plan, and the sentence saying so
+    must survive into the bank.
+
+    `lane_model_signals` is what the reviewed lane model declares and `phase_groups` is what stage 6
+    built from it. They can disagree -- `mosque` declares four signals and built no phase groups at
+    all -- and a recording with no light in it looks exactly like a junction with no lights.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: str | None
+    version: int | None
+    cycle_seconds: float | None
+    time_step_s: float | None
+    phase_groups: int | None
+    signalled_lanes: int | None
+    lane_model_signals: int | None
+    note: str | None
+
+
+class Entry(BaseModel):
+    """One top-level thing in the workspace, and what it weighs.
+
+    An import copies a dataset directory and a thumbnail and leaves the rest behind, so this is the
+    list that decision is made over -- measured by walking rather than assumed from a fixed list of
+    names, because the day the converter starts writing a new directory is the day a fixed list
+    stops mentioning it.
+
+    `checksummed` is how many of the entry's files `source/manifest.json` records a sha256 for. A
+    bank keeps the checksum rather than the bytes, so an entry with none cannot be recorded at all,
+    only dropped -- and which entries those are is a measurement, not a guess. Measured on
+    `junction-1`: `inspection/`, `lane-model/`, `normalized/`, `reports/`, `review/` and `source/`
+    are recorded; `actors/`, `drives/`, `routes/`, `signals/`, `traffic/` and `review.json` are not.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    kind: Literal["dataset", "map_image", "directory", "file"]
+    files: int
+    size_bytes: int
+    checksummed: int
 
 
 class Dataset(BaseModel):
@@ -224,6 +280,15 @@ class WorkspaceReport(BaseModel):
     stages: dict[str, str | None]
     provenance: Provenance
     tool_versions: dict[str, str]
+    #: `path` -> `sha256` for every artefact the manifest records one for. This is how a bank keeps
+    #: the 3 MB of review HTML and the 1.5 MB lane model without keeping the bytes -- the same
+    #: choice Phase 2 made about `base_config`: a record of the input, not the input.
+    artifacts: dict[str, str]
+    #: The traffic-light plan and its caveat, or `None` where nothing dynamic was built.
+    signals: Signals | None
+    #: Everything at the top level of the workspace, with its weight. What an import leaves behind
+    #: is decided over this list.
+    contents: list[Entry]
     #: What `stage_6` records about the conversion that ran last. Not an index of the datasets
     #: below -- see the module docstring.
     last_conversion: dict[str, Any]
@@ -342,6 +407,7 @@ def _scenario(directory: Path, file_name: str, meta: dict[str, Any]) -> Scenario
         step_hz=rate,
         duration_s=duration,
         map_features=len(stored.get("map_features") or {}),
+        map_feature_types=_counts(stored.get("map_features")),
         tracks=_counts(stored.get("tracks")),
         lights=_counts(stored.get("dynamic_map_states")),
         route=_route(meta.get("sdc_route")),
@@ -374,6 +440,82 @@ def _dataset(root: Path, directory: Path) -> Dataset:
         missing_files=missing,
         map_image=_map_image(root, directory.name),
     )
+
+
+def _signals(manifest: dict[str, Any]) -> Signals | None:
+    """The light plan, from the two places stage 6 splits it across.
+
+    `stage_6.signals` is the plan the signal builder synthesised; `stage_6.converted` is what came
+    out the other end. Both are needed to tell "this junction has no lights" from "this junction has
+    four signals and none of them was built".
+    """
+    stage_6 = manifest.get("stage_6") or {}
+    converted = stage_6.get("converted") or {}
+    plan = stage_6.get("signals") or {}
+    if not plan and not converted.get("signals"):
+        return None
+    return Signals(
+        source=plan.get("source"),
+        version=plan.get("signals_version"),
+        cycle_seconds=plan.get("cycle_seconds"),
+        time_step_s=plan.get("time_step_s"),
+        phase_groups=converted.get("phase_groups", len(plan.get("groups") or ()) or None),
+        signalled_lanes=converted.get("signalled_lanes"),
+        lane_model_signals=converted.get("signals"),
+        note=plan.get("note"),
+    )
+
+
+def _artifacts(manifest: dict[str, Any]) -> dict[str, str]:
+    """Every `{"path": ..., "sha256": ...}` the manifest records, flattened to one mapping.
+
+    Walked rather than read from a fixed list of stages: the manifest keeps these triples under
+    whichever stage produced the file, seven levels of nesting deep in places, and a reader that
+    named the places would miss the next one the converter adds.
+    """
+    found: dict[str, str] = {}
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            path, digest = node.get("path"), node.get("sha256")
+            if isinstance(path, str) and isinstance(digest, str):
+                found[path] = digest
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(manifest)
+    return dict(sorted(found.items()))
+
+
+def _contents(root: Path, datasets: list[Dataset], artifacts: dict[str, str]) -> list[Entry]:
+    """Every top-level entry, its weight, and how much of it the manifest has a checksum for."""
+    dataset_names = {dataset.name for dataset in datasets}
+    images = {dataset.map_image for dataset in datasets if dataset.map_image}
+    entries = []
+    for path in sorted(root.iterdir()):
+        files = sorted(one for one in path.rglob("*") if one.is_file()) if path.is_dir() else [path]
+        relative = {one.relative_to(root).as_posix() for one in files}
+        entries.append(
+            Entry(
+                name=path.name,
+                kind=(
+                    "dataset"
+                    if path.name in dataset_names
+                    else "map_image"
+                    if path.name in images
+                    else "directory"
+                    if path.is_dir()
+                    else "file"
+                ),
+                files=len(files),
+                size_bytes=sum(one.stat().st_size for one in files),
+                checksummed=len(relative & set(artifacts)),
+            )
+        )
+    return entries
 
 
 def _warnings(report_parts: dict[str, Any]) -> list[str]:
@@ -478,6 +620,7 @@ def read_workspace(path: Path) -> WorkspaceReport:
         and all((entry / name).is_file() for name in DATASET_INDEX)
     )
     datasets = [_dataset(root, directory) for directory in directories]
+    artifacts = _artifacts(manifest)
     provenance = _manifest_provenance(manifest)
     projection = ((manifest.get("stage_1b") or {}).get("projection") or {}).get("origin")
     stage_6 = manifest.get("stage_6") or {}
@@ -503,6 +646,9 @@ def read_workspace(path: Path) -> WorkspaceReport:
             str(name): str(version)
             for name, version in sorted((manifest.get("tool_versions") or {}).items())
         },
+        artifacts=artifacts,
+        signals=_signals(manifest),
+        contents=_contents(root, datasets, artifacts),
         last_conversion={
             "dataset_dir": stage_6.get("dataset_dir"),
             "step_hz": stage_6.get("step_hz"),
@@ -550,6 +696,14 @@ def format_report(report: WorkspaceReport) -> str:
         "  tools:        "
         + ", ".join(f"{name} {version}" for name, version in report.tool_versions.items())
     )
+    if report.signals:
+        signals = report.signals
+        cycle = f"{signals.cycle_seconds:g} s cycle" if signals.cycle_seconds else "no cycle"
+        lines.append(
+            f"  signals:      {signals.lane_model_signals} in the lane model, "
+            f"{signals.phase_groups} phase groups over {signals.signalled_lanes} lanes, "
+            f"{cycle} ({signals.source})"
+        )
 
     for dataset in report.datasets:
         picture = dataset.map_image or "no picture"
@@ -586,9 +740,11 @@ def format_report(report: WorkspaceReport) -> str:
 __all__ = [
     "ALLOWED_GLOBALS",
     "Dataset",
+    "Entry",
     "Provenance",
     "Route",
     "Scenario",
+    "Signals",
     "WorkspaceError",
     "WorkspaceReport",
     "format_report",

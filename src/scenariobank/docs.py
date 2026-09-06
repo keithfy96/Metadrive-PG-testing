@@ -37,7 +37,7 @@ GROUPS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     (
         "Look before you commit",
         "Measure and draw. Still nothing written into a bank.",
-        ("inspect", "examples", "seeds", "review", "destinations", "workspace"),
+        ("inspect", "examples", "seeds", "review", "destinations", "workspace", "importing"),
     ),
     (
         "Build and correct",
@@ -110,6 +110,14 @@ EXAMPLES: dict[str, tuple[tuple[str, str], ...]] = {
             " -p ../wingfin-osm-scenarionet-converter/workspaces/mosque"
             " --json | jq '.datasets[].scenarios[].step_hz'",
             "the rate each dataset was sampled at",
+        ),
+    ),
+    "importing": (
+        ("uv run scenariobank importing", "the checklist, measured on `junction-1`"),
+        (
+            "uv run scenariobank importing"
+            " -p ../wingfin-osm-scenarionet-converter/workspaces/mosque -o /tmp/mosque.md",
+            "the same checklist against another workspace",
         ),
     ),
     "generate": (
@@ -187,6 +195,7 @@ INDEX: tuple[tuple[str, str], ...] = (
     ("check which simulator this is", "doctor"),
     ("re-measure the destinations reference", "destinations"),
     ("see what is in a converter workspace before importing it", "workspace"),
+    ("know what must be brought over when I import one", "importing"),
     ("set the traffic level once instead of on every run", "options"),
     ("do all of that by looking rather than typing", "studio"),
 )

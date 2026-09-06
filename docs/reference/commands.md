@@ -21,6 +21,7 @@ Every command is `uv run scenariobank <command>`.
 | check which simulator this is | [`doctor`](#doctor) |
 | re-measure the destinations reference | [`destinations`](#destinations) |
 | see what is in a converter workspace before importing it | [`workspace`](#workspace) |
+| know what must be brought over when I import one | [`importing`](#importing) |
 | set the traffic level once instead of on every run | [`options`](#options) |
 | do all of that by looking rather than typing | [`studio`](#studio) |
 
@@ -229,6 +230,28 @@ wrong rate for both.
 ```bash
 uv run scenariobank workspace -p ../wingfin-osm-scenarionet-converter/workspaces/junction-1                                            # what is in a stored conversion
 uv run scenariobank workspace -p ../wingfin-osm-scenarionet-converter/workspaces/mosque --json | jq '.datasets[].scenarios[].step_hz'  # the rate each dataset was sampled at
+```
+
+### `importing`
+
+Write the checklist of what must come over when a workspace becomes a bank.
+
+Generated rather than hand-written, and generated against a real workspace: every row names a
+field `scenariobank workspace` reads and every value in it was measured at render time. A field
+the reader gains with no row here is an error, not a blank cell -- which is what keeps the
+checklist and the reader from drifting apart while `import` is still being written.
+
+Needs no simulator. It does need a converter workspace to read, the way `destinations` needs
+MetaDrive.
+
+| flag | | repeats | meaning |
+|---|---|---|---|
+| `--path/-p <path>` | default `../wingfin-osm-scenarionet-converter/workspaces/junction-1` |  | The converter workspace the checklist is measured on. |
+| `--out/-o <path>` | default `docs/reference/importing.md` |  | Reference document to write. |
+
+```bash
+uv run scenariobank importing                                                                              # the checklist, measured on `junction-1`
+uv run scenariobank importing -p ../wingfin-osm-scenarionet-converter/workspaces/mosque -o /tmp/mosque.md  # the same checklist against another workspace
 ```
 
 ## Build and correct

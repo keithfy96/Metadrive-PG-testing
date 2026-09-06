@@ -536,6 +536,9 @@ metadrive-PG/
                             #   directory found by walking, the rate measured off `ts`, the route
                             #   and who is recorded in it. Imports neither the converter nor
                             #   MetaDrive, and reads its pickles through an allowlist.
+    importing.py            # Phase 3 — writes docs/reference/importing.md: the checklist an
+                            #   import must satisfy, generated against workspace.py's own report
+                            #   so a field the reader gains and the checklist forgets is an error
     obstacles.py            # ObstacleManager  — cones, barriers
     actors.py               # VRUManager       — pedestrians, cyclists
     lights.py               # PGTrafficLightManager  (Phase 8)
@@ -1966,8 +1969,10 @@ measured as unusable; ad-hoc roads as bank rows.
 
 # Phase 3 — Import: stored scenarios from the converter 🔨  ⟵ *the number is reused*
 
-**Status:** Step 1 is built — `scenariobank workspace` reads a converter workspace and says what is
-in it. Step 2, the `junction-1` checklist as a generated page, is next.
+**Status:** Steps 1 and 2 are built — `scenariobank workspace` reads a converter workspace and says
+what is in it, and `scenariobank importing` turns that reading into
+[`docs/reference/importing.md`](docs/reference/importing.md), the checklist an import must satisfy.
+Step 3, `scenariobank import` and schema 1.3, is next.
 
 > **This is not the old Phase 3.** `scenariobank verify` was the gate over `map_id`, `config_hash`
 > and the recorded MetaDrive commit; all three were cut with the durable-bank premise on
@@ -2088,7 +2093,7 @@ a flag string, so a Typer `Argument` would have published a row reading `` `path
 reference and built `scenariobank workspace path <value>` from the page. Teaching both about
 positionals touches `index.html` too, which is a page change this step is not owed.)
 
-### Step 2 — what must be brought over: the `junction-1` checklist ⬜
+### Step 2 — what must be brought over: the `junction-1` checklist ✅
 
 *(Asked for 2026-09-05, Keith: "please take all the necessary inputs from junction one, highlight
 what needs to be brought over so future users will know".)*
@@ -2141,6 +2146,94 @@ has no `figures.render_route` to draw — and `reports/scenario-conversion-<rate
 `lane-model/*.json` (1.5 MB), `normalized/`, `source/map.osm`. A bank records their **checksums**,
 which `source/manifest.json` already carries for every one of them. Same choice Phase 2 made about
 `base_config`: a *record* of the input, not the input.
+
+**Verify alone:** four checks. Three of them need no converter checkout, none of them needs a
+simulator, and none of them writes anything into the converter — measured with `find -newer` over
+`workspaces/`, which reports **0 files touched** by a full render.
+
+```bash
+# 1. the page reproduces from the reader, byte for byte
+uv run scenariobank importing --out /tmp/importing.md
+diff docs/reference/importing.md /tmp/importing.md            # no output
+
+# 2. the coverage guarantee fires: drop one row, and the generator refuses to write a page
+uv run python -c "
+from scenariobank import importing
+importing.LEFT = {k: v for k, v in importing.LEFT.items() if k != 'path'}
+importing._check()"
+# ValueError: the checklist and workspace.py disagree: ['path'] are read and not on the
+# checklist, [] are on the checklist and not read.
+
+# 3. a workspace with no conversion is a loud failure, not an empty page
+uv run scenariobank importing -p ../wingfin-osm-scenarionet-converter/workspaces/junction-1a
+# importing failed: junction-1a holds no converted scenario, so there is nothing to measure a
+# checklist against.                                    (exit 1, and no page written)
+
+# 4. the tests
+uv run pytest tests/unit/test_importing.py -q                 # 21 passed
+```
+
+**What each one is for.** (1) is the drift guard a reader can run: it is the same comparison
+`test_the_checked_in_page_matches_the_workspace_it_was_measured_on` makes, and it is honest —
+appending one line to the page makes that test fail with *"docs/reference/importing.md is out of
+date. Run: uv run scenariobank importing"*, and regenerating makes it pass again. (2) is the half
+of the guarantee that does not depend on this machine having a converter checkout: the same error
+appears with the arrow reversed (`['invented'] are on the checklist and not read`) if a row names a
+field nothing reads, and a third phrasing (`more than once`) if a field is listed twice. (3) says
+the failure mode of a generator over missing data is an exit code rather than a shorter document;
+`junction-1`, `mosque` and `mosque-1` all render, `junction-1a` is the one that cannot.
+
+**On a machine with no converter checkout, 13 of the 21 tests still run and 8 skip by name**
+(`needs_workspaces: no converter checkout at …`) — and all four coverage tests are in the 13. That
+split is the point: the strong half of "cannot drift apart" is a property of the source tree, so it
+is checked everywhere; only the comparison against a real conversion needs the workspaces present.
+
+**And the studio is not a fifth check.** `importing` reaches `/api/commands`, `/api/runnable` and
+`docs/reference/commands.md` from the same walk of the Typer app that Step 1 measured — verified by
+`catalog()` carrying it with no list edited — and the Run tab refuses its `--path` for the same
+containment rule, which Step 4 is where it stops mattering.
+
+*(Done 2026-09-07. `src/scenariobank/importing.py` + `scenariobank importing --path/-p --out/-o`,
+`docs/reference/importing.md` generated, 21 tests in `tests/unit/test_importing.py`, **450 pass**,
+ruff clean. No page file edited; the Reference and Run tabs pick the command up on their own, and
+the Run tab refuses its `--path` for the reason Step 1 measured.)*
+
+*The checklist is generated **against the reader**, not beside it. Every row names a field of
+`workspace.py`'s report and every field of that report is on one of the page's two lists; `_check`
+raises rather than publishing either gap, the way `docs.reference` raises for a command in no
+group. That is what "cannot drift apart" had to mean in code: a doc regenerated from the same
+files the reader reads could still describe fields nothing reads, and this one cannot.*
+
+*Three corrections to the draft above, all from walking the workspace rather than reading the
+manifest — the same lesson Step 1 learned about `stage_6`:*
+
+*1. **`bags/` does not exist.** No workspace in the converter checkout has one. What is actually
+left behind is `actors/`, `drives/`, `routes/`, `signals/`, `traffic/` and `review.json`.*
+
+*2. **The manifest does not carry a checksum for everything excluded.** It carries 28, covering
+`inspection/`, `lane-model/`, `normalized/`, `reports/`, `review/` and `source/map.osm` — and none
+at all for the six above. So "recorded rather than copied" is true of some of what is left and
+false of the rest: 5.1 MB of a `junction-1` workspace can only be dropped, and the page says which
+and why. The verdicts are keyed, so a converter that starts writing a new directory makes the page
+**raise** instead of quietly omitting it.*
+
+*3. **An import moves 50.4 MB of the 70.8 MB on disk**, not all three dataset directories. The
+page weighs one, because that is what an import takes.*
+
+*The reader grew four fields to answer the checklist rather than the checklist inventing them:
+`Scenario.map_feature_types` (434 lane surfaces, 455 road edges, 85 broken white lines — the split
+the draft quoted), `WorkspaceReport.signals` (the synthesised plan, its 60 s cycle, its three phase
+groups, and the converter's note carried **verbatim**), `WorkspaceReport.artifacts` (the 28
+checksums), and `WorkspaceReport.contents` (every top-level entry, its weight, and how much of it
+the manifest can record). `report_version` stays 1: the additions are additive and nothing has
+consumed version 1 yet, so there is no reader in the world a bump would help.*
+
+*`mosque` is the workspace that shows why the signals block is two numbers and not one: its lane
+model declares **four** signals and stage 6 built **no** phase groups from them, so the recording
+has no light in it and looks exactly like a junction that never had one. Its `scenarionet-100hz/`
+also carries no actors at all while its `scenarionet-10hz/` carries four — a second instance of the
+finding that dataset directories in one workspace are different conversions, not different views of
+one.*
 
 ### Step 3 — `scenariobank import`, and schema 1.3 ⬜
 

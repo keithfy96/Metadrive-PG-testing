@@ -9,8 +9,10 @@ import typer
 from scenariobank.categories import CATEGORIES, SEEDS, CategoryError, get_category
 from scenariobank.doctor import DoctorError, collect, format_report, has_simulator
 from scenariobank.doctor import check as check_report
+from scenariobank.importing import EXAMPLE_WORKSPACE, IMPORTING_DOC
 from scenariobank.logging import configure_logging
 from scenariobank.sockets import SocketError, read_sockets, select_exit
+from scenariobank.workspace import WorkspaceError
 
 Seed = Annotated[int, typer.Option("--seed", "-s", help="Map seed.")]
 BankDir = Annotated[
@@ -860,7 +862,7 @@ def workspace_cmd(
     which on `junction-1` is one of three; trusting it would hide the other two and report the
     wrong rate for both.
     """
-    from scenariobank.workspace import WorkspaceError, format_report, read_workspace
+    from scenariobank.workspace import format_report, read_workspace
 
     try:
         report = read_workspace(path)
@@ -869,6 +871,40 @@ def workspace_cmd(
         raise typer.Exit(code=1) from error
 
     typer.echo(report.model_dump_json(indent=2) if as_json else format_report(report))
+
+
+@app.command()
+def importing(
+    path: Annotated[
+        Path,
+        typer.Option(
+            "--path",
+            "-p",
+            help="The converter workspace the checklist is measured on.",
+        ),
+    ] = EXAMPLE_WORKSPACE,
+    out: Annotated[
+        Path, typer.Option("--out", "-o", help="Reference document to write.")
+    ] = IMPORTING_DOC,
+) -> None:
+    """Write the checklist of what must come over when a workspace becomes a bank.
+
+    Generated rather than hand-written, and generated against a real workspace: every row names a
+    field `scenariobank workspace` reads and every value in it was measured at render time. A field
+    the reader gains with no row here is an error, not a blank cell -- which is what keeps the
+    checklist and the reader from drifting apart while `import` is still being written.
+
+    Needs no simulator. It does need a converter workspace to read, the way `destinations` needs
+    MetaDrive.
+    """
+    from scenariobank.importing import write
+
+    try:
+        written = write(out, path)
+    except (WorkspaceError, ValueError) as error:
+        typer.echo(f"importing failed: {error}", err=True)
+        raise typer.Exit(code=1) from error
+    typer.echo(f"importing written: {written}")
 
 
 @app.command()

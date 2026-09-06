@@ -420,6 +420,8 @@ enforced, since a bank is regenerated per batch and there is nothing to check it
 | path | written by | in git? |
 |---|---|---|
 | `docs/reference/destinations.md` | `destinations` | yes — it is the Phase 1 deliverable |
+| `docs/reference/commands.md` | `commands` | yes — every command and flag, read off the CLI |
+| `docs/reference/importing.md` | `importing` | yes — what an import of a converter workspace must carry over |
 | `docs/reference/figures/*.png` | `inspect` | yes — one per category at seed 0 |
 | `banks/<bank-name>/` | `generate` | **no** — regenerate it; it is a per-batch artifact |
 | `.venv/`, `.ruff_cache/`, `.pytest_cache/` | tooling | no |
