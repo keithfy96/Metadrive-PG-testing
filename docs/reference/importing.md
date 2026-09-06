@@ -44,7 +44,7 @@ From `source/manifest.json`, and mirrored in the summary's `metadata.provenance`
 | `attribution` | `OpenStreetMap contributors` | a licence obligation. It must survive into a result, not only into the bank |
 | `origin` | 3.18589 N, 101.61155 E | where on earth this is. A PG bank has no such thing, and without it the coordinates are metres from nowhere |
 | `bounds` | 3.1840..3.1911 N, 101.6087..101.6153 E | the extract box. What lies outside it is not empty road, it is the edge of the data -- a route that leaves the box leaves the map |
-| `stages` | stage_1b passed, stage_2 passed, stage_4 passed, stage_5 passed, stage_6 converted | which of the converter's five stages passed. Step 3 refuses an import whose stage 5 is anything but `passed` |
+| `stages` | stage_1b passed, stage_2 passed, stage_4 passed, stage_5 passed, stage_6 converted | which of the converter's five stages passed. `import` refuses a workspace whose stage 5 is anything but `passed` |
 | `tool_versions` | converter 0.1.0, geopandas 1.1.4, osmnx 2.0.7, pyproj 3.7.1, python 3.10.19, shapely 2.1.2 | the analogue of `manifest.metadrive`: which osmnx, pyproj and shapely drew this road |
 | `artifacts` | 28 paths | `path` -> `sha256` for every file the manifest records one for. This is how the megabytes left behind are still recorded -- a record of the input, not the input, the same choice Phase 2 made about `base_config` |
 | `last_conversion` | dataset_dir scenarionet-100hz, step_hz 100.0, scenario_id junction-1-57dcd345d17e5a86, map_features 974, report reports/scenario-conversion-100hz.json | what `stage_6` says about the conversion that ran **last**. Carried as a record of one run, never as the index of what the workspace holds |
@@ -65,7 +65,7 @@ ScenarioNet needs the triple: `dataset_summary.pkl`, `dataset_mapping.pkl`, and 
 | `scenario.scenario_id` | `junction-1-57dcd345d17e5a86-route-1` | the row id in the bank |
 | `scenario.file` | `sd_osm-scenario_v1_junction-1-57dcd345d17e5a86-route-1.pkl` | the `sd_*.pkl` itself -- the only file of the three that holds the drive |
 | `scenario.size_bytes` | `49931162` | what it costs. At 100 Hz this is most of what an import moves |
-| `scenario.dataset` | `osm-scenario` | ScenarioNet's own name for the format, which Step 3 stores as `Manifest.source` -- `osm-scenario` rather than `pg` |
+| `scenario.dataset` | `osm-scenario` | ScenarioNet's own name for the format, which `import` stores as `Manifest.source` -- `osm-scenario` rather than `pg` |
 | `scenario.coordinate` | `metadrive` | `metadrive` means the tracks are already in the simulator's frame and no transform is applied on our side |
 | `scenario.sdc_id` | `ego` | which track is the ego. Every other track is replayed around it |
 | `scenario.steps` | `3782` | how many recorded frames there are, counted from the timestamps |
@@ -168,7 +168,7 @@ of it.
 |---|---|
 | `report_version` | the reader's output shape, which says nothing about the workspace |
 | `path` | where the workspace happened to sit on the machine that read it. A bank that recorded this would be recording somebody's laptop |
-| `warnings` | a reading of the workspace rather than part of it. At import they stop being warnings: Step 3 refuses, it does not caution |
+| `warnings` | a reading of the workspace rather than part of it. At import they stop being warnings: `import` refuses, it does not caution |
 | `dataset.missing_files` | a reading too -- what the summary names and the disk does not have. There is nothing to carry; the import refuses |
 | `entry.name` | the top-level entries are measured to decide what an import leaves behind, and none of the measurement travels: the bank keeps the checksum, not this |
 | `entry.kind` | same -- whether it is a dataset, a thumbnail or neither is a question asked at import time and answered once |

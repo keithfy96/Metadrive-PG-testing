@@ -27,7 +27,7 @@ from collections.abc import Sequence
 
 from pydantic import BaseModel, ConfigDict
 
-from scenariobank.bank import CategoryEntry, Manifest, OptionLevels, ScenarioRow
+from scenariobank.bank import BankError, CategoryEntry, Manifest, OptionLevels, ScenarioRow
 from scenariobank.categories import step_budget
 from scenariobank.options import AXES
 
@@ -472,8 +472,29 @@ def describe_options(options: OptionLevels) -> str:
     return f"runs at {', '.join(named)}"
 
 
+def _procedural(manifest: Manifest) -> None:
+    """Refuse a bank this review cannot describe.
+
+    Every measure here is built on a seed, a block sequence and a resolved exit: duplicates are
+    rows that drove the same road to the same node, coverage counts spawn lanes, and the budget is
+    a category's declared cap against `step_budget(route_length_m)`. An imported bank has none of
+    those. What its review *is* -- route length, duration, actor mix, signal coverage -- is Phase 3
+    Step 5, and until it exists this says so rather than reporting zeroes from computations that
+    never ran.
+    """
+    if manifest.source != "pg":
+        raise BankError(
+            f"{manifest.bank_id} is an imported ({manifest.source}) bank, and this review is "
+            "built on seeds, block sequences and resolved exits. A recording has none of them. "
+            "Reviewing an "
+            "imported bank is Phase 3 Step 5; `scenariobank workspace` describes the conversion "
+            "it came from in the meantime."
+        )
+
+
 def review(manifest: Manifest) -> Report:
     """Review a whole bank. Pure: no filesystem, no environment, no simulator."""
+    _procedural(manifest)
     categories = [review_category(name, entry) for name, entry in manifest.categories.items()]
     return Report(
         bank_id=manifest.bank_id,
@@ -621,6 +642,7 @@ def compare(manifest: Manifest, left_id: str, right_id: str) -> Comparison:
     Raises `LookupError` for an id this bank does not hold and `ValueError` for a scenario
     compared with itself, which the studio turns into a 404 and a 400.
     """
+    _procedural(manifest)
     if left_id == right_id:
         raise ValueError(f"{left_id!r} compared with itself is not a comparison")
     both = []

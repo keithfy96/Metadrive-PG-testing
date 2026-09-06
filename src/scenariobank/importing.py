@@ -9,9 +9,13 @@ nothing reads. `_check` raises rather than publishing either gap, the same way `
 raises for a command in no group.
 
 The values are measured from a real workspace on every render -- there is no column of numbers
-typed into this module. That is the house rule (re-measure, never quote) and it is also the only
-way the checklist can be trusted: it describes an import that has not been written yet, so the one
-thing it can be right about today is what is actually on disk.
+typed into this module. That is the house rule (re-measure, never quote), and it is what lets the
+page be checked at all: everything in it is either on disk or in `workspace.py`.
+
+**The import is in this module too**, below the renderer. The page says what comes over and
+`import_workspace` is what brings it, so the two are one file and `_verify` checks them against
+each other on every run: a path the copier takes that `VERDICTS` does not call `partly copied`
+raises rather than being copied. That is the field coverage above, on the other axis.
 
 **What is left behind is measured too.** The plan's draft of this list named `bags/`, which no
 workspace here has, and claimed the manifest carries a checksum for everything excluded, which it
@@ -28,10 +32,30 @@ while still checking the field coverage, which needs no workspace at all.
 
 from __future__ import annotations
 
+import shutil
+from collections.abc import Callable
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from scenariobank.bank import (
+    MANIFEST_NAME,
+    SCHEMA_VERSION,
+    THUMBNAIL_DIR,
+    BankError,
+    Manifest,
+    OptionLevels,
+    RealWorldEntry,
+    RealWorldRow,
+    SimulatorInfo,
+    read_manifest,
+    scenario_id,
+    write_manifest,
+)
+from scenariobank.handedness import DRIVE_SIDE_LEFT
 from scenariobank.workspace import (
+    DATASET_INDEX,
+    DATASET_PREFIX,
     Dataset,
     Entry,
     Provenance,
@@ -42,6 +66,9 @@ from scenariobank.workspace import (
     WorkspaceReport,
     read_workspace,
 )
+
+#: What a progress callback is. One line per file copied, to stderr, the way `generate` reports.
+_Say = Callable[[str], None]
 
 #: The workspace the checked-in page is measured on, relative to the repo root: the sibling
 #: checkout the plan means, not `~/Desktop/work/wingfin/converter-scenarionet`, which holds
@@ -91,8 +118,8 @@ SECTIONS: tuple[tuple[str, str, dict[str, str]], ...] = (
             "coordinates are metres from nowhere",
             "bounds": "the extract box. What lies outside it is not empty road, it is the edge "
             "of the data -- a route that leaves the box leaves the map",
-            "stages": "which of the converter's five stages passed. Step 3 refuses an import "
-            "whose stage 5 is anything but `passed`",
+            "stages": "which of the converter's five stages passed. `import` refuses a "
+            "workspace whose stage 5 is anything but `passed`",
             "tool_versions": "the analogue of `manifest.metadrive`: which osmnx, pyproj and "
             "shapely drew this road",
             "artifacts": "`path` -> `sha256` for every file the manifest records one for. This "
@@ -128,8 +155,8 @@ SECTIONS: tuple[tuple[str, str, dict[str, str]], ...] = (
             "scenario.file": "the `sd_*.pkl` itself -- the only file of the three that holds the "
             "drive",
             "scenario.size_bytes": "what it costs. At 100 Hz this is most of what an import moves",
-            "scenario.dataset": "ScenarioNet's own name for the format, which Step 3 stores as "
-            "`Manifest.source` -- `osm-scenario` rather than `pg`",
+            "scenario.dataset": "ScenarioNet's own name for the format, which `import` stores "
+            "as `Manifest.source` -- `osm-scenario` rather than `pg`",
             "scenario.coordinate": "`metadrive` means the tracks are already in the simulator's "
             "frame and no transform is applied on our side",
             "scenario.sdc_id": "which track is the ego. Every other track is replayed around it",
@@ -214,7 +241,7 @@ LEFT: dict[str, str] = {
     "path": "where the workspace happened to sit on the machine that read it. A bank that "
     "recorded this would be recording somebody's laptop",
     "warnings": "a reading of the workspace rather than part of it. At import they stop being "
-    "warnings: Step 3 refuses, it does not caution",
+    "warnings: `import` refuses, it does not caution",
     "dataset.missing_files": "a reading too -- what the summary names and the disk does not "
     "have. There is nothing to carry; the import refuses",
     "entry.name": "the top-level entries are measured to decide what an import leaves behind, "
@@ -337,22 +364,45 @@ def _check() -> None:
         )
 
 
-def choose(report: WorkspaceReport) -> tuple[Dataset, Scenario]:
-    """The dataset and scenario the value column is measured from.
+def choose(report: WorkspaceReport, *, rate: float | None = None) -> tuple[Dataset, Scenario]:
+    """The dataset and scenario to measure the page on, or to import.
 
-    The one `stage_6` says ran last, at the highest rate it holds -- which is what Step 3's
-    `--rate 100` default would import. Not the first directory found: `junction-1`'s directories
-    sort with an older ego-only conversion first, and a checklist measured on that one would
-    describe an empty road.
+    The one `stage_6` says ran last, at the highest rate it holds. Not the first directory found:
+    `junction-1`'s directories sort with an older ego-only conversion first, and a checklist
+    measured on that one would describe an empty road.
+
+    `rate` narrows it to the conversions sampled at that rate, which is what an import needs and
+    the page does not. The tie-break still matters after narrowing -- `junction-1` holds **two**
+    100 Hz conversions, `scenarionet` (3695 frames, a 403.75 m route) and `scenarionet-100hz`
+    (3782 frames, 395.11 m). They are different drives, not two views of one, so a rate alone does
+    not name a conversion and `stage_6` is what breaks the tie.
     """
     named = (report.last_conversion or {}).get("dataset_dir")
     pairs = [
-        (dataset, scenario) for dataset in report.datasets for scenario in dataset.scenarios
+        (dataset, scenario)
+        for dataset in report.datasets
+        for scenario in dataset.scenarios
+        if rate is None or round(scenario.step_hz or 0) == round(rate)
     ]
     if not pairs:
+        if rate is not None and any(dataset.scenarios for dataset in report.datasets):
+            rates = sorted(
+                {
+                    f"{scenario.step_hz:g}"
+                    for dataset in report.datasets
+                    for scenario in dataset.scenarios
+                    if scenario.step_hz
+                }
+            )
+            raise WorkspaceError(
+                f"{report.name} holds no conversion at {rate:g} Hz. It holds "
+                f"{', '.join(rates)} Hz. The rate is fixed when the pickle is written, so this "
+                "is a conversion to run again, not a flag to change."
+            )
         raise WorkspaceError(
-            f"{report.name} holds no converted scenario, so there is nothing to measure a "
-            "checklist against. Point --path at a workspace that has been through stage 6."
+            f"{report.name} holds no converted scenario, so there is nothing to import and "
+            "nothing to measure a checklist against. Point --path at a workspace that has been "
+            "through stage 6."
         )
     return max(pairs, key=lambda pair: (pair[0].name == named, pair[1].step_hz or 0, pair[0].name))
 
@@ -563,13 +613,297 @@ def write(path: Path = IMPORTING_DOC, workspace: Path = EXAMPLE_WORKSPACE) -> Pa
     return path
 
 
+
+
+# --- the import itself --------------------------------------------------------------------------
+#
+# It lives beside the checklist rather than in `bank.py` on purpose. The page above says what comes
+# over; the code below is what brings it. In one module they can be checked against each other, and
+# `_verify` does exactly that on every run -- a file the copier takes must be one `VERDICTS` calls
+# `partly copied`, or neither the page nor the import is written.
+
+#: Where a copied dataset lands inside a bank, relative to its root. One name whatever the
+#: workspace called its directory, so a bank's layout does not depend on which rate was imported.
+DATASET_DIR = "dataset"
+
+#: The rate an import takes unless told otherwise, and the asymmetry behind the number.
+#: `--decision-hz` is a stride in our own step loop and is never written into a bank, so it stays
+#: adjustable per run forever; `step_hz` is fixed when the pickle is written. A 100 Hz import keeps
+#: every decision rate that divides 100 available, and a 10 Hz import caps every future run at 10
+#: and cannot be undone without going back to the converter. It costs bytes, and it is the only one
+#: of the two choices that is irreversible.
+DEFAULT_RATE = 100.0
+
+#: The converter's own files an import copies whole, workspace-relative. `source/manifest.json` is
+#: the provenance chain every field of the entry was read out of. This conversion's report joins
+#: them at run time, its name depending on the rate -- see `_report_name`.
+COPIED = ("source/manifest.json",)
+
+
+def _report_name(dataset_name: str) -> str:
+    """This conversion's own report, by the naming convention the converter uses.
+
+    `scenarionet-100hz` pairs with `reports/scenario-conversion-100hz.json` and plain `scenarionet`
+    with `reports/scenario-conversion.json` -- the same suffix rule `workspace._map_image` follows
+    for the picture, because a workspace holds one of each per conversion.
+    """
+    suffix = dataset_name[len(DATASET_PREFIX) :].lstrip("-")
+    tail = f"-{suffix}" if suffix else ""
+    return f"reports/scenario-conversion{tail}.json"
+
+
+def _verify(dataset: Dataset) -> None:
+    """The page and the copier, checked against each other.
+
+    Every path the import copies must sit under an entry `VERDICTS` calls `partly copied`. The
+    alternative is a document that says a file comes over while the code bringing it has been
+    changed to leave it behind -- the same drift the field coverage above exists to prevent, on
+    the other axis, and the reason both live in one module.
+    """
+    for path in (*COPIED, _report_name(dataset.name)):
+        top = path.split("/")[0]
+        verdict = VERDICTS.get(top, ("not in VERDICTS at all", ""))[0]
+        if verdict != "partly copied":
+            raise ValueError(
+                f"the import copies {path!r}, and importing.VERDICTS calls {top!r} {verdict!r}. "
+                "The checklist and the copier have to agree about what comes over."
+            )
+
+
+def _refuse(report: WorkspaceReport, out_dir: Path) -> None:
+    """Everything an import checks before it copies a byte.
+
+    Stage 5 is the converter's own validation of the reviewed lane model, so importing something
+    that did not pass it would put a scenario nobody validated into a bank that says otherwise.
+
+    The drive side is checked against `DRIVE_SIDE_LEFT`, the handedness this project is defined
+    against, and **not** with `doctor.measure_drive_side`, which the plan named. That function
+    reads the side off a *built map*, and an import builds nothing -- it copies pickles. Measuring
+    a stored scenario's map means constructing a `ScenarioEnv`, which is Step 6's round trip. What
+    can be checked here is what the converter declared, and a right-side workspace is refused on it.
+
+    An existing generated bank is refused rather than overwritten: it took minutes of map building
+    and an import would replace it with a recording. An existing *imported* bank is replaced, which
+    is what makes re-importing at another rate a single command.
+    """
+    if report.provenance.stage_5_status != "passed":
+        raise BankError(
+            f"{report.name} records stage_5_status {report.provenance.stage_5_status!r}, not "
+            "'passed'. Stage 5 is the converter's validation of the reviewed lane model, and a "
+            "bank built from something that did not pass it would claim a scenario nobody checked."
+        )
+    if report.driving_side != DRIVE_SIDE_LEFT:
+        raise BankError(
+            f"{report.name} drives on the {report.driving_side!r} ({report.driving_side_source}) "
+            f"and this project is {DRIVE_SIDE_LEFT}-side. That is the one field which silently "
+            "invalidates every result, so it is refused here rather than mirrored."
+        )
+    if (out_dir / MANIFEST_NAME).is_file() and read_manifest(out_dir).source == "pg":
+        raise BankError(
+            f"{out_dir} already holds a procedurally generated bank. Importing over it would "
+            "replace roads that took minutes to build. Point --out somewhere else, or remove "
+            "that bank first."
+        )
+
+
+def _copy_dataset(workspace: Path, out_dir: Path, dataset: Dataset, say: _Say) -> int:
+    """Copy the ScenarioNet triple into the bank, and return the bytes moved.
+
+    **Copied, not referenced.** A bank is mounted into a container and shipped to a rig, so a
+    `data_directory` pointing into somebody's home directory is not a bank. The files are named by
+    the summary and `dataset_mapping.pkl` rather than globbed, which is ScenarioNet's own contract
+    and what keeps a merged dataset of several conversions readable.
+
+    The destination is emptied first: a re-import at another rate would otherwise leave the
+    previous conversion's `sd_*.pkl` beside the new one, and the summary names only one of them.
+    """
+    destination = out_dir / DATASET_DIR
+    if destination.exists():
+        shutil.rmtree(destination)
+    destination.mkdir(parents=True)
+
+    moved = 0
+    for name in (*DATASET_INDEX, *(scenario.file for scenario in dataset.scenarios)):
+        target = destination / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(workspace / dataset.name / name, target)
+        moved += target.stat().st_size
+        say(f"copied  {DATASET_DIR}/{name}  ({target.stat().st_size / 1e6:.1f} MB)")
+    return moved
+
+
+def _copy_records(workspace: Path, out_dir: Path, dataset: Dataset, say: _Say) -> list[str]:
+    """Copy the converter's files that come over whole; return them relative to the bank root.
+
+    This conversion's report is the only one of the seventeen in `reports/` that is about *this*
+    recording. The rest are stage reports and are kept as checksums, which is what the checklist
+    means by `partly copied`.
+    """
+    copied = []
+    for relative in (*COPIED, _report_name(dataset.name)):
+        origin = workspace / relative
+        if not origin.is_file():
+            say(f"absent  {relative}")
+            continue
+        target = out_dir / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(origin, target)
+        copied.append(relative)
+        say(f"copied  {relative}")
+    return copied
+
+
+def _copy_thumbnail(
+    workspace: Path, out_dir: Path, dataset: Dataset, name: str, say: _Say
+) -> str | None:
+    """Copy stage 6's picture of the map; return it relative to the bank root.
+
+    One picture per conversion rather than one per scenario, and every row in the entry points at
+    it. A real-world bank has no `figures.render_route`: there is no PG road to draw and no
+    navigation module to draw a route on, so what it has instead is the picture stage 6 drew.
+    `mosque-1` has none at all, which is a `None` and not a failure.
+    """
+    if not dataset.map_image:
+        say(f"absent  no stage-6 picture in {name}; its rows carry no thumbnail")
+        return None
+    relative = f"{THUMBNAIL_DIR}/{name}.png"
+    target = out_dir / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(workspace / dataset.map_image, target)
+    say(f"copied  {relative}  (from {dataset.map_image})")
+    return relative
+
+
+def _rows(dataset: Dataset, name: str, thumbnail: str | None) -> list[RealWorldRow]:
+    """One row per recording, in the dataset's own index order.
+
+    That order is `scenario_index`, because it is what ScenarioNet addresses a scenario by. The
+    `scenario_id` beside it comes from `bank.scenario_id`, the same function a generated row's id
+    comes from, so the two kinds of bank share one id shape.
+    """
+    rows = []
+    for index, scenario in enumerate(dataset.scenarios):
+        route = scenario.route
+        rows.append(
+            RealWorldRow(
+                scenario_id=scenario_id(name, index),
+                scenario_index=index,
+                file=scenario.file,
+                stored_id=scenario.scenario_id,
+                # The recording's own length. Replay advances one frame per `env.step`, so this
+                # is the cap -- measured, where a PG budget is scaled from route length.
+                max_steps=scenario.length or scenario.steps,
+                route_length_m=float((route.distance_m if route else None) or 0.0),
+                duration_s=float(scenario.duration_s or 0.0),
+                tracks=scenario.tracks,
+                lights=scenario.lights,
+                route=route,
+                thumbnail=thumbnail,
+            )
+        )
+    return rows
+
+
+def import_workspace(
+    workspace: Path,
+    out_dir: Path,
+    *,
+    bank_id: str | None = None,
+    rate: float = DEFAULT_RATE,
+    progress: Callable[[str], None] | None = None,
+) -> Manifest:
+    """Turn one converter workspace into a bank under `out_dir`. Builds no environment.
+
+    The checklist above is the specification and this is the implementation: one dataset directory
+    copied whole, the provenance copied whole, stage 6's picture as the thumbnail, and a sha256 for
+    everything else the converter checksummed. What carries no checksum is dropped, because there
+    is nothing to keep -- `docs/reference/importing.md` names those entries and says so.
+
+    **One workspace, one bank, one category** -- named after the workspace. A workspace is a place
+    on earth and a bank is what a runner mounts, so the two lining up is what lets Step 4 list a
+    real-world bank beside a procedural one without either knowing about the other.
+
+    **No simulator is imported.** MetaDrive did not build this bank, the converter did, so the
+    manifest's `metadrive` block stays empty and `tool_versions` on the entry carries the
+    provenance that is real. Which simulator *replays* it is a property of the run and is recorded
+    by the runner, not by the machine that did the copying.
+    """
+    workspace = Path(workspace)
+    out_dir = Path(out_dir)
+    say = progress or (lambda _message: None)
+
+    report = read_workspace(workspace)
+    dataset, _ = choose(report, rate=rate)
+    _verify(dataset)
+    _refuse(report, out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    name = report.name
+    moved = _copy_dataset(workspace, out_dir, dataset, say)
+    copied = _copy_records(workspace, out_dir, dataset, say)
+    thumbnail = _copy_thumbnail(workspace, out_dir, dataset, name, say)
+    rows = _rows(dataset, name, thumbnail)
+    step_hz = dataset.scenarios[0].step_hz or rate
+    plural = "scenario" if len(rows) == 1 else "scenarios"
+
+    manifest = Manifest(
+        schema_version=SCHEMA_VERSION,
+        bank_id=bank_id or name,
+        created_utc=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        # The recording's own word for what it is, read out of the workspace rather than named
+        # here: a converter that starts writing a second kind says so in the file.
+        source=dataset.scenarios[0].dataset or "osm-scenario",
+        metadrive=SimulatorInfo(
+            edition=None, dist_version=None, commit=None, asset_version=None
+        ),
+        # Nothing here was built from a config. A stored scenario is replayed, and what the env
+        # needs is derived from the entry's `step_hz` -- Step 6 owns that derivation. Recording
+        # `base_config()` would put the PG observation and the PG physics rate in a file about a
+        # recording that uses neither, and would make an import need the simulator to write.
+        base_config={},
+        drive_side=report.driving_side or DRIVE_SIDE_LEFT,
+        # An imported bank pins nothing, and `Manifest` refuses one that tries: the six axes are
+        # contents of a recording here rather than knobs a run sets.
+        options=OptionLevels(),
+        categories={
+            name: RealWorldEntry(
+                description=(
+                    f"{name}: {len(rows)} recorded {plural} from OpenStreetMap at {step_hz:g} Hz, "
+                    f"converted from {dataset.name}"
+                ),
+                dataset_dir=DATASET_DIR,
+                step_hz=step_hz,
+                origin=report.origin,
+                attribution=report.attribution,
+                provenance=report.provenance,
+                tool_versions=report.tool_versions,
+                artifacts=report.artifacts,
+                copied=copied,
+                signals=report.signals,
+                max_steps=max(row.max_steps for row in rows),
+                scenarios=rows,
+            )
+        },
+    )
+    write_manifest(out_dir, manifest)
+    say(
+        f"{len(rows)} {plural} from {dataset.name} ({moved / 1e6:.1f} MB) "
+        f"-> {out_dir / MANIFEST_NAME}"
+    )
+    return manifest
+
+
 __all__ = [
+    "COPIED",
+    "DATASET_DIR",
+    "DEFAULT_RATE",
     "EXAMPLE_WORKSPACE",
     "IMPORTING_DOC",
     "LEFT",
     "SECTIONS",
     "VERDICTS",
     "choose",
+    "import_workspace",
     "render",
     "write",
 ]

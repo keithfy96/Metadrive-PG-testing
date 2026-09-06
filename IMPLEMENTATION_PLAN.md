@@ -1969,10 +1969,11 @@ measured as unusable; ad-hoc roads as bank rows.
 
 # Phase 3 — Import: stored scenarios from the converter 🔨  ⟵ *the number is reused*
 
-**Status:** Steps 1 and 2 are built — `scenariobank workspace` reads a converter workspace and says
-what is in it, and `scenariobank importing` turns that reading into
-[`docs/reference/importing.md`](docs/reference/importing.md), the checklist an import must satisfy.
-Step 3, `scenariobank import` and schema 1.3, is next.
+**Status:** Steps 1-3 are built — `scenariobank workspace` reads a converter workspace and says
+what is in it, `scenariobank importing` turns that reading into
+[`docs/reference/importing.md`](docs/reference/importing.md), the checklist an import must satisfy,
+and `scenariobank import` satisfies it: one workspace becomes one bank under schema 1.3, beside the
+procedural ones. Step 4, splitting the studio's bank list, is next.
 
 > **This is not the old Phase 3.** `scenariobank verify` was the gate over `map_id`, `config_hash`
 > and the recorded MetaDrive commit; all three were cut with the durable-bank premise on
@@ -2235,7 +2236,7 @@ also carries no actors at all while its `scenarionet-10hz/` carries four — a s
 finding that dataset directories in one workspace are different conversions, not different views of
 one.*
 
-### Step 3 — `scenariobank import`, and schema 1.3 ⬜
+### Step 3 — `scenariobank import`, and schema 1.3 ✅
 
 The command that turns a workspace into a bank under `--banks-root`, beside the PG ones.
 
@@ -2274,8 +2275,63 @@ The command that turns a workspace into a bank under `--banks-root`, beside the 
   installed handedness — reusing `doctor.measure_drive_side`, the check Phase 2 kept from the old
   Phase 3.
 
-**Verify alone:** import `junction-1` and `mosque` into a scratch root; both manifests validate,
-`review` runs, the thumbnail resolves, and no bank under `banks/` is opened for writing.
+**Verify alone:** import `junction-1` and `mosque` into a scratch root; both manifests validate and
+re-read, the thumbnail resolves, the dataset triple is complete, and no bank under `banks/` and no
+file under `workspaces/` is opened for writing. `review` **refuses** rather than runs -- see the
+correction below.
+
+*(Done 2026-09-07. `scenariobank import --path/-p --out/-o --bank-id --rate`, schema 1.3 in
+`bank.py`, the importer in `src/scenariobank/importing.py` beside the checklist it implements, 23
+tests in `tests/unit/test_import.py`, **474 pass**, ruff clean. `docs/reference/commands.md`
+regenerated; no page file edited.)*
+
+*Measured on `junction-1` at 100 Hz: **50.0 MB** copied -- `dataset/` (the summary, the mapping and
+one 49.9 MB `sd_*.pkl`), `source/manifest.json`, `reports/scenario-conversion-100hz.json`, and
+`thumbs/junction-1.png` from `stage-6-map-100hz.png`. At `--rate 10` the same import is 5.5 MB and
+379 frames instead of 3782. `mosque` at 10 Hz is 1.3 MB.*
+
+**Two models, not one with half its fields optional.** `RealWorldEntry` carries `dataset_dir`,
+`step_hz`, `origin`, `attribution`, the provenance chain, `tool_versions`, the 28 `artifacts`
+checksums, `copied`, and the signals block; `RealWorldRow` carries `scenario_index`, `file`,
+`stored_id`, the measured `max_steps`, `route_length_m`, `duration_s`, `tracks`, `lights` and the
+converter's `route`. `Manifest.source` is the discriminator and a validator refuses a mixture --
+a category holding both a `block_seq` and a `dataset_dir` would be a bank nothing could rebuild and
+nothing could replay. `budget_for` keeps its name on both, so a runner asking for a scenario's cap
+does not have to know which kind of bank it holds.
+
+*Four corrections to the bullets above, all from building it:*
+
+*1. **`doctor.measure_drive_side` cannot be reused here.** It reads the side off a **built map**,
+and an import builds nothing -- it copies pickles. Measuring a stored scenario's map means
+constructing a `ScenarioEnv`, which is Step 6's round trip. What `import` checks is the side the
+converter **declared**, against `DRIVE_SIDE_LEFT`, and a right-side workspace is refused on it.*
+
+*2. **`--rate` alone does not name a conversion.** `junction-1` holds **two** 100 Hz conversions:
+`scenarionet` (3695 frames, a 403.75 m route) and `scenarionet-100hz` (3782 frames, 395.11 m).
+They are different drives, not two views of one, so the rate narrows and `stage_6`'s
+`last_conversion` breaks the tie -- the same rule `importing.choose` already used for the page.
+`mosque-1` holds only a 10 Hz conversion, and `--rate 100` there is refused by name with the rates
+it does hold.*
+
+*3. **`review` refuses an imported bank rather than running on one.** Its every measure is built on
+a seed, a block sequence and a resolved exit -- duplicates, spawn-lane coverage, and a declared cap
+against `step_budget(route_length_m)`. A recording has none of them, and a review reporting
+"0 duplicates" from a computation that never ran is worse than a refusal. The five editing
+commands refuse the same way, by name. What a real-world bank's review **is** stays Step 5's, and
+the refusal names it.*
+
+*4. **An imported manifest records no `base_config` and no simulator.** MetaDrive did not build
+this bank, the converter did, so `base_config` is `{}` and the `metadrive` block is empty --
+recording `base_config()` would need the sim group to write a file about a recording that uses
+neither the PG observation nor the PG physics rate. Which simulator *replays* it is a property of
+the run and is the runner's to record. The result is that `import` imports no simulator and builds
+no environment, like `workspace` and `importing` before it, and a test pins that.*
+
+*The import and the checklist are one module on purpose. `_verify` refuses to copy a file
+`importing.VERDICTS` does not call `partly copied`, so the page saying "this comes over" and the
+code bringing it cannot drift apart -- Step 2's field coverage, on the other axis. An imported bank
+also cannot pin option levels: the six axes are contents of a recording here, and `Manifest`
+raises rather than storing a promise nothing keeps.*
 
 ### Step 4 — the studio splits its bank list ⬜
 

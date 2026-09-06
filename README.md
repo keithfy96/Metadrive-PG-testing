@@ -17,6 +17,8 @@ generated from the CLI's flags and cannot describe a different program.
 [`docs/reference/commands.md`](docs/reference/commands.md) is the full flag reference --
 generated from the CLI, so it cannot drift. This file explains *why* each command exists;
 that one lists every flag and every value they accept.
+[`docs/importing-scenarionet.md`](docs/importing-scenarionet.md) is how to bring a converter
+workspace in as a bank — which rate to choose, and what `import` refuses.
 
 All scenarios are **left-side traffic** (right-hand-drive market). See
 [Which side of the road](#which-side-of-the-road) — it is not a MetaDrive setting, and it is the
@@ -424,6 +426,7 @@ enforced, since a bank is regenerated per batch and there is nothing to check it
 | `docs/reference/importing.md` | `importing` | yes — what an import of a converter workspace must carry over |
 | `docs/reference/figures/*.png` | `inspect` | yes — one per category at seed 0 |
 | `banks/<bank-name>/` | `generate` | **no** — regenerate it; it is a per-batch artifact |
+| `banks/<bank-name>/` | `import` | **no** — re-import it; the dataset is copied in, 50 MB at 100 Hz |
 | `.venv/`, `.ruff_cache/`, `.pytest_cache/` | tooling | no |
 
 Nothing writes outside the repo, and no command writes to `$HOME`.
@@ -431,7 +434,7 @@ Nothing writes outside the repo, and no command writes to `$HOME`.
 ## Tests
 
 ```bash
-uv run pytest        # 118 tests, ~22s with the sim group installed
+uv run pytest        # 474 tests, ~85s with the sim group installed
 ```
 
 | | pass | skip |

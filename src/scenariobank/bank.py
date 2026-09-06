@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from scenariobank.categories import (
     CATEGORIES,
@@ -56,17 +56,20 @@ from scenariobank.sockets import (
     select_exit,
     turn_pairs,
 )
+from scenariobank.workspace import Provenance, Route, Signals
 
 #: Bumped when a reader would break. The runner validates against it rather than duck-typing.
-SCHEMA_VERSION = "1.2"
+SCHEMA_VERSION = "1.3"
 
 #: Every version this build can read. 1.1 added the three optional per-scenario overrides below,
 #: so a 1.0 manifest is a 1.1 one that overrides nothing and the banks already on disk keep
-#: opening; 1.2 added `options`, so a 1.1 manifest is a 1.2 one that pins nothing. The reverse
-#: does not hold -- `extra="forbid"` means a 1.0 reader refuses a row that declares its own
-#: budget, and a 1.1 reader refuses a manifest that declares option levels -- which is why the
-#: number moved rather than the fields being slipped in quietly under the old one.
-READABLE_VERSIONS = ("1.0", "1.1", "1.2")
+#: opening; 1.2 added `options`, so a 1.1 manifest is a 1.2 one that pins nothing; 1.3 added
+#: `source` and the real-world half of the file, so a 1.2 manifest is a 1.3 one whose source is
+#: `pg`. The reverse does not hold -- `extra="forbid"` means a 1.0 reader refuses a row that
+#: declares its own budget, a 1.1 reader refuses a manifest that declares option levels, and a
+#: 1.2 reader refuses a category that names a dataset directory -- which is why the number moved
+#: rather than the fields being slipped in quietly under the old one.
+READABLE_VERSIONS = ("1.0", "1.1", "1.2", "1.3")
 
 #: Where thumbnails go, relative to the bank root. Stored in the manifest as a relative path so
 #: a bank directory can be moved or mounted anywhere.
@@ -193,6 +196,109 @@ class OptionLevels(BaseModel):
     lights: Level = "none"
 
 
+class RealWorldRow(BaseModel):
+    """One recorded scenario. What a `ScenarioRow` is for a bank that was driven, not built.
+
+    Nothing here is chosen. A PG row carries a `seed` and a `destination` because generation
+    picked them; this one carries an index into a dataset directory and the route the drive
+    actually took, and every number in it was measured off the recording by the converter.
+
+    **`max_steps` is measured, not declared.** ScenarioNet replay advances one recorded frame per
+    `env.step`, so the recording's own length *is* the cap -- the one place a real-world bank is
+    better off than a PG one, where a budget is a category's guess scaled from route length.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    scenario_id: str
+    #: Position in the dataset's own index, which is what ScenarioNet addresses a scenario by.
+    #: `scenario_id` above is this bank's key for it; the two are separate because a bank may
+    #: hold several conversions of one place and their indices would collide.
+    scenario_index: int
+    #: The pickle, relative to `dataset_dir`. Taken from the summary rather than by globbing,
+    #: because `dataset_mapping.pkl` is what says which subdirectory a file sits in.
+    file: str
+    #: The id the recording carries inside itself, e.g. `osm-scenario_v1_junction-1-...-route-1`.
+    #: Kept so a result can be traced back to the pickle without opening it.
+    stored_id: str
+    #: Frames in the recording, and so the step cap. See the note above.
+    max_steps: int
+    #: `sdc_route.distance_m`. The same name a PG row uses, because it is the same measurement
+    #: and a reader that had to know which kind of bank it was holding to ask "how long" would
+    #: be the schema failing to explain itself.
+    route_length_m: float
+    #: How long the recorded drive took. A PG scenario has no equivalent: nothing was driven.
+    duration_s: float
+    #: Who else is in the recording, by type -- the ego included, as `VEHICLE`. This is what
+    #: replaces the six option axes: contents of a recording rather than knobs.
+    tracks: dict[str, int]
+    #: Traffic lights in the recording, by type. Synthesised by the converter, never surveyed --
+    #: the caveat travels on the entry, in `signals.note`.
+    lights: dict[str, int]
+    #: The converter's own route record, carried whole. `route_length_m` above is its
+    #: `distance_m` promoted to the name both kinds of row use.
+    route: Route | None
+    #: The converter's picture of the map, relative to the bank root. Not `figures.render_route`:
+    #: a stored scenario has no PG road to draw and no navigation to draw a route on, so what a
+    #: real-world bank has instead is the picture stage 6 already drew.
+    thumbnail: str | None
+
+
+class RealWorldEntry(BaseModel):
+    """One imported conversion: the dataset directory, and the provenance that explains it.
+
+    Where a `CategoryEntry` carries `block_seq` and `exit_rule` -- how to build the road again --
+    this carries `dataset_dir` and `step_hz`: where the recording is, and how fast to replay it.
+    Nothing here can be rebuilt, which is why the provenance chain is not optional.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    description: str
+    #: The copied dataset, relative to the bank root. **Copied, not referenced.** A bank is
+    #: mounted into a container and shipped to a rig; a path into somebody's home directory is
+    #: not, and the whole triple ScenarioNet needs is small enough to carry.
+    dataset_dir: str
+    #: The rate the tracks were sampled at. The runner sets `physics_world_step_size = 1 /
+    #: step_hz` with `decision_repeat = 1`, because replay advances one recorded frame per
+    #: `env.step`: MetaDrive's default 0.02 x 5 is 10 Hz, and opening a 100 Hz recording at it
+    #: replays every actor at a tenth of its speed while nothing raises.
+    step_hz: float
+    #: Where on earth this is, in degrees. A PG bank has no such thing.
+    origin: dict[str, float] | None
+    #: A licence obligation, and it must survive into a result.
+    attribution: str | None
+    #: Which lane model, reviewed by whom, this was converted from.
+    provenance: Provenance
+    #: osmnx, pyproj and the rest -- the analogue of the manifest's `metadrive` block for the
+    #: half of the pipeline MetaDrive had no part in.
+    tool_versions: dict[str, str]
+    #: `path -> sha256` for everything the converter checksummed and this import did not copy.
+    #: A record of the input, not the input -- the same choice `base_config` is. What carries no
+    #: checksum in the workspace is in neither this nor `copied`, and is simply gone; the
+    #: `importing` reference says which entries those are and why.
+    artifacts: dict[str, str]
+    #: Bank-relative paths of the converter's own files copied whole: its `source/manifest.json`
+    #: and this conversion's report.
+    copied: list[str]
+    #: The signal plan, and the sentence that has to travel with it. `None` where stage 6 built
+    #: no phase groups -- which is not the same as a junction with no lights, and is why the
+    #: block records both what the lane model declared and what was built.
+    signals: Signals | None
+    #: The longest recording in this entry. Per-row `max_steps` is the one that runs; this is
+    #: here so a reader can size a batch without walking every row.
+    max_steps: int
+    scenarios: list[RealWorldRow]
+
+    def budget_for(self, row: RealWorldRow) -> int:
+        """The step cap that applies to one row: its own recording's length.
+
+        Same name and same shape as `CategoryEntry.budget_for`, so a runner that asks a bank for
+        a scenario's budget does not have to know which kind of bank it is holding.
+        """
+        return row.max_steps
+
+
 class SimulatorInfo(BaseModel):
     """Which MetaDrive built this bank. Information only -- nothing refuses on it."""
 
@@ -209,9 +315,18 @@ class Manifest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["1.0", "1.1", "1.2"]
+    schema_version: Literal["1.0", "1.1", "1.2", "1.3"]
     bank_id: str
     created_utc: str
+    #: Which half of this schema the categories below use. `pg` is the default, so every 1.0,
+    #: 1.1 and 1.2 manifest on disk reads as one without being rewritten. The value for an
+    #: imported bank is the recording's own `metadata.dataset`, which for these is
+    #: `osm-scenario` -- read out of the workspace rather than named here, so a converter that
+    #: starts writing a second kind says so in the file instead of being flattened into "real".
+    source: str = "pg"
+    #: The simulator that built this bank. On an imported one nothing was built here, so the
+    #: fields are whatever the installed distribution reports -- information, as they always
+    #: were, and all four may be `None` on a machine with no simulator at all.
     metadrive: SimulatorInfo
     #: `base_config()` in full, minus the keys generation overrides per block sequence, so a run
     #: is self-describing. Types are stored as dotted paths: this is a record of the config, not
@@ -222,8 +337,40 @@ class Manifest(BaseModel):
     drive_side: str
     #: The option levels runs of this bank default to. Absent from a 1.0 or 1.1 manifest, which
     #: reads as every axis at `none` -- the same state as a bank that was asked and pinned nothing.
+    #: An imported bank pins nothing and cannot: the six axes are contents of a recording there,
+    #: not knobs, and the validator below refuses a real-world manifest that sets one.
     options: OptionLevels = OptionLevels()
-    categories: dict[str, CategoryEntry]
+    #: One kind or the other, never a mixture -- `source` says which, and the validator below
+    #: enforces it. Two models rather than one with half its fields optional, because a category
+    #: that carried both a `block_seq` and a `dataset_dir` would be a bank nothing could rebuild
+    #: and nothing could replay.
+    categories: dict[str, CategoryEntry | RealWorldEntry]
+
+    @model_validator(mode="after")
+    def _one_kind_of_bank(self) -> Manifest:
+        """Refuse a manifest whose categories disagree with its `source`.
+
+        `extra="forbid"` already stops the two entry shapes from blending, so this catches the
+        remaining nonsense: a bank that says `pg` and holds imported conversions, or the reverse.
+        """
+        want, other = (
+            (CategoryEntry, "real-world") if self.source == "pg" else (RealWorldEntry, "procedural")
+        )
+        wrong = sorted(
+            name for name, entry in self.categories.items() if not isinstance(entry, want)
+        )
+        if wrong:
+            raise ValueError(
+                f"source is {self.source!r}, but {wrong} are {other} categories. A bank is one "
+                "kind or the other; `source` is the field that says which."
+            )
+        if self.source != "pg" and self.options != OptionLevels():
+            raise ValueError(
+                f"a {self.source!r} bank pins option levels, and it cannot: traffic, pedestrians "
+                "and the rest are contents of a recording here rather than knobs a run sets. "
+                "See `docs/reference/importing.md`."
+            )
+        return self
 
 
 def describe_config(config: dict[str, Any]) -> dict[str, Any]:
@@ -509,6 +656,7 @@ def replace_scenario(
 
     bank_dir = Path(bank_dir)
     manifest = read_manifest(bank_dir)
+    _procedural(manifest, "replace")
     say = progress or (lambda _message: None)
 
     name, entry, index = _locate(manifest, scenario_id_)
@@ -621,6 +769,7 @@ def add_scenario(
 
     bank_dir = Path(bank_dir)
     manifest = read_manifest(bank_dir)
+    _procedural(manifest, "add")
     say = progress or (lambda _message: None)
 
     category_name, entry, category = _road_to_add(manifest, category_name, block_seq, rule, say)
@@ -790,6 +939,7 @@ def remove_scenario(
     """
     bank_dir = Path(bank_dir)
     manifest = read_manifest(bank_dir)
+    _procedural(manifest, "remove")
     say = progress or (lambda _message: None)
 
     name, entry, index = _locate(manifest, scenario_id_)
@@ -833,6 +983,7 @@ def set_max_steps(
     """
     bank_dir = Path(bank_dir)
     manifest = read_manifest(bank_dir)
+    _procedural(manifest, "budget")
     say = progress or (lambda _message: None)
 
     if max_steps is not None and max_steps < 1:
@@ -875,6 +1026,7 @@ def set_options(
     """
     bank_dir = Path(bank_dir)
     manifest = read_manifest(bank_dir)
+    _procedural(manifest, "options")
     say = progress or (lambda _message: None)
 
     chosen = dict(levels)
@@ -896,6 +1048,23 @@ def set_options(
         if axis in chosen:
             say(f"{axis} pinned at {chosen[axis]}")
     return options
+
+
+def _procedural(manifest: Manifest, command: str) -> None:
+    """Refuse an edit that only means something on a generated bank.
+
+    The five editing commands are all built on a seed: `replace` and `add` rebuild a road,
+    `budget` declares a cap the route length implies, `options` pins knobs. An imported bank has
+    none of those -- its scenarios are recordings -- so this says so by name rather than letting
+    the edit reach a `RealWorldEntry` and fail on a missing attribute.
+    """
+    if manifest.source != "pg":
+        raise BankError(
+            f"`{command}` edits a procedurally generated bank and {manifest.bank_id} is "
+            f"{manifest.source!r}. Its scenarios are recordings: there is no seed to rebuild, no "
+            "exit to pin, and the step cap is the recording's own length. Re-import it with "
+            "`scenariobank import` instead."
+        )
 
 
 def _next_index(entry: CategoryEntry) -> int:
@@ -1190,6 +1359,8 @@ __all__ = [
     "CategoryEntry",
     "Manifest",
     "OptionLevels",
+    "RealWorldEntry",
+    "RealWorldRow",
     "ScenarioNotFound",
     "ScenarioRow",
     "SimulatorInfo",

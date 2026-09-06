@@ -22,6 +22,7 @@ Every command is `uv run scenariobank <command>`.
 | re-measure the destinations reference | [`destinations`](#destinations) |
 | see what is in a converter workspace before importing it | [`workspace`](#workspace) |
 | know what must be brought over when I import one | [`importing`](#importing) |
+| turn a converter workspace into a bank | [`import`](#import) |
 | set the traffic level once instead of on every run | [`options`](#options) |
 | do all of that by looking rather than typing | [`studio`](#studio) |
 
@@ -256,7 +257,7 @@ uv run scenariobank importing -p ../wingfin-osm-scenarionet-converter/workspaces
 
 ## Build and correct
 
-The ones that write into a bank, and the one that writes this page. `generate` makes a bank; the four after it change one scenario of one that exists.
+The ones that write into a bank, and the one that writes this page. `generate` makes a bank out of seeds and `import` makes one out of a recording; the four after them change one scenario of a bank that already exists.
 
 ### `generate`
 
@@ -282,6 +283,39 @@ uv run scenariobank generate -o ./banks/b --bank-id b                        # a
 uv run scenariobank generate -o ./banks/b --bank-id b \
     --seeds 0,1,2,3,4 --seeds curve=0,1,2,3,22                               # one category on its own seeds
 uv run scenariobank generate -o /tmp/b --bank-id b -c curve --no-thumbnails  # one category, no PNGs
+```
+
+### `import`
+
+Turn a converter workspace into a bank, beside the procedural ones.
+
+One workspace becomes one bank holding one category, named after the workspace. The dataset is
+**copied in, not referenced**: a bank is mounted into a container and shipped to a rig, and a
+path into somebody's home directory is not. `junction-1` costs 50 MB at 100 Hz and 5.5 MB at
+10 Hz, which is the first thing in this project that makes a bank expensive to move.
+
+The rate is the one choice here that cannot be undone. `--decision-hz` is a stride in the
+runner's own loop and is never written into a bank, so it stays adjustable per run forever;
+`step_hz` is fixed when the pickle is written. Importing at 100 Hz keeps every decision rate
+that divides 100 available, and importing at 10 caps every future run at 10.
+
+Refused rather than imported: a workspace whose stage 5 did not pass, one that drives on the
+other side of the road, a rate it holds no conversion at, and an output directory that already
+holds a procedurally generated bank. Builds no environment and imports no simulator.
+
+What comes over and what is left behind is `docs/reference/importing.md`, which is generated
+from the same module as this command.
+
+| flag | | repeats | meaning |
+|---|---|---|---|
+| `--path/-p <path>` | **required** |  | The converter workspace to import, the one holding source/manifest.json. |
+| `--out/-o <path>` | **required** |  | Bank directory to write. Created if absent. |
+| `--bank-id <str>` | optional |  | Name recorded in the manifest. Defaults to the workspace's. |
+| `--rate <float>` | default `100.0` |  | Which conversion to take, in Hz. 100 keeps every decision rate that divides it. |
+
+```bash
+uv run scenariobank import -p ../wingfin-osm-scenarionet-converter/workspaces/junction-1 -o banks/junction-1    # 50 MB at the 100 Hz default
+uv run scenariobank import -p ../wingfin-osm-scenarionet-converter/workspaces/mosque -o banks/mosque --rate 10  # 5.5 MB, and capped at 10 Hz forever
 ```
 
 ### `replace`

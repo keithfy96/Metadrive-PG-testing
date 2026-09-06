@@ -9,7 +9,7 @@ import typer
 from scenariobank.categories import CATEGORIES, SEEDS, CategoryError, get_category
 from scenariobank.doctor import DoctorError, collect, format_report, has_simulator
 from scenariobank.doctor import check as check_report
-from scenariobank.importing import EXAMPLE_WORKSPACE, IMPORTING_DOC
+from scenariobank.importing import DEFAULT_RATE, EXAMPLE_WORKSPACE, IMPORTING_DOC
 from scenariobank.logging import configure_logging
 from scenariobank.sockets import SocketError, read_sockets, select_exit
 from scenariobank.workspace import WorkspaceError
@@ -905,6 +905,75 @@ def importing(
         typer.echo(f"importing failed: {error}", err=True)
         raise typer.Exit(code=1) from error
     typer.echo(f"importing written: {written}")
+
+
+@app.command("import")
+def import_cmd(
+    path: Annotated[
+        Path,
+        typer.Option(
+            "--path",
+            "-p",
+            help="The converter workspace to import, the one holding source/manifest.json.",
+        ),
+    ],
+    out: Annotated[
+        Path, typer.Option("--out", "-o", help="Bank directory to write. Created if absent.")
+    ],
+    bank_id: Annotated[
+        str | None,
+        typer.Option(
+            "--bank-id", help="Name recorded in the manifest. Defaults to the workspace's."
+        ),
+    ] = None,
+    rate: Annotated[
+        float,
+        typer.Option(
+            "--rate",
+            help="Which conversion to take, in Hz. 100 keeps every decision rate that divides it.",
+        ),
+    ] = DEFAULT_RATE,
+) -> None:
+    """Turn a converter workspace into a bank, beside the procedural ones.
+
+    One workspace becomes one bank holding one category, named after the workspace. The dataset is
+    **copied in, not referenced**: a bank is mounted into a container and shipped to a rig, and a
+    path into somebody's home directory is not. `junction-1` costs 50 MB at 100 Hz and 5.5 MB at
+    10 Hz, which is the first thing in this project that makes a bank expensive to move.
+
+    The rate is the one choice here that cannot be undone. `--decision-hz` is a stride in the
+    runner's own loop and is never written into a bank, so it stays adjustable per run forever;
+    `step_hz` is fixed when the pickle is written. Importing at 100 Hz keeps every decision rate
+    that divides 100 available, and importing at 10 caps every future run at 10.
+
+    Refused rather than imported: a workspace whose stage 5 did not pass, one that drives on the
+    other side of the road, a rate it holds no conversion at, and an output directory that already
+    holds a procedurally generated bank. Builds no environment and imports no simulator.
+
+    What comes over and what is left behind is `docs/reference/importing.md`, which is generated
+    from the same module as this command.
+    """
+    from scenariobank.bank import BankError
+    from scenariobank.importing import import_workspace
+
+    try:
+        manifest = import_workspace(
+            path,
+            out,
+            bank_id=bank_id,
+            rate=rate,
+            progress=lambda message: typer.echo(message, err=True),
+        )
+    except (BankError, WorkspaceError, ValueError) as error:
+        typer.echo(f"import failed: {error}", err=True)
+        raise typer.Exit(code=1) from error
+
+    entry = next(iter(manifest.categories.values()))
+    count = len(entry.scenarios)
+    typer.echo(
+        f"{count} {'scenario' if count == 1 else 'scenarios'} at {entry.step_hz:g} Hz "
+        f"-> {out / 'manifest.json'}"
+    )
 
 
 @app.command()

@@ -42,8 +42,9 @@ GROUPS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     (
         "Build and correct",
         "The ones that write into a bank, and the one that writes this page. `generate` makes a "
-        "bank; the four after it change one scenario of one that exists.",
-        ("generate", "replace", "add", "remove", "budget", "options", "commands"),
+        "bank out of seeds and `import` makes one out of a recording; the four after them change "
+        "one scenario of a bank that already exists.",
+        ("generate", "import", "replace", "add", "remove", "budget", "options", "commands"),
     ),
     (
         "Do all of it in a page",
@@ -118,6 +119,20 @@ EXAMPLES: dict[str, tuple[tuple[str, str], ...]] = {
             "uv run scenariobank importing"
             " -p ../wingfin-osm-scenarionet-converter/workspaces/mosque -o /tmp/mosque.md",
             "the same checklist against another workspace",
+        ),
+    ),
+    "import": (
+        (
+            "uv run scenariobank import"
+            " -p ../wingfin-osm-scenarionet-converter/workspaces/junction-1"
+            " -o banks/junction-1",
+            "50 MB at the 100 Hz default",
+        ),
+        (
+            "uv run scenariobank import"
+            " -p ../wingfin-osm-scenarionet-converter/workspaces/mosque"
+            " -o banks/mosque --rate 10",
+            "5.5 MB, and capped at 10 Hz forever",
         ),
     ),
     "generate": (
@@ -196,6 +211,7 @@ INDEX: tuple[tuple[str, str], ...] = (
     ("re-measure the destinations reference", "destinations"),
     ("see what is in a converter workspace before importing it", "workspace"),
     ("know what must be brought over when I import one", "importing"),
+    ("turn a converter workspace into a bank", "import"),
     ("set the traffic level once instead of on every run", "options"),
     ("do all of that by looking rather than typing", "studio"),
 )
