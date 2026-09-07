@@ -2552,9 +2552,17 @@ the reader. **Met** — 546 tests pass, `uv run scenariobank importing` leaves t
 
 **Goal:** the piece the frontend calls.
 
+*(Re-read 2026-09-07 against the code after Phase 3 Step 6. What that pass changed: Step 3's
+`horizon` claim was reversed by Step 6's measurement and is corrected; every line reference in
+Step 2 had drifted and is re-pinned; the bank the verification blocks named, `pg-bank-2026-08`,
+does not exist and every block now names one that does; `obstacles.py`, `actors.py` and the
+invariance tests had no step and are Step 4b; the bundled expert's nondeterminism, the `lights`
+axis in the tier table, and the X-block trap under Step 5's only bank are each named where they
+bite; and every step now has a **Verify alone** command block with an expectation.)*
+
 ## Steps — the runner first, the cameras on top of it
 
-Eight checkpoints, each one testable alone. **They deliberately do not run in the order the
+Nine checkpoints, each one testable alone. **They deliberately do not run in the order the
 build notes were written in.** The notes lead with the AV3 port because that is the interesting
 part; the work leads with `resolve_options` and env construction because a runner that is
 reproducible against a two-line `ConstantPolicy` is the thing every later step is debugged
@@ -2565,12 +2573,26 @@ when a six-camera run disagrees with a diagnostic one, the disagreement is the r
 Markers follow the table under **Reading the markers**: ⬜ not started, 🔨 started, ✅ done when
 that step's **Verify alone** is met.
 
-**Every step below is written for a procedural bank.** Phase 3 adds a second kind, and the four
-places that differ are marked *(PG only)* where they appear. The seam that keeps them one runner
-is a single function between "a category and its rows" and "an env plus a per-row prepare step":
-`MetaDriveEnv` + `set_route` for PG, `ScenarioEnv` + `start_scenario_index` for a stored scenario.
-Above that line the run loop, the result record and the reproducibility diff never learn which kind
-they are driving.
+**Every step below is written for a procedural bank.** Phase 3 adds a second kind, and the seam
+that keeps them one runner is a single function between "an entry and its rows" and "an env plus
+a per-row prepare step". Written out for both entry kinds, because the plan used to say "four
+places differ" and marked one:
+
+| | procedural (`CategoryEntry`) | recorded (`RealWorldEntry`) |
+|---|---|---|
+| env | `MetaDriveEnv(base_config(map, start_seed, num_scenarios))` | `ScenarioEnv(replay_config(...))` — Phase 3 Step 6's |
+| `horizon` | `entry.max_steps` | `entry.max_steps` — both entry kinds carry the field (`bank.py:159`, `:299`) |
+| select a row | `reset(seed=row.seed)` | `reset(seed=row.scenario_index)` — both bound an *index*, so `num_scenarios_for` applies to both |
+| prepare | `navigation.set_route(env.agent.lane_index, row.destination)` | nothing; the recording already has its route |
+| loop cap | `entry.budget_for(row)` | `entry.budget_for(row)` — same name on both (`bank.py:170`, `:302`) |
+| options | the six axes, resolved by Step 1 | `no_traffic=False`, `no_light=False`, `reactive_traffic=False`, pinned |
+| observation | `OBSERVATION_SHAPE` = 19 | `SCENARIO_OBSERVATION_SHAPE` = 31 |
+
+Above that line the run loop, the result record and the reproducibility diff never learn which
+kind they are driving. **The loop already exists**: `replay.drive` (Phase 3 Step 6) is the only
+`env.step` in the repo, and it refused procedural banks precisely so it would not become a second
+runner. Step 2 moves that loop into `runner.py` and turns `replay` into a caller of it; from then
+on `grep -n "env.step(" src/` returns one site, and that is a **Done when** condition below.
 
 ### Step 1 — `resolve_options()`: names in, numerics out ⬜
 
@@ -2579,70 +2601,101 @@ The only piece of this phase with no environment in it, so it goes first and sta
 - `resolve_options()` reads `manifest.options` as its defaults, expands tiers, applies explicit
   flag overrides, and returns level names *and* numerics.
 - The axis names and levels already exist in `options.py` (schema 1.2, `scenariobank options`);
-  only the `LEVELS` numerics and this resolver are new. `LEVELS` is Phase 4b's to calibrate — this
-  step ships placeholder numerics and the resolver that reads them, not the values.
-- The resolver is `options_for(entry, row)` from the start (Step 10c), so per-scenario overrides
-  can be added later without touching a call site.
+  `LEVELS`, `TIERS` and this resolver are new. `LEVELS` is Phase 4b's to calibrate — this step
+  ships placeholder numerics and the resolver that reads them, not the values. Two shapes of the
+  placeholder are pinned anyway, because they are traps and not calibration: `traffic none` is
+  exactly `0.0`, and every other traffic numeric is `>= 0.01` (`traffic_manager.py:65-67`
+  short-circuits below that, so a smaller "low" is silently "none").
+- **The resolver is `options_for(entry, row)`.** Step 10c *named* that signature so per-scenario
+  overrides could be added later without touching a call site; it did not build it —
+  `options.py` is 51 lines exporting `AXES`, `LEVEL_NAMES` and `Level`. This step builds it.
+- Raw values stay reachable: `--traffic medium` and `--traffic-density 0.15` must both work
+  (house style in the converter repo is raw values). A raw value resolves to the nearest level
+  name *and* records the raw number, so the result still carries both.
+- **`lights` is Phase 8's**, and the tier table under **The levels** says `medium` is `lights=low`
+  and `hard` is `lights=medium`. Until Phase 8 lands, `resolve_options` refuses `lights` above
+  `none` by name — "the Lights axis is Phase 8" — and the shipped `TIERS` carry `lights=none`
+  with a note saying which values Phase 8 flips them to. The alternative is a `--tier hard` that
+  either silently drops an axis or raises deep inside env construction.
 - **The six axes are PG-only.** On a stored scenario (Phase 3) traffic, cones, barriers and lights
   come from the recording, and `ScenarioEnv` offers `no_traffic`, `no_light` and `reactive_traffic`
   instead. `resolve_options` must not assume an axis name means the same thing on both kinds; the
-  resolved record says which kind it resolved for.
+  resolved record says which kind it resolved for (`kind: "pg"` | `"recorded"`).
 
-**Verify alone:** unit tests only, no simulator. A bank pinned at `traffic medium` resolves to
-`medium` with no flags, to `hard`'s numerics under `--tier hard`, and to `low` under an explicit
-`--traffic low` over a `--tier hard`; every returned record carries both the name and the number.
+**Verify alone** — unit tests only, no simulator:
 
-### Step 2 — env construction from a bank ⬜  *(PG only)*
+```bash
+uv run pytest tests/unit/test_options.py -q
+```
+**Expect**, against `banks/curve`'s pinned block (traffic=low, cones=medium, barriers=high,
+pedestrians=low): no flags resolves to exactly those names; `--tier hard` to
+high/medium/medium/medium/low/none; `--tier hard --traffic low` to low, and hard everywhere else;
+every record carries `kind: "pg"`, the six names and the six numerics; `traffic none` is `0.0` and
+every other traffic numeric is `>= 0.01`; `--lights low` is refused with a sentence naming Phase 8;
+a `source: "osm-scenario"` manifest resolves to `kind: "recorded"` with the three replay flags and
+no axes.
 
-Build the env the manifest describes, and prove the three config keys that silently do nothing
-when they are wrong. **A bank is a recipe, not a saved scenario** — see Phase 2's **Scope** and
-**Stored normalized, applied at run time** — so this step is that recipe's reader, and everything
-in it is procedural-only: a stored scenario has no seed, no `start_seed` and no `horizon`.
+### Step 2 — env construction from a bank, and the one loop ⬜
+
+Build the env the manifest describes, behind the seam in the table above, and prove the three
+config keys that silently do nothing when they are wrong. **A bank is a recipe, not a saved
+scenario** — see Phase 2's **Scope** and **Stored normalized, applied at run time** — so this step
+is that recipe's reader. The procedural half is new; the recorded half is `replay_config`, already
+built. What is PG-only is the map build, `set_route`, and the six axes — *not* `horizon` and not
+seed selection, which the table shows both kinds have.
 
 **Already built — reuse it, do not restate it.** Three of the things this step used to describe as
 new work already exist, with the reasoning in their own docstrings:
 
-- **`num_scenarios_for(seeds)` — `bank.py:256`**, whose docstring already carries the
+- **`num_scenarios_for(seeds)` — `bank.py:412`**, whose docstring already carries the
   `base_env.py:926` argument: `num_scenarios` reads as a count and is not one, it bounds an
   *index*, and sizing it `len(seeds)` raises `scenario_index (seed) should be in [0:N)` the moment
   the seeds are not contiguous. That is live rather than hypothetical — `banks/curve` holds seeds
-  `[30, 1, 2, 3, 22]`, so its `num_scenarios` is 30 for five scenarios, and
-  `banks/t-junction-left-intersection` holds `[0, 28, 2, 4]`.
-- **Grouping and `start_seed` — `bank.py:411-412`.** `generate` already groups by
-  `(block_seq, seeds)`; the runner groups by **category** instead, because what it needs one env
-  for is one `horizon`.
-- **`base_config()` — `config.py:38`**, with `_PER_RUN_KEYS` (`bank.py:80`) already naming `map`,
+  `[30, 1, 2, 3, 22]`, so its `num_scenarios` is 31 for five scenarios, and
+  `banks/t-junction-left-intersection`'s `t_junction` holds `[0, 28, 2, 4]`.
+- **Grouping and `start_seed` — `bank.py:563`.** `generate` already groups by
+  `(block_seq, seeds)` through `_by_block_seq`; the runner groups by **entry** instead, because
+  what it needs one env for is one `horizon`.
+- **`base_config()` — `config.py:59`**, with `_PER_RUN_KEYS` (`bank.py:85`) already naming `map`,
   `start_seed` and `num_scenarios` as the three a caller supplies.
+- **`replay_config()` and `replay.drive()` — `replay.py`**, the recorded half of the seam and the
+  loop, both from Phase 3 Step 6.
 
 **New here:**
 
-- **`horizon` = the category's `max_steps`.** `base_config` pins `horizon: 1000` (`config.py:80`)
-  and nothing maps a category onto it yet, which matters — `t_junction` is 320 and `CCS_only` 1320.
-  **`horizon` is the config key** (`metadrive_env.py:60`); `max_step` is a `TerminationState` field
-  and setting it does nothing.
-- **The step loop enforces `budget_for(row)`** (`bank.py:165`), which is a *per-row* cap: a row's
-  own `max_steps` when it declares one, else its category's. One env cannot carry two horizons, so
-  these two are not the same number — `horizon` is a coarse env-level guard, and the loop cap is
-  what actually bounds the episode and what the result records. It is also what makes a `horizon`
-  that failed to take a bounded run rather than a silent 1000-step one.
+- **`env.py`** — `build_env(entry, options)` returning the env plus a `prepare(row)` callable, one
+  branch per entry kind. `runner.py` takes the step loop from `replay.py`; `replay` becomes a
+  caller of it, lifts its procedural refusal, and drives both kinds — `--decision-hz` keeps its
+  Phase 3 meaning on both (a stride counted in our loop, never a MetaDrive key).
+- **`horizon` = the entry's `max_steps`.** `base_config` pins `horizon: 1000` (`config.py:101`)
+  and nothing maps an entry onto it yet, which matters — `t_junction` is 320 and `CCS_only` 1320.
+  **`horizon` is the config key** (`metadrive_env.py:58`); `max_step` is a `TerminationState` field
+  and setting it does nothing. On the recorded kind `replay_config` already does this.
+- **The step loop enforces `budget_for(row)`** (`bank.py:170`, `:302`), which is a *per-row* cap:
+  a row's own `max_steps` when it declares one, else its entry's. One env cannot carry two
+  horizons, so these two are not the same number — `horizon` is a coarse env-level guard, and the
+  loop cap is what actually bounds the episode and what the result records. It is also what makes
+  a `horizon` that failed to take a bounded run rather than a silent 1000-step one. Belt and
+  braces on both kinds, identically.
 - **Pin the destination *after* the reset**, with `navigation.set_route(env.agent.lane_index,
-  node)` as `bank.py:1121` and `variety.py:124` already do — **not** through
+  node)` as `bank.py:1299` and `variety.py:124` already do — **not** through
   `vehicle_config["destination"]`, which is read at construction. Destinations vary *inside* a
   category: `banks/t-junction`'s `t_junction` is `1T0_1_` at seeds 0 and 4 and `1T2_1_` at 2 and 3,
-  because `StdTInterSection` exposes a different arm per seed. One env per category and a
+  because `StdTInterSection` exposes a different arm per seed. One env per entry and a
   construction-time destination cannot both hold. `set_route` is reproducibility-safe for the
   reason Phase 2 recorded — `auto_assign_task` draws its throwaway destination from
   `get_np_random(random_seed)`, a *fresh* generator rather than a manager's stream — and it raises
-  on an unreachable node (`bank.py:1093`), which is the failure you want.
+  on an unreachable node (`bank.py:1271`), which is the failure you want.
   **`bank.py:10-12` says the opposite and must be corrected with this step**: the module docstring
   tells the runner to pin `vehicle_config["destination"]`, which is where this step's wording came
-  from.
-- Register `VRUManager` and (Phase 8) `PGTrafficLightManager` only when their axis is above
-  `none` — the obstacle manager is MetaDrive's own and `metadrive_env.py:296-300` already
-  registers it conditionally.
-- Wire `crash_human_penalty` / `crash_human_cost`, mirroring `crash_object`'s 5.0 / 1.0 —
-  termination is already wired, the reward/cost pair is not (`metadrive_env.py:74-83`).
-  `grep -rn crash_human src/` returns nothing today.
+  from. Still there, confirmed 2026-09-07.
+- **Collisions are counted on the rising edge**, here, because the loop is here. `crash_vehicle`
+  and its siblings are per-step booleans (`base_vehicle.py:43-45`, set at `:788-794`) and
+  `contact_results` is a set of *type names* (`:61`, `:798`), so "once per vehicle per episode"
+  needs an identity MetaDrive does not hand over. Counting each flag's low-to-high transitions is
+  the cheap correct thing and is what the converter's complaint — a per-step count "reports one
+  collision as thirty, and the number describes the frame rate" — is actually about. Per-vehicle
+  identity via the `contactTest` nodes (`:755-760`) is a Step 3 check to attempt, not a promise.
 
 **No map cache on disk — measured, do not re-propose.** `store_map=True` is MetaDrive's own default
 (`metadrive_env.py:34`) and `base_config` does not touch it, so `PGMapManager.maps`
@@ -2665,39 +2718,80 @@ is about 0.1% of a run. A persistent cache would buy those seconds back while re
 cross-batch map identity the old Phase 3's `verify` existed to prove, and that was deleted on
 2026-08-31.
 
-**Verify alone:** drive a bank category with zero actions and no result file. Every seed in the
-manifest resets without the `start_index` assert; an episode on a category whose `max_steps` is
-200 ends at 200 steps and not 1000; a row with its own budget ends at *its* number; and the ego's
-route matches the manifest row on a category whose destinations differ by seed.
+**Verify alone** — drive with a zero action and no result file, which is what `replay` is for:
+
+```bash
+uv run scenariobank replay --bank banks/curve                                     # seed 30: no start_index assert
+uv run scenariobank replay --bank banks/t-junction --scenario t_junction_0000     # ends at 320, not 1000
+uv run scenariobank replay --bank banks/t-junction --scenario CCS_only_0000       # ends at 1320
+uv run scenariobank replay --bank banks/t-junction-left-intersection --scenario t_junction_0001 --json \
+  | jq '{seed, destination, steps, ended_by, observation_shape}'                # seed 28 -> 1T2_1_
+cp -r banks/t-junction /tmp/scratch-tj && uv run scenariobank budget --bank /tmp/scratch-tj \
+  --scenario t_junction_0000 --max-steps 100 && uv run scenariobank replay --bank /tmp/scratch-tj \
+  --scenario t_junction_0000                                                     # ends at 100
+uv run scenariobank replay --bank banks/junction-1                                # unchanged: 3782, [31]
+uv run pytest tests/unit/test_env.py tests/unit/test_replay.py -q
+```
+**Expect:** every seed in every PG manifest resets; a zero action on `t_junction` ends at 320 with
+`max_step`; `CCS_only` at 1320; the scratch row at 100 while its sibling rows still end at 320;
+`Episode.destination` (new field, read off `navigation` after `set_route`) equals the manifest
+row's on both `t_junction` rows whose destinations differ; `observation_shape` is `[19]` on every
+PG bank and `[31]` on `junction-1`, asserted against the two `config.py` constants by kind; the
+Phase 3 Step 6 tests pass unchanged. `test_env.py` pins offline that a PG entry's config has
+`horizon == entry.max_steps`, `num_scenarios == num_scenarios_for(seeds)` and `start_seed ==
+min(seeds)`, and that a recorded entry's config is `replay_config`'s dict.
 
 ### Step 3 — the result record, and a batch that never aborts ⬜
 
 The schema everything downstream reads. Built before any policy worth scoring, so the record is
-designed once rather than grown around whatever the first run happened to emit.
+designed once rather than grown around whatever the first run happened to emit. **The fields are
+named here**, because Steps 4-5, Phase 5 Step 4 and Phase 7 all `jq` them and this plan had been
+inventing them at each site:
 
-- Per scenario record: `success` (`info["arrive_dest"]`), `failure_reason` taken from the
-  `TerminationState` fields — `arrive_dest, out_of_road, max_step, crash_vehicle, crash_object,
-  crash_human, crash_building, crash_sidewalk, idle` — as a **string, not a boolean**, plus steps,
-  cumulative reward, cumulative cost, wall time, and the fully expanded options.
-- **Collision accounting** (needed by Phase 4b, cheap to build now): record ego-involved
-  collisions separately from total, and count a collision **once per vehicle per episode, not per
-  step**. Your converter's note: a per-step count "reports one collision as thirty, and the number
-  describes the frame rate."
+- **top level:** `schema_version`, `started_utc`, `bank` (`path`, `id`, `source`, `schema`, and
+  for a recorded bank `provenance` and `attribution` — the entry already carries both),
+  `policy`, `options` (Step 1's record, names and numerics, with its `kind`), `env`
+  (`observation_shape_before`, `observation_shape_after`, `step_hz`, `decision_hz`, `stride`,
+  `metadrive` commit), `results[]`, `summary` (`n`, `success_rate`, `by_failure_reason`,
+  `by_status`).
+- **per result:** `scenario_id`, `category`, `seed` or `scenario_index`, `status` (`ok` |
+  `error`), `success` (`info["arrive_dest"]`), `failure_reason`, `steps`, `actions`, `reward`,
+  `cost`, `wall_time_s`, `collisions` (`{vehicle, object, human, building, sidewalk}`, rising-edge
+  counts from Step 2), `route_completion`, `actions_digest` (`fingerprint.sha256_hex` over the
+  per-decision action stream — what Step 8 diffs), and `traceback` on an error.
+- **`failure_reason` is a string, not a boolean**, taken from the `TerminationState` keys
+  *actually present in `info`* in a fixed precedence. The list this plan used to carry included
+  `idle`, which `TerminationState` defines (`constants.py:34`) but nothing in `metadrive_env.py`,
+  `base_env.py` or `scenario_env.py` ever writes; `crash` (the aggregate) and `env_seed` *are*
+  written and were not in the list. `replay.ENDINGS` is already the measured list; promote it.
 - `--save-trajectories` optional (off by default; the only large artifact).
-- **Never abort the batch**: catch per-episode, record `status:"error"` + traceback, continue.
-- **The step-loop cap is not only defence in depth.** On a stored scenario `horizon` is `None` and
-  `ScenarioEnv` runs past the end of its recording without truncating — measured, 4000 steps on a
-  3782-frame scenario with `max_step: False`. There the cap is the *only* thing that ends the
-  episode, so it belongs here rather than in Step 2 with the PG env keys.
+- **Never abort the batch**: catch per-episode, record `status: "error"` + traceback, continue.
+- **`horizon` and the loop cap are the same belt and braces on both kinds.** *(Corrected
+  2026-09-07 — this bullet used to say a stored scenario's `horizon` is `None` and the loop cap is
+  the only thing that ends it. Phase 3 Step 6 measured otherwise: `ScenarioEnv.done_function`
+  reads `horizon` (`scenario_env.py:162`), it was simply never set, and `replay_config` now sets
+  it to the row's budget. With it unset the env does run past the end of the recording in
+  silence — 6000 frames of a 3782-frame scenario, neither terminated nor truncated — which is
+  why the loop cap stays as well.)*
+- `replay.Episode` is subsumed: `replay --json` prints one result of this shape.
 
-**Verify alone:** *(old test 4)*
+**Verify alone:** *(old test 4, plus the recorded kind)*
 
 ```bash
-uv run scenariobank run --policy scenariobank.policies:RaisingPolicy ...
+uv run scenariobank run --bank banks/t-junction-left-intersection --categories t_junction \
+  --policy scenariobank.policies:RaisingPolicy --out raising.json; echo "exit=$?"
+jq '.summary.by_status, (.results[0] | {scenario_id, status, traceback})' raising.json
+uv run scenariobank run --bank banks/junction-1 \
+  --policy scenariobank.policies:ConstantPolicy --out stored.json
+jq '.results[] | {scenario_id, steps, failure_reason, status}, .env.observation_shape_after, .bank.attribution' stored.json
+uv run pytest tests/unit/test_results.py tests/unit/test_runner.py -q
 ```
-
-**Expect:** every scenario present in `results` with `status:"error"` and a traceback; the process
-still exits 0 and writes the file.
+**Expect:** exit 0 both times and both files written; `by_status` is `{"error": 4}` and each
+traceback names `RaisingPolicy`; the recorded run has one result at `steps: 3782`,
+`failure_reason: "max_step"`, `status: "ok"`, shape `[31]`, and `attribution` copied from the
+entry. Offline: the record round-trips through pydantic with `extra="forbid"`; `failure_reason`
+precedence is pinned against a hand-built `info` carrying `crash` and `env_seed`; a collision flag
+held high for thirty steps counts once.
 
 ### Step 4 — the reference policies: floor and ceiling ⬜
 
@@ -2708,66 +2802,116 @@ still exits 0 and writes the file.
 - Two are shipped: `ConstantPolicy` (a fixed action) and `ExpertPolicy`, a wrapper around
   MetaDrive's bundled PPO expert (`metadrive/examples/ppo_expert/`). Per the
   **No lidar** section, it holds the env and ignores its `observation` argument.
+- **`ExpertPolicy` calls `expert(vehicle, deterministic=True)`.** The default is
+  `deterministic=False` (`numpy_expert.py:39`), and on that path the action is
+  `np.random.normal(mean, std)` from the **global** numpy RNG (`:75`) — nothing MetaDrive seeds.
+  Left at the default, Step 5's reproducibility diff is non-empty by construction, and the error it
+  produces there looks like a runner bug. So "two expert runs diff empty" is this step's own check.
 - The runner records the observation shape *after* the last expert episode and **fails the run if
-  it moved**: `numpy_expert.py:48-49` admits its config restore is incomplete. The check is *"the
+  it moved**: `numpy_expert.py:49` admits its config restore is incomplete. The check is *"the
   shape did not move during this run"*, **not** a literal 19: measured (Phase 3 Step 6), the same
   `agent_observation` on a stored scenario observes **31**, because `ScenarioEnv` gives the ego a
   `TrajectoryNavigation` reporting 22 scalars where `NodeNetworkNavigation` reports 10. Both
   numbers are in `config.py`; neither is written anywhere else.
 
-**Verify alone:** *(old tests 1, 2 and 2b)*
+**Verify alone:** *(old tests 1, 2 and 2b, plus determinism)*
 
 ```bash
+uv run pytest tests/unit/test_policies.py -q      # load_policy resolves and refuses a non-callable; ConstantPolicy -> 2-vector
+B=banks/t-junction-left-intersection
 # 1. Floor: a constant-action policy should mostly fail
-uv run scenariobank run --bank ./banks/pg-bank-2026-08 \
-  --categories intersection_left --policy scenariobank.policies:ConstantPolicy \
-  --out floor.json
-jq '.summary' floor.json
-```
-**Expect:** `success_rate` near 0, `by_failure_reason` dominated by `out_of_road` / `max_step`.
-
-```bash
-# 2. Ceiling: the bundled PPO expert should mostly pass
-uv run scenariobank run --bank ./banks/pg-bank-2026-08 \
-  --categories intersection_left --policy scenariobank.policies:ExpertPolicy \
-  --out ceiling.json
-jq '.summary.success_rate' ceiling.json
-```
-**Expect:** substantially above the floor. If floor is approximately ceiling, the runner is not
-actually feeding actions to the env — that is the bug this test exists to catch.
-
-```bash
+uv run scenariobank run --bank $B --categories intersection_left --policy scenariobank.policies:ConstantPolicy --out floor.json
+# 2. Ceiling: the bundled PPO expert should mostly pass -- twice
+uv run scenariobank run --bank $B --categories intersection_left --policy scenariobank.policies:ExpertPolicy --out ceiling.json
+uv run scenariobank run --bank $B --categories intersection_left --policy scenariobank.policies:ExpertPolicy --out ceiling2.json
+jq -s '[.[0].summary.success_rate, .[1].summary.success_rate]' floor.json ceiling.json
 # 2b. The expert must not leak lidar back into the env config
-jq '.env.observation_space_after' ceiling.json
+jq '[.env.observation_shape_before, .env.observation_shape_after]' ceiling.json
+diff <(jq 'del(.started_utc) | del(.results[].wall_time_s)' ceiling.json) \
+     <(jq 'del(.started_utc) | del(.results[].wall_time_s)' ceiling2.json)
 ```
-**Expect:** `[19]` — for a **PG** bank. 19 is a fact about `MetaDriveEnv` with our
-`agent_observation`, not about MetaDrive; the assertion is that it did not move mid-run.
+**Expect:** floor near 0 with `by_failure_reason` dominated by `out_of_road` / `max_step`; ceiling
+substantially above it — if floor is approximately ceiling, the runner is not actually feeding
+actions to the env, which is the bug this test exists to catch; both shapes `[19]` — a fact about
+`MetaDriveEnv` with our `agent_observation`, and the assertion is that it did not move; **the two
+expert runs diff empty**, or `ExpertPolicy` is not passing `deterministic=True`.
+
+### Step 4b — the option managers: `obstacles.py` and `actors.py` ⬜
+
+*(Added 2026-09-07. Both modules are specified in full under **New modules**; the Target layout
+lists them; Step 2 referred to `VRUManager` as if it existed; and Step 5's `--tier hard` cannot
+place anything without them. No step owned them. This one does, sitting after the policies
+because Steps 3-4 do not need a manager and before the gate because the gate cannot pass without
+one.)*
+
+- **`obstacles.py`** — the `TrafficObjectManager` subclass from **New modules**: override
+  `reset()` to choose `prohibit_scene` (cones) or `barrier_scene` (barriers) per axis, placement
+  maths reused whole, registered only when the axis is above `none` the way
+  `metadrive_env.py:296-300` already registers the stock one. Carry in the two facts: the
+  breakdown scene spawns a vehicle, and nothing is placed on `X`, `T` or `O` blocks
+  (`object_manager.py:51-53`).
+- **`actors.py`** — `VRUManager`: spawns in `reset()` from `self.np_random`, patrols between two
+  fixed endpoints via `set_velocity` in `after_step()`, consumes no randomness after reset. Wire
+  `crash_human_penalty` / `crash_human_cost` mirroring `crash_object`'s 5.0 / 1.0
+  (`metadrive_env.py:75`, `:83`) — moved here from Step 2, since nothing crashes into a human
+  before this step. `grep -rn crash_human src/` returns nothing today.
+- **`tests/unit/test_invariance.py`** — Phase 2b's two tests, unwritten since 2026-09-01
+  ("neither test is written"), and required green by Phase 4b and Phase 8. Their stated job is
+  guarding exactly these two managers, so they ship with them: `test_option_levels_do_not_move_
+  the_map_or_route` and `test_random_traffic_breaks_invariance`, as Phase 2b specifies.
+- **The actor determinism test** from **New modules** ships here too, and each result carries the
+  actor-layout digest.
+- **`placed`** — a per-result count of placed objects by class, read off `engine.get_objects()`
+  after reset. It exists so that "the manager is registered but placing nothing" is visible in the
+  result instead of inferred from a success rate.
+
+**Verify alone:**
+
+```bash
+uv run pytest tests/unit/test_invariance.py tests/unit/test_obstacles.py tests/unit/test_actors.py -q
+uv run scenariobank run --bank banks/curve --cones high --policy scenariobank.policies:ConstantPolicy --out cones.json
+uv run scenariobank run --bank banks/t-junction-left-intersection --categories intersection_left \
+  --cones high --policy scenariobank.policies:ConstantPolicy --out cones-x.json
+jq '.results[0].placed' cones.json cones-x.json
+```
+**Expect:** the invariance test green — `lane_geometry_digest` and `navigation.checkpoints`
+identical across levels, `assert_array_equal` not `allclose`; `test_random_traffic_breaks_
+invariance` fails the same comparison, as it must, or a green run proved nothing; two envs at one
+seed and level place identical actor spawns and patrol endpoints; `placed` shows cones on `curve`
+(a `CC` road) and **zero** on `intersection_left` (an `X`) — the documented trap, as a test rather
+than a footnote.
 
 ### Step 5 — reproducibility, and options that do something ⬜  ⟵ *gate*
 
 Nothing after this step is worth debugging until this step passes, which is why the AV3 port
 starts on the other side of it.
 
+Two banks, not one, because `intersection_left` is an `X` block and the obstacle axes place
+nothing there (Step 4b): on that bank "hard is lower than easy" rests on traffic and the actors
+alone. `banks/curve` is where cones and barriers bite.
+
 **Verify alone:** *(old tests 3 and 6)*
 
 ```bash
-# 3. Reproducibility — the real acceptance test
-uv run scenariobank run ... --out r1.json
-uv run scenariobank run ... --out r2.json
-diff <(jq 'del(.started_utc) | del(.results[].wall_time_s)' r1.json) \
-     <(jq 'del(.started_utc) | del(.results[].wall_time_s)' r2.json)
-```
-**Expect: empty.** Identical steps, reward, cost, failure_reason for every scenario. Run it again
-with `--tier hard` so the reproducibility claim covers the option managers too, not just the map.
-
-```bash
+B=banks/t-junction-left-intersection; P=scenariobank.policies:ExpertPolicy
+# 3. Reproducibility -- the real acceptance test, at the hard tier so it covers the managers and not just the map
+for t in easy hard; do for i in 1 2; do
+  uv run scenariobank run --bank $B --categories intersection_left --tier $t --policy $P --out $t$i.json
+done; done
+diff <(jq 'del(.started_utc) | del(.results[].wall_time_s)' hard1.json) \
+     <(jq 'del(.started_utc) | del(.results[].wall_time_s)' hard2.json)
 # 6. Options actually do something
-uv run scenariobank run --categories intersection_left --tier easy --policy ...:ExpertPolicy --out easy.json
-uv run scenariobank run --categories intersection_left --tier hard --policy ...:ExpertPolicy --out hard.json
-jq -s '[.[0].summary.success_rate, .[1].summary.success_rate]' easy.json hard.json
+jq -s '[.[0].summary.success_rate, .[1].summary.success_rate]' easy1.json hard1.json
+uv run scenariobank run --bank banks/curve --tier easy --policy $P --out c-easy.json
+uv run scenariobank run --bank banks/curve --tier hard --policy $P --out c-hard.json
+jq -s '[.[0].summary.success_rate, .[1].summary.success_rate]' c-easy.json c-hard.json
+jq '.results[0].placed' c-hard.json hard1.json
 ```
-**Expect:** hard is lower than easy. If they match, the option managers are registered but not
-placing anything — the same class of bug as floor equals ceiling.
+**Expect: the diff empty** — identical steps, reward, cost, `failure_reason` and `actions_digest`
+for every scenario, with the option managers on. Hard below easy on both banks. `placed` on
+`curve`'s hard run shows cones and barriers; on `intersection_left`'s it shows only actors. If the
+rates match, a manager is registered but placing nothing — the same class of bug as floor equals
+ceiling, and `placed` says which one.
 
 ### Step 6 — the camera rig: six cameras alive on `DefaultVehicle` ⬜
 
@@ -2784,7 +2928,7 @@ fall back when it is shut, it trips an assert whose hint names cupy even when wh
 one of the other two, so having it verified in the image this runs in is worth more than the
 version numbers are.
 
-- `tools/camera_rig.py` — `load_rig()`, `CameraRig.sensors/mount/read`
+- `tools/camera_rig.py` — `load_rig()`, `CameraRig.sensors/mount/read/image_source`
 - `rigs/av3.txt` — the six AV3 cameras, ISO-8855 → CARLA sign rules applied, datum resolved onto
   MetaDrive's `DefaultVehicle`
 - `tools/av3_probe.py` + `scripts/av3-probe.sh` — the sign-convention probe
@@ -2796,7 +2940,7 @@ The camera rig is selected as a **path, not a registry entry**: `--camera-rig ri
 
 Six things that bite, in the order they will bite:
 
-1. **`image_observation=True` is mandatory, and not for the observation.** `base_env.py:342-347`
+1. **`image_observation=True` is mandatory, and not for the observation.** `base_env.py:343-346`
    filters **every `BaseCamera` out of `config["sensors"]`** when `use_render` and
    `image_observation` are both false, to save render passes in headless mode. Leave it off and
    the six-camera rig is silently deleted — no error until `env.engine.get_sensor(camera.name)`
@@ -2805,6 +2949,8 @@ Six things that bite, in the order they will bite:
    Set `vehicle_config["image_source"]` to a rig camera via `CameraRig.image_source()` while you
    are there: left at its `"rgb_camera"` default it registers a **seventh** 320x240 camera that
    nothing reads, renders it every step, and spends one of the nine buffers gotcha 6 is rationing.
+   A rig requested on a run with `image_observation` off is a **refusal naming `base_env.py:343`**,
+   not a `KeyError` from inside `mount()`.
 2. **A partial `sensors=` override wipes `rgb_camera`** and kills the env at construction. Mount
    through `CameraRig.sensors()`, never by hand.
 3. **Rates: `--step-hz 100 --decision-hz 20`.** The bridge's `_DT_MDL` is 0.05 s. `--decision-hz`
@@ -2817,12 +2963,22 @@ Six things that bite, in the order they will bite:
    **not one of them raises when it is wrong** — which is why `scripts/av3-probe.sh` runs before
    anything is scored.
 5. **A rig's `tick_rate` must equal the interval it is actually read at.** Nothing resamples.
-6. **`MAX_IMAGE_BUFFERS = 9` is a hard cap.** panda3d fails *intermittently* past it, so a rig one
-   camera over the line looks like it works and then fails on a run somebody is relying on.
+6. **`MAX_IMAGE_BUFFERS = 9` is a hard cap** — the converter's constant (`tools/camera_rig.py:118`),
+   not MetaDrive's; it does not appear anywhere in the pinned simulator, it was *measured*, and it
+   ports with the rig. panda3d fails *intermittently* past it, so a rig one camera over the line
+   looks like it works and then fails on a run somebody is relying on.
 
-**Verify alone:** `scripts/av3-probe.sh` passes on one scenario — six named sensors mounted,
-buffer count at or under nine, no seventh camera registered, and every sign convention confirmed
-by the probe rather than by reading. No model, no bridge.
+**Verify alone** — in the sim image, because the cupy gate is only known open there:
+
+```bash
+docker run --rm --gpus all -v $PWD:/work metadrive-wingfin-sim:latest \
+  python -m scenariobank replay --bank /work/banks/t-junction --scenario t_junction_0000 \
+  --camera-rig /work/rigs/av3.txt --steps 20 --json | jq '.env.sensors, .env.image_buffers'
+docker run --rm --gpus all -v $PWD:/work metadrive-wingfin-sim:latest bash /work/scripts/av3-probe.sh
+```
+**Expect:** six named sensors and no `rgb_camera` among them; `image_buffers <= 9`; the probe
+confirms every sign convention by measurement rather than by reading. No model, no bridge.
+`replay` gains `--camera-rig` here because it is the diagnostic that already exists.
 
 ### Step 7 — the AV3 model and the openpilot bridge ⬜
 
@@ -2852,9 +3008,20 @@ The other half of the port, plus the two things about it that are not a copy:
   unnecessary. The only real process boundary left is the zapeta bridge, which stays 3.8 in its
   own container.
 
-**Verify alone:** one scenario, `--camera-rig rigs/av3.txt`, bridge up. The model returns an
-action per decision tick at `--decision-hz 20`, a deliberately missing field in the submitted
-`model_dev.yml` raises at load rather than defaulting, and steering sign matches Step 6's probe.
+**Verify alone** — one scenario, rig on, bridge up:
+
+```bash
+bash ../wingfin-osm-scenarionet-converter/scripts/bridge.sh start        # or our copy, once ported
+docker run --rm --gpus all --network host -v $PWD:/work metadrive-wingfin-sim:latest \
+  python -m scenariobank run --bank /work/banks/t-junction --categories t_junction \
+  --policy scenariobank.av3:AV3Policy --camera-rig /work/rigs/av3.txt --decision-hz 20 \
+  --model-config /work/submission/model_dev.yml --out /work/av3.json
+jq '.results[0] | {steps, actions, failure_reason}, .env' av3.json
+uv run pytest tests/unit/test_av3_config.py -q
+```
+**Expect:** `actions == ceil(steps / 5)` at 100 / 20 Hz, with `env.decision_hz` 20 and `stride`
+5; the offline test deletes one field from a copy of the submitted `model_dev.yml` and
+`load_config` raises naming it rather than defaulting; steering sign matches Step 6's probe.
 
 ### Step 8 — an AV3 submission scored end to end ⬜  ⟵ *gate*
 
@@ -2865,10 +3032,36 @@ Cost, and it drives the ETA model in Phase 7 Step 8: **the AV3 forward pass is ~
 50 ms decision. Price a 35-scenario bank before quoting anyone a runtime — and record the measured
 per-scenario wall time here, because Phase 7 Step 8 reads it rather than re-measuring it.
 
-**Verify alone:** Step 5's reproducibility diff, run against the AV3 policy on a small category,
-is still empty; the run records the rig path, the resolved options and a per-scenario wall time.
+**Two claims, not one.** This step used to ask for Step 5's reproducibility diff to be empty
+against the AV3 policy. The AV3 path runs through the openpilot bridge — a real-time control
+stack in its own container, over TCP 5558 — and nothing in this plan has established that it
+returns the same action twice for the same frame. So the claim is split: the **runner** is
+deterministic *given the same actions*, which is Step 5's and is checked through
+`actions_digest`; the **policy's** repeatability is measured and written down, not asserted.
 
-**Done when:** every step above is ✅. Step 5 is the one that matters.
+**Verify alone** — the same small category run twice:
+
+```bash
+diff <(jq '.results[].actions_digest' av3-1.json) <(jq '.results[].actions_digest' av3-2.json)
+diff <(jq 'del(.started_utc) | del(.results[].wall_time_s)' av3-1.json) \
+     <(jq 'del(.started_utc) | del(.results[].wall_time_s)' av3-2.json)
+jq '.results[] | {scenario_id, wall_time_s}, .bank.path, .options' av3-1.json
+```
+**Expect:** if the digests match, the second diff **must** be empty — that is the runner's claim.
+If the digests differ, the second diff will too, and how much and why is recorded in this step's
+done note as a measurement of the policy, with the runner still proven. Either way the run
+records the rig path, the resolved options and a per-scenario wall time, and that wall time is
+copied to Phase 7 Step 8.
+
+**Done when:**
+
+- Steps 1-8 ✅, Step 5 first among equals.
+- `uv run pytest -q` green with the new files, `uv run ruff check src tests` clean.
+- `uv run scenariobank commands` regenerates `docs/reference/commands.md` with `run` grouped —
+  `docs.GROUPS` refuses to render until it is.
+- `replay` and `run` are two callers of one loop: `grep -n "env.step(" src/` returns one site, in
+  `runner.py`.
+- Phase 3 Step 6 and Phase 4 Step 3 say the same thing about `horizon`.
 
 ---
 
