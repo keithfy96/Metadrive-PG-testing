@@ -527,6 +527,167 @@ def test_an_unreadable_manifest_is_listed_with_its_reason(client):
     assert "not valid JSON" in response.json()["detail"]
 
 
+def _real_bank(root, name, *, created="2026-09-01T00:00:00Z", step_hz=100.0,
+               tracks=None, origin=None, scenarios=1):
+    """An imported bank on disk. Written directly rather than through `import_workspace`.
+
+    `test_import.py` owns the copy; what this file needs is the *file* an import leaves behind,
+    so the listing can be asked what it makes of one without a converter checkout in sight.
+    """
+    from scenariobank.bank import (
+        SCHEMA_VERSION,
+        Manifest,
+        Provenance,
+        RealWorldEntry,
+        RealWorldRow,
+        write_manifest,
+    )
+    from scenariobank.handedness import DRIVE_SIDE_LEFT
+
+    directory = root / name
+    directory.mkdir(parents=True)
+    tracks = {"VEHICLE": 120, "PEDESTRIAN": 31} if tracks is None else tracks
+    rows = [
+        RealWorldRow(
+            scenario_id=f"{name}_{index:04d}",
+            scenario_index=index,
+            file=f"sd_{name}_{index}.pkl",
+            stored_id=f"osm-scenario_v1_{name}-{index}",
+            max_steps=3782,
+            route_length_m=395.1,
+            duration_s=3782 / step_hz,
+            tracks=dict(tracks),
+            lights={"TRAFFIC_LIGHT": 8},
+            route=None,
+            thumbnail=None,
+        )
+        for index in range(scenarios)
+    ]
+    write_manifest(
+        directory,
+        Manifest(
+            schema_version=SCHEMA_VERSION,
+            bank_id=name,
+            created_utc=created,
+            source="osm-scenario",
+            metadrive={
+                "edition": None,
+                "dist_version": None,
+                "commit": None,
+                "asset_version": None,
+            },
+            base_config={},
+            drive_side=DRIVE_SIDE_LEFT,
+            categories={
+                name: RealWorldEntry(
+                    description=f"{name}: recorded at {step_hz:g} Hz",
+                    dataset_dir="dataset",
+                    step_hz=step_hz,
+                    origin={"latitude": 3.1478, "longitude": 101.6953}
+                    if origin is None
+                    else origin,
+                    attribution="OpenStreetMap contributors",
+                    provenance=Provenance(
+                        generator_version="v1",
+                        generation_fingerprint="a" * 64,
+                        source_osm_sha256="b" * 64,
+                        reviewed_lane_model_sha256="c" * 64,
+                        stage_5_status="passed",
+                    ),
+                    tool_versions={"osmnx": "2.0.7"},
+                    artifacts={},
+                    copied=[],
+                    signals=None,
+                    max_steps=3782,
+                    scenarios=rows,
+                )
+            },
+        ),
+    )
+    return directory
+
+
+def test_the_listing_says_which_kind_of_bank_each_one_is(client):
+    # The discriminator the page groups on, straight off the manifest. One endpoint and one
+    # listing: the field already exists in the file, so nothing here asks a second time.
+    _bank(client.workdir / "banks", "curvy", created="2026-09-01T00:00:00Z")
+    _real_bank(client.workdir / "banks", "junction-1", created="2026-09-02T00:00:00Z")
+
+    listed = {bank["name"]: bank for bank in client.get("/api/banks").json()}
+    assert listed["curvy"]["source"] == "pg"
+    # The recording's own word for what it is, not "real" -- a converter that starts writing a
+    # second kind says so in the file rather than being flattened here.
+    assert listed["junction-1"]["source"] == "osm-scenario"
+
+
+def test_a_real_world_row_carries_the_place_the_rate_and_the_actors(client):
+    # The three things a recording has and a road built from a seed has no equivalent for. They
+    # are on the row because they are what tells two imports apart in a picker.
+    _real_bank(client.workdir / "banks", "junction-1")
+
+    [row] = client.get("/api/banks").json()
+    assert row["origin"] == {"latitude": 3.1478, "longitude": 101.6953}
+    assert row["step_hz"] == 100.0
+    # Summed across the bank, and the ego is one of the vehicles -- the converter counts it as a
+    # track like every other, and subtracting it here would disagree with `workspace`.
+    assert row["tracks"] == {"PEDESTRIAN": 31, "VEHICLE": 120}
+
+
+def test_the_actors_are_summed_across_the_recordings_in_the_bank(client):
+    _real_bank(client.workdir / "banks", "junction-1", scenarios=3,
+               tracks={"VEHICLE": 2, "CYCLIST": 1})
+
+    [row] = client.get("/api/banks").json()
+    assert row["scenarios"] == 3
+    assert row["tracks"] == {"CYCLIST": 3, "VEHICLE": 6}
+
+
+def test_a_procedural_row_is_exactly_what_it_was_before_the_split(client):
+    # A PG bank has no origin, its rate is a property of the run rather than of the file, and its
+    # traffic is a level a run sets rather than a count. So the fields are absent, not null: the
+    # page needs no second listing and the old one did not change shape.
+    _bank(client.workdir / "banks", "curvy")
+
+    [row] = client.get("/api/banks").json()
+    assert set(row) == {"name", "bank_id", "created_utc", "source", "categories", "scenarios"}
+
+
+def test_a_bank_that_will_not_read_is_filed_under_neither_kind(client):
+    # Nothing was read, so which kind it is is unknown. A row that claimed `pg` would put a
+    # broken import under the procedural heading, which is worse than saying nothing.
+    broken = client.workdir / "banks" / "broken"
+    broken.mkdir(parents=True)
+    (broken / "manifest.json").write_text("{ not json")
+
+    [row] = client.get("/api/banks").json()
+    assert "source" not in row
+    assert row["error"]
+
+
+def test_both_kinds_are_listed_together_newest_first(client):
+    # One list, sorted the one way, and the page groups it. Two endpoints would let the two kinds
+    # sort by different rules and would need the page to merge them back.
+    _bank(client.workdir / "banks", "curvy", created="2026-09-01T00:00:00Z")
+    _real_bank(client.workdir / "banks", "junction-1", created="2026-09-03T00:00:00Z")
+    _bank(client.workdir / "banks", "roundy", created="2026-09-02T00:00:00Z")
+
+    listed = client.get("/api/banks").json()
+    assert [bank["name"] for bank in listed] == ["junction-1", "roundy", "curvy"]
+
+
+def test_an_imported_bank_is_served_and_says_it_is_one(client):
+    # The manifest endpoint is unshaped, so this is really asking that a 1.3 real-world manifest
+    # round-trips through the studio at all -- the listing above reads the same file.
+    from scenariobank.bank import read_manifest
+
+    directory = _real_bank(client.workdir / "banks", "junction-1")
+    served = client.get("/api/banks/junction-1").json()
+
+    assert served == json.loads(read_manifest(directory).model_dump_json())
+    assert served["source"] == "osm-scenario"
+    assert served["categories"]["junction-1"]["step_hz"] == 100.0
+
+
 def test_a_bank_is_served_as_the_manifest_on_disk(client):
     from scenariobank.bank import read_manifest
 

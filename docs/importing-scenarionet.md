@@ -253,7 +253,7 @@ The workspace should be unchanged. A test pins this, and so does the whole suite
 
 ```bash
 uv run pytest tests/unit/test_import.py -v    # 23 tests
-uv run pytest                                  # 474 tests
+uv run pytest                                  # 481 tests
 ```
 
 Three of the import tests need this converter checkout and skip without it.

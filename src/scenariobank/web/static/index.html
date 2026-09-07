@@ -270,6 +270,16 @@ input#bank-find { width: 17rem; font-family: var(--mono); font-size: 12.5px; }
 .bankrow .n { font-family: var(--mono); font-size: 12px; color: var(--ink-2); }
 .bankrow .oops { font-size: 12px; color: var(--bad); }
 .banklist .none { margin: 0; padding: 0.7rem 0.8rem; color: var(--muted); font-size: 12.5px; }
+/* The two kinds of bank are headed inside the one scrolling list rather than split into two
+   boxes: they share a search and a selection, and a second box would say they are two screens.
+   Sticky, so the heading you are reading under stays over its rows as the list scrolls. */
+.banklist .kind {
+  position: sticky; top: 0; z-index: 1;
+  padding: 0.35rem 0.8rem; background: var(--inset); border-bottom: 1px solid var(--hair);
+  font-size: 11px; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase;
+  color: var(--muted);
+}
+.bankrow .where { font-family: var(--mono); font-size: 12px; color: var(--muted); }
 /* Wide enough that the longest id -- `intersection_left_0000` -- fits on one line. An id that
    wraps mid-number is unreadable, and the id is how you name the card to anyone else. */
 .shelf { display: grid; gap: 0.55rem;
@@ -1160,7 +1170,11 @@ function forgetRoadAdd() {
 
 async function listRoadBanks() {
   try {
-    road.banks = await api("/api/banks");
+    // The procedural ones only. `add` lands a road by rebuilding it from a seed, and an imported
+    // bank has no seed to rebuild -- the CLI refuses it by name. Offering it in this dropdown
+    // would be offering a refusal, so the list Step 4 split is filtered here rather than shown
+    // whole and apologised for afterwards.
+    road.banks = (await api("/api/banks")).filter((entry) => entry.source === "pg");
   } catch (error) {
     road.banks = [];
     road.add.note = `the banks could not be listed: ${error.message}`;
@@ -1416,7 +1430,36 @@ const dataset = { banks: null, name: null, stamp: 0 };
 // you are scanning to find "the one I made this morning".
 const when = (stamp) => String(stamp || "").replace("T", " ").slice(0, 16);
 
+// A bank is one kind or the other and `source` is the field that says which -- the same
+// discriminator `Manifest` validates on. A row with no `source` at all is one whose manifest
+// could not be read, so its kind is unknown rather than procedural.
+const isReal = (entry) => Boolean(entry.source) && entry.source !== "pg";
+
+// `{VEHICLE: 120, PEDESTRIAN: 31}` -> `120 vehicles · 31 pedestrians`. The ego is one of the
+// vehicles: the converter counts it as a track like every other, and a row quietly subtracting it
+// would disagree with what `scenariobank workspace` prints about the same recording.
+function actorText(tracks) {
+  return Object.entries(tracks || {})
+    .map(([kind, n]) => `${n} ${kind.toLowerCase().replace(/_/g, " ")}${n === 1 ? "" : "s"}`)
+    .join(" · ");
+}
+
+// What a recording has and a built road has no equivalent for: where on earth it is, and how fast
+// it was sampled. The rate is on the row rather than a click away because it is the one property
+// of an import that cannot be changed afterwards -- see `docs/importing-scenarionet.md`.
+function recordedSub(entry) {
+  const bits = [];
+  if (entry.origin) {
+    bits.push(`${entry.origin.latitude.toFixed(4)}, ${entry.origin.longitude.toFixed(4)}`);
+  }
+  if (entry.step_hz) bits.push(`${entry.step_hz} Hz`);
+  bits.push(when(entry.created_utc));
+  return bits.join(" · ");
+}
+
 function bankRow(entry) {
+  const real = isReal(entry);
+  const actors = real ? actorText(entry.tracks) : "";
   const row = el("div", {
     class: `bankrow${entry.name === dataset.name ? " on" : ""}`,
     role: "button", tabindex: "0", "aria-pressed": String(entry.name === dataset.name),
@@ -1425,12 +1468,22 @@ function bankRow(entry) {
     entry.error
       // Listed rather than dropped, so it carries the one word that says why it is not openable.
       ? el("span", { class: "oops", text: "unreadable" })
+      // A real-world bank holds one category named after the workspace, which is the bank name
+      // again -- so listing it would repeat the row's own first word. The place and the rate are
+      // what is worth the space instead.
       : el("span", {
-          class: "sub",
-          text: `${entry.categories.join(", ")} · ${when(entry.created_utc)}`,
+          class: real ? "where" : "sub",
+          text: real
+            ? recordedSub(entry)
+            : `${entry.categories.join(", ")} · ${when(entry.created_utc)}`,
         }),
     el("span", { class: "spacer" }),
-    el("span", { class: "n", text: entry.error ? "" : `${entry.scenarios} scenarios` }),
+    el("span", {
+      class: "n",
+      text: entry.error ? ""
+        : `${entry.scenarios} ${entry.scenarios === 1 ? "scenario" : "scenarios"}`
+          + (actors ? ` · ${actors}` : ""),
+    }),
   ]);
   const open = () => openBank(entry.name);
   row.addEventListener("click", open);
@@ -1443,17 +1496,43 @@ function bankRow(entry) {
   return row;
 }
 
+// The two kinds, in the order they arrived in the project. A bank built from a seed and a bank
+// converted from a recording are not comparable -- one can be rebuilt and the other cannot -- so
+// they are read as two lists even though they are picked from as one.
+const BANK_GROUPS = [
+  ["Procedural", (entry) => entry.source === "pg"],
+  ["Real world", isReal],
+  // Neither heading is a fact about a bank whose manifest would not read, so it is filed on its
+  // own rather than guessed into one of them.
+  ["Unreadable", (entry) => !entry.source],
+];
+
 // Filters the list rather than replacing it, and matches the scenario types as well as the name:
-// "the roundabout ones" is as likely a question as "the one called b".
+// "the roundabout ones" is as likely a question as "the one called b". One box over both groups,
+// because "the junction one" is a question about the banks and not about a kind of bank.
 function renderBankList() {
   const needle = $("bank-find").value.trim().toLowerCase();
   const shown = (dataset.banks || []).filter((entry) =>
     !needle
     || entry.name.toLowerCase().includes(needle)
     || (entry.categories || []).some((name) => name.toLowerCase().includes(needle)));
-  $("bank-list").replaceChildren(...(shown.length
-    ? shown.map(bankRow)
-    : [el("p", { class: "none", text: `no bank matches "${needle}"` })]));
+  if (!shown.length) {
+    $("bank-list").replaceChildren(
+      el("p", { class: "none", text: `no bank matches "${needle}"` }));
+    return;
+  }
+  const groups = BANK_GROUPS
+    .map(([title, holds]) => [title, shown.filter(holds)])
+    .filter(([, rows]) => rows.length);
+  // A single heading divides nothing, so it is not drawn: a studio holding only generated banks
+  // reads exactly as it did before there was a second kind, and so does a search that narrows to
+  // one of them. The heading appears when there is something to tell apart.
+  const out = [];
+  for (const [title, rows] of groups) {
+    if (groups.length > 1) out.push(el("div", { class: "kind", text: title }));
+    out.push(...rows.map(bankRow));
+  }
+  $("bank-list").replaceChildren(...out);
 }
 
 // One marker per scenario, worst first, built from the category's review. A card carries the
@@ -1527,14 +1606,18 @@ function thumbUrl(bank, row) {
     : null;
 }
 
-function scenarioCard(bank, row, mark) {
+// A recorded row has no seed and no destination -- nothing chose them. What it has instead is
+// what was measured off the recording: how many frames long it is, and how long that took. The
+// grid keeps its shape; only the two captions differ.
+function scenarioCard(bank, row, mark, real) {
   const shot = el("div", { class: "shot" });
   const src = thumbUrl(bank, row);
   if (!src) {
-    shot.appendChild(el("div", { class: "missing", html: "built without a thumbnail" }));
+    shot.appendChild(el("div", { class: "missing",
+      html: real ? "no stage-6 picture" : "built without a thumbnail" }));
   } else {
     const picture = el("img", {
-      src, alt: `${row.scenario_id}, seed ${row.seed}`, loading: "lazy",
+      src, alt: real ? row.scenario_id : `${row.scenario_id}, seed ${row.seed}`, loading: "lazy",
     });
     picture.addEventListener("error", () => {
       shot.replaceChildren(el("div", { class: "missing", html: "picture missing from disk" }));
@@ -1544,20 +1627,33 @@ function scenarioCard(bank, row, mark) {
   const parts = [
     shot,
     el("p", { class: "id", text: row.scenario_id }),
-    el("p", { class: "seed", text: `seed ${row.seed}` }),
+    el("p", { class: "seed",
+              text: real ? `${row.max_steps} frames` : `seed ${row.seed}` }),
     // The two fields that say *why* two seeds drew the same picture. The rest of the row is the
     // panel in step 7; this is the minimum that makes a duplicate legible in a grid.
     el("p", {
       class: "meta",
-      text: `→ ${row.destination} · ${Math.round(row.route_length_m)} m`,
+      text: real
+        ? `${Math.round(row.route_length_m)} m · ${row.duration_s.toFixed(1)} s`
+        : `→ ${row.destination} · ${Math.round(row.route_length_m)} m`,
     }),
   ];
   if (mark) parts.push(el("span", { class: `mark ${mark.kind}`, text: mark.text }));
-  const node = el("div", {
-    class: `shot-card${mark && !mark.kind ? " flagged" : ""}`,
-    "data-id": row.scenario_id,
-    role: "button", tabindex: "0", "aria-pressed": "false",
-  }, parts);
+  // A recorded card is a tile, not a button. Everything the selection panel offers -- the
+  // comparison, `replace`, the edit box -- is built on a seed and a block sequence, and a
+  // recording has neither. A panel of blanks over buttons the CLI refuses is worse than a card
+  // that says it has nothing behind it yet.
+  const node = el("div", real
+    ? {
+        class: "shot-card", "data-id": row.scenario_id,
+        title: "Comparing and replacing are built on seeds, and a recording has none.",
+      }
+    : {
+        class: `shot-card${mark && !mark.kind ? " flagged" : ""}`,
+        "data-id": row.scenario_id,
+        role: "button", tabindex: "0", "aria-pressed": "false",
+      }, parts);
+  if (real) return node;
   const choose = () => pick(bank, row.scenario_id);
   node.addEventListener("click", choose);
   node.addEventListener("keydown", (event) => {
@@ -1604,6 +1700,21 @@ function optionsArgv(name, levels) {
 }
 
 function optionsCard(name, manifest, report) {
+  // An imported bank pins nothing and cannot: `Manifest` refuses one that tries, and the write
+  // would be a 400. Six dropdowns that every change rejects is a worse answer than the sentence
+  // saying why there are none -- the same sentence `bank.py` raises with.
+  if (isReal(manifest)) {
+    return el("div", { class: "card bank-options" }, [
+      el("h3", { class: "band" }, [
+        el("span", { text: "option levels" }),
+        el("span", { class: "facts", text: "not settable on a recording" }),
+      ]),
+      el("p", { class: "blurb", text:
+        "Traffic, pedestrians and the rest are contents of this recording rather than knobs a run "
+        + "sets, so there is nothing to pin. What is in it is on the row above and in the "
+        + "manifest; see docs/reference/importing.md." }),
+    ]);
+  }
   const levels = manifest.options || {};
   const grid = el("div", { class: "grid" }, build.axes.map((one) => {
     const select = el("select", { title: one.help },
@@ -1659,15 +1770,20 @@ function renderBank(name, manifest, report) {
         cap: one ? one.budget.caps[row.scenario_id] : null,
       };
     }
+    const count = `${entry.scenarios.length} `
+      + `${entry.scenarios.length === 1 ? "scenario" : "scenarios"}`;
     const parts = [
       el("h3", { class: "band" }, [
         el("span", { text: category }),
+        // A recording has no road to spell and no exit rule to resolve, so the two facts a PG
+        // category leads with have no equivalent. The rate takes their place: it is what the
+        // runner sets the physics step from, and it is fixed in the file.
         el("span", {
           class: "facts",
-          html: `road <code>${escape(entry.block_seq)}</code> · exit `
-            + `<code>${escape(entry.exit_rule)}</code> · ${entry.max_steps} steps · `
-            + `${entry.scenarios.length} `
-            + `${entry.scenarios.length === 1 ? "scenario" : "scenarios"}`,
+          html: isReal(manifest)
+            ? `<code>${escape(entry.step_hz)}</code> Hz · ${entry.max_steps} steps · ${count}`
+            : `road <code>${escape(entry.block_seq)}</code> · exit `
+              + `<code>${escape(entry.exit_rule)}</code> · ${entry.max_steps} steps · ${count}`,
         }),
       ]),
     ];
@@ -1680,7 +1796,8 @@ function renderBank(name, manifest, report) {
       }
     }
     parts.push(el("div", { class: "shelf" },
-      entry.scenarios.map((row) => scenarioCard(name, row, marks[row.scenario_id]))));
+      entry.scenarios.map((row) =>
+        scenarioCard(name, row, marks[row.scenario_id], isReal(manifest)))));
     cards.push(card(parts));
   }
   if (!cards.length) {

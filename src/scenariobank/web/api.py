@@ -15,6 +15,7 @@ with `TestClient` against a temp directory -- no server, no port, no simulator.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -25,6 +26,7 @@ from scenariobank.bank import (
     MANIFEST_NAME,
     THUMBNAIL_DIR,
     BankError,
+    Manifest,
     ScenarioNotFound,
     read_manifest,
     set_max_steps,
@@ -94,6 +96,36 @@ class OptionsRequest(BaseModel):
     pedestrians: str | None = None
     cyclists: str | None = None
     lights: str | None = None
+
+
+def _recorded(manifest: Manifest) -> dict:
+    """The three things a real-world row shows and a procedural one has no equivalent for.
+
+    Where on earth it is, how fast it was sampled, and who else is in it. A PG bank has no origin,
+    its rate is whatever a run chooses rather than a property of the file, and its traffic is a
+    level set at run time rather than a count -- so these are added to a real-world entry rather
+    than served as nulls on every row.
+
+    Summed across the bank's entries, because the listing is a picker. `import` writes one
+    conversion per bank, so the sum is the conversion; the per-conversion breakdown is one click
+    away in the manifest itself, and this endpoint stays a summary.
+    """
+    tracks: Counter = Counter()
+    rates: set[float] = set()
+    origin = None
+    for entry in manifest.categories.values():
+        rates.add(entry.step_hz)
+        origin = origin or entry.origin
+        for row in entry.scenarios:
+            tracks.update(row.tracks)
+    return {
+        # One rate, or none reported. A bank whose conversions disagree has no single rate to
+        # replay it at, and saying nothing is better than naming one of them.
+        "step_hz": rates.pop() if len(rates) == 1 else None,
+        "origin": origin,
+        # Sorted so the row reads the same on every reload; `Counter` orders by insertion.
+        "tracks": dict(sorted(tracks.items())),
+    }
 
 
 def create_app(*, banks_root: Path, state_dir: Path, workdir: Path | None = None) -> FastAPI:
@@ -224,7 +256,13 @@ def create_app(*, banks_root: Path, state_dir: Path, workdir: Path | None = None
 
         A directory whose manifest does not validate is **listed with its error** rather than
         skipped. A bank silently missing from the list is the one failure a person cannot debug
-        from the page, and a schema bump is exactly when it would happen.
+        from the page, and a schema bump is exactly when it would happen. Such a row carries no
+        `source`: nothing was read, so which kind of bank it is unknown, and the page says that
+        rather than filing it under a heading.
+
+        Every row carries `source`, and a real-world one carries three fields more -- see
+        `_recorded`. A procedural row is exactly what it was before this, which is why the page
+        needs no second endpoint to split the list.
         """
         root = _root()
         if not root.is_dir():
@@ -240,17 +278,20 @@ def create_app(*, banks_root: Path, state_dir: Path, workdir: Path | None = None
             except (BankError, ValueError) as error:
                 found.append({"name": path.name, "error": str(error)})
                 continue
-            found.append(
-                {
-                    "name": path.name,
-                    "bank_id": manifest.bank_id,
-                    "created_utc": manifest.created_utc,
-                    "categories": list(manifest.categories),
-                    "scenarios": sum(
-                        len(entry.scenarios) for entry in manifest.categories.values()
-                    ),
-                }
-            )
+            entry = {
+                "name": path.name,
+                "bank_id": manifest.bank_id,
+                "created_utc": manifest.created_utc,
+                # The discriminator, straight off the manifest. No second endpoint and no second
+                # listing: the field that says which kind of bank this is already exists in the
+                # file, so the page groups on it rather than asking twice.
+                "source": manifest.source,
+                "categories": list(manifest.categories),
+                "scenarios": sum(len(one.scenarios) for one in manifest.categories.values()),
+            }
+            if manifest.source != "pg":
+                entry.update(_recorded(manifest))
+            found.append(entry)
         # Newest first: the bank you just generated is the one you want to look at. An unreadable
         # one has no date, so it sorts to the end rather than to the top.
         found.sort(key=lambda entry: entry.get("created_utc") or "", reverse=True)

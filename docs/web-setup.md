@@ -319,6 +319,27 @@ read their sizes against each other, which is the one thing a `<select>` hides u
 **find** filters the list — by name, or by scenario type, so "the roundabout ones" is as answerable
 as "the one called `b`".
 
+**Two kinds of bank, under two headings.** A **Procedural** bank is roads built from seeds; a
+**Real world** one is a recording brought in by `scenariobank import`
+([`docs/importing-scenarionet.md`](importing-scenarionet.md)). They are not comparable — one can be
+rebuilt from its manifest and the other cannot — so they are read as two lists, and picked from as
+one: **find** filters across both. A heading appears only when there is another kind to tell it
+apart from, so a studio holding only generated banks looks exactly as it did before there was a
+second kind. A bank whose manifest will not parse is listed under **Unreadable**, because nothing
+was read and so neither of the other two headings would be a fact about it.
+
+A real-world row carries what a procedural one has no equivalent for: where on earth the recording
+is, the rate it was sampled at, and who else is in it. The rate is on the row rather than a click
+away because it is the one thing about an import that cannot be changed afterwards.
+
+Behind an imported bank, three things read differently and one is switched off. The category band
+leads with the rate instead of a road and an exit rule. The **option levels** card is a sentence
+rather than six dropdowns: traffic, pedestrians and the rest are contents of a recording rather
+than knobs a run sets, and the manifest refuses to pin them. A card shows the recording's frames
+and its duration where a generated one shows the seed and the destination. And a recorded card is
+not clickable: the selection panel compares and replaces by rebuilding a seed, and a recording has
+none.
+
 **The picture is the unit.** This is not a table with a thumbnail column: what you are judging is
 an image, so the card is mostly image, with the `scenario_id`, the seed, and the destination and
 route length underneath. Those last two are the fields that say *why* two cards look alike. Two

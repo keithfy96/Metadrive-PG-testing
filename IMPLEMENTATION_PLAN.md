@@ -1969,11 +1969,12 @@ measured as unusable; ad-hoc roads as bank rows.
 
 # Phase 3 — Import: stored scenarios from the converter 🔨  ⟵ *the number is reused*
 
-**Status:** Steps 1-3 are built — `scenariobank workspace` reads a converter workspace and says
+**Status:** Steps 1-4 are built — `scenariobank workspace` reads a converter workspace and says
 what is in it, `scenariobank importing` turns that reading into
 [`docs/reference/importing.md`](docs/reference/importing.md), the checklist an import must satisfy,
 and `scenariobank import` satisfies it: one workspace becomes one bank under schema 1.3, beside the
-procedural ones. Step 4, splitting the studio's bank list, is next.
+procedural ones. Steps 1-4 are built: the studio now reads `source` off the manifest and lists the
+two kinds under their own headings. Step 5, what a real-world bank's review *is*, is next.
 
 > **This is not the old Phase 3.** `scenariobank verify` was the gate over `map_id`, `config_hash`
 > and the recorded MetaDrive commit; all three were cut with the durable-bank premise on
@@ -2333,7 +2334,7 @@ code bringing it cannot drift apart -- Step 2's field coverage, on the other axi
 also cannot pin option levels: the six axes are contents of a recording here, and `Manifest`
 raises rather than storing a promise nothing keeps.*
 
-### Step 4 — the studio splits its bank list ⬜
+### Step 4 — the studio splits its bank list ✅
 
 *(Asked for 2026-09-05, Keith: "currently bank just shows the different banks generated in a list,
 but lets split it up by PG banks and real world simulations".)*
@@ -2351,6 +2352,40 @@ Today `GET /api/banks` returns one flat list (`web/api.py:218`) and `renderBankL
 
 **Verify alone:** studio on a scratch root holding `curve` and an imported `junction-1`; two
 sections, the search filters both, and a PG-only root shows one section with no empty heading.
+
+*(Done 2026-09-07. 481 tests pass, ruff clean. Verified in a running studio on a scratch root
+holding `roundy` and `curve` procedural, `junction-1` and `mosque` imported, and a `broken`
+directory whose manifest will not parse: three headings, the search filters across all of them,
+`junction` narrows to one group and the headings vanish, and a PG-only root renders byte for byte
+what it rendered before. No console errors.)*
+
+*Four things the plan above did not say, all from building it:*
+
+*1. **A third group: unreadable.** A bank whose manifest will not parse is listed with its error --
+that rule is older than this step -- but nothing was read, so which kind it is is unknown. Filing
+it under **Procedural** would put a broken import under the wrong heading, which is a worse lie
+than the one the listing exists to avoid. So its row carries no `source` at all and gets a heading
+of its own, on the same hidden-when-empty rule.*
+
+*2. **A single heading is not drawn.** "Each hidden when empty" leaves a PG-only studio with one
+"Procedural" label over the whole list, which divides nothing and is not what it looked like
+before. The heading appears when there is something to tell it apart from -- which also means a
+search that narrows to one kind drops the chrome rather than keeping it.*
+
+*3. **The list was not the only thing that had to know.** Splitting the list makes an imported bank
+a first-class thing to click, and four screens behind it were written for a seed: the category band
+read `road undefined · exit undefined`, the option-levels card offered six dropdowns every one of
+which the API refuses, the scenario card said `seed undefined`, and the road builder's "add to"
+dropdown offered banks `add` refuses by name. All four now branch on `source`: the band shows the
+rate, the options card shows the sentence `Manifest` raises with, the card shows frames and
+duration, and the dropdown lists procedural banks only. What is **not** here is the selection panel
+-- comparing and replacing are built on seeds, so a recorded card is a tile rather than a button
+until Step 5 says what a real-world measure is.*
+
+*4. **The actor counts are summed, and the ego is one of them.** `tracks` is per row; the listing is
+a picker, so it carries the bank's total. The converter counts the ego as a `VEHICLE` track like
+every other, and subtracting it here would make the row disagree with what `scenariobank workspace`
+prints about the same recording.*
 
 ### Step 5 — `review` for a bank with no seeds ⬜
 
