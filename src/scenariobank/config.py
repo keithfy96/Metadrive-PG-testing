@@ -18,7 +18,28 @@ from typing import Any
 #: One constant, four eventual call sites -- `doctor`, the runner's pre-flight, the runner's
 #: post-episode check, and the Phase 4 expert-leak assert. They must never be able to disagree
 #: about what shape this bank produces, so none of them writes the number itself.
+#:
+#: A `MetaDriveEnv` fact, and only that. The 10 navigation scalars are
+#: `NodeNetworkNavigation`'s, which needs a PG road network to navigate; a stored scenario has
+#: none and gets a different navigation and a different width. See
+#: `SCENARIO_OBSERVATION_SHAPE`.
 OBSERVATION_SHAPE: tuple[int, ...] = (19,)
+
+#: What the same `StateObservation` and the same `SENSOR_CONFIG` measure to on a *stored*
+#: scenario: 6 ego + 22 navigation + 3 detector scalars.
+#:
+#: The 12-wide difference from `OBSERVATION_SHAPE` is entirely the navigation. `ScenarioEnv`
+#: gives the ego a `TrajectoryNavigation`, which follows the recorded ego's own path instead of
+#: a road graph, and reports `NUM_WAY_POINT * CHECK_POINT_INFO_DIM + 2` = 22 where
+#: `NodeNetworkNavigation` reports 10. Nothing about the sensor rig differs -- lidar is off in
+#: both and both detectors contribute their 3 geometric scalars.
+#:
+#: **Measured, not derived.** `scenariobank replay --bank banks/junction-1` reads it off a real
+#: env at reset and again after the last step of the recording, and `test_replay.py` asserts
+#: this constant against it. It is written down here because the two bank kinds produce
+#: different-width observations and a policy trained against one cannot be handed the other --
+#: which is a fact Phase 4 has to refuse on, and it needs a number to refuse against.
+SCENARIO_OBSERVATION_SHAPE: tuple[int, ...] = (31,)
 
 #: Lidar off, and both geometric detectors pinned at zero lasers.
 #:

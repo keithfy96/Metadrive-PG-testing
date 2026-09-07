@@ -1967,15 +1967,19 @@ measured as unusable; ad-hoc roads as bank rows.
 
 ---
 
-# Phase 3 — Import: stored scenarios from the converter 🔨  ⟵ *the number is reused*
+# Phase 3 — Import: stored scenarios from the converter ✅  ⟵ *the number is reused*
 
-**Status:** Steps 1-5 are built — `scenariobank workspace` reads a converter workspace and says
+**Status:** all six steps are built. `scenariobank workspace` reads a converter workspace and says
 what is in it, `scenariobank importing` turns that reading into
 [`docs/reference/importing.md`](docs/reference/importing.md), the checklist an import must satisfy,
-and `scenariobank import` satisfies it: one workspace becomes one bank under schema 1.3, beside the
-procedural ones. Steps 1-5 are built: the studio reads `source` off the manifest, lists the two
-kinds under their own headings, and reviews a recording with measures of its own. Step 6, the
-one-scenario round trip, is next — and it is the first step here that builds an environment.
+and `scenariobank import` satisfies it: one workspace becomes one bank under schema 1.4, beside the
+procedural ones. The studio reads `source` off the manifest, lists the two kinds under their own
+headings, and reviews a recording with measures of its own. **Step 6 closed the gate**:
+`scenariobank replay` drives `banks/junction-1` end to end, which is the first environment built
+anywhere in this phase and the first step loop anywhere in this package. A stored episode ends at
+the recording's own length because `horizon` is set to it; the observation is `Box(31,)` rather than
+the PG bank's `Box(19,)`, so a policy cannot be moved between the two kinds; and `--decision-hz` is
+a stride in our own loop, moving the action count and never the episode length.
 
 > **This is not the old Phase 3.** `scenariobank verify` was the gate over `map_id`, `config_hash`
 > and the recorded MetaDrive commit; all three were cut with the durable-bank premise on
@@ -2475,30 +2479,67 @@ phase groups), and "the ego and nothing else" is `mosque`'s two 100 Hz conversio
 vehicles and pedestrians. Nobody thinks in "road edge boundarys", so map feature types are printed
 with the ScenarioNet names exactly as the data spells them — which is what `workspace` prints too.*
 
-### Step 6 — the one-scenario round trip ⬜  ⟵ *gate*
+### Step 6 — the one-scenario round trip ✅  ⟵ *gate*
 
-An imported bank drives one episode end to end under a diagnostic policy, and the result record has
-the same shape as a PG one. This is what says the two bank kinds are one runner, before Phase 4
-builds on the assumption.
+An imported bank drives one episode end to end under a diagnostic action. This is what says the two
+bank kinds are one runner, before Phase 4 builds on the assumption.
 
-**Two things this step must get right, both measured rather than assumed:**
+Built as `scenariobank replay` (`src/scenariobank/replay.py`), **a diagnostic and not a runner**:
+no result file, no policy loaded by path, no `resolve_options`, and the action is zero throttle and
+zero steering. The result *record* is Phase 4 Step 3's, and one invented here to satisfy a single
+recording would have designed the frontend contract by accident. What this step owns is the step
+loop, which had never existed anywhere in this package — every other MetaDrive call in `src/` is
+`reset`-only, and `doctor.probe_simulator` was the closest model.
 
-- **Nothing ends the episode on its own.** `ScenarioEnv` ran 4000 steps on a 3782-frame scenario
-  with `max_step: False` and `horizon: None` — it does **not** truncate at the end of the
-  recording. The cap comes from the scenario's own `length`, enforced in our step loop. Phase 4's
-  "enforce the same cap in our own step loop as well" stops being defence in depth here and becomes
-  the only thing that ends a stored episode.
-- **The 19-dimensional observation is a PG fact.** With `agent_observation=StateObservation` a
-  stored scenario observes **41** dimensions, because `ScenarioEnv`'s navigation module reports
-  differently; the default with no override is 161. See **The observation ceiling**, which was
-  written from `MetaDriveEnv` alone.
+**Two things this step had to get right, both now measured rather than assumed:**
 
-**Verify alone:** `junction-1` route-1 runs to its own length and terminates; `--decision-hz` 20,
-10 and 5 each act on the expected stride of a 100 Hz import; the result row carries the provenance
-fingerprint and the attribution string.
+- **Nothing ends the episode on its own — and `horizon` is the fix, not the step loop alone.**
+  Confirmed and sharper than the note above: with `horizon` at `BaseEnv`'s `None` default
+  (`base_env.py:84`, and `SCENARIO_ENV_CONFIG` never sets it) the env was still stepping at **6000**
+  frames of a 3782-frame recording, neither terminated nor truncated. But `done_function` *does*
+  read `horizon` (`scenario_env.py:162`) — it was simply never being set. So the step loop is not
+  the only possible terminator: `replay_config` sets `horizon` to the row's own `budget_for` **and**
+  `drive` caps its own loop at the same number, which is the belt-and-braces PG already gets.
+- **The 19-dimensional observation is a PG fact — and the stored number is 31, not 41 or 161.**
+  Measured on `banks/junction-1`: `Box(31,)` at reset and unchanged after the last of 3782 steps.
+  The whole 12-wide difference is navigation — `TrajectoryNavigation.get_navigation_info_dim()` is
+  `NUM_WAY_POINT * CHECK_POINT_INFO_DIM + 2` = **22** where `NodeNetworkNavigation` reports 10 —
+  with the same `StateObservation` and the same `SENSOR_CONFIG` on both. Recorded once, as
+  `config.SCENARIO_OBSERVATION_SHAPE` beside `OBSERVATION_SHAPE`, and `OBSERVATION_SHAPE`'s own
+  comment now says it is a `MetaDriveEnv` fact. **A policy trained against one bank kind cannot be
+  handed the other**, which is a fact Phase 4 has to refuse on and now has a number to refuse
+  against.
+
+**Done note (2026-09-07).** Five things this step found or settled:
+
+1. **The third unknown is arithmetic, not a setting.** `--decision-hz` is a stride in `drive`'s own
+   loop: replay advances one recorded frame per `env.step`, so `decision_repeat` stays 1 and 20/10/5
+   Hz over a 100 Hz recording hold each action for 5/10/20 steps. Measured: 3782 steps at every
+   rate, and 3782 / 757 / 379 / 190 actions. The rate moves the action count and nothing else.
+2. **The observation width is reported at both ends of the episode**, and `format_episode` warns if
+   they differ. One reading cannot make the claim "it was 31 the whole way", and a width that moved
+   mid-episode is precisely the failure a single reading at reset cannot see.
+3. **`replay` refuses a procedural bank by name**, the mirror of `compare`'s refusal — and refuses
+   *before* importing MetaDrive, so a wrong bank is answered off the manifest on a machine with no
+   simulator. A test asserts the ordering in the source, because the natural way to write the
+   function puts the import first.
+4. **`replay_config` is deliberately not `config.base_config()`.** That one pins `start_seed`,
+   `num_scenarios`, `horizon: 1000` and `random_spawn_lane_index` for a generated road and calls
+   `handedness.install()`, which mirrors MetaDrive's PG lane geometry — a stored map has none to
+   mirror and already drives on the side it was recorded on. What the two share is the observation,
+   so `agent_observation` and `SENSOR_CONFIG` are imported from `config.py` rather than restated.
+5. **Cost, for sizing a batch:** about 2.6 ms per step, so ~10 s of wall time for the whole 3782-
+   frame recording. Two full replays is what the length-invariance claim costs in the test suite;
+   the slower rates are checked against a 100-step capped run instead.
+
+**Verify alone:** met. `junction-1` route-1 runs to its own length (3782) and stops there with
+`max_step` true; `--decision-hz` 20, 10 and 5 each act on the expected stride of a 100 Hz import
+and none of them changes the episode length. *The result row carrying the provenance fingerprint
+and the attribution string is Phase 4 Step 3's* — there is no result record in this step by
+design, and the entry already carries both fields for it to read.
 
 **Done when:** Steps 1-6 are ✅ and `docs/reference/importing.md` is checked in and reproduces from
-the reader.
+the reader. **Met** — 546 tests pass, `uv run scenariobank importing` leaves the file unchanged.
 
 ---
 
@@ -2669,9 +2710,10 @@ still exits 0 and writes the file.
   **No lidar** section, it holds the env and ignores its `observation` argument.
 - The runner records the observation shape *after* the last expert episode and **fails the run if
   it moved**: `numpy_expert.py:48-49` admits its config restore is incomplete. The check is *"the
-  shape did not move during this run"*, **not** a literal 19: measured, the same
-  `agent_observation` on a stored scenario observes 41, because `ScenarioEnv`'s navigation module
-  reports differently.
+  shape did not move during this run"*, **not** a literal 19: measured (Phase 3 Step 6), the same
+  `agent_observation` on a stored scenario observes **31**, because `ScenarioEnv` gives the ego a
+  `TrajectoryNavigation` reporting 22 scalars where `NodeNetworkNavigation` reports 10. Both
+  numbers are in `config.py`; neither is written anywhere else.
 
 **Verify alone:** *(old tests 1, 2 and 2b)*
 

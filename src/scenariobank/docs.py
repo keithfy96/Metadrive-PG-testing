@@ -37,7 +37,16 @@ GROUPS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     (
         "Look before you commit",
         "Measure and draw. Still nothing written into a bank.",
-        ("inspect", "examples", "seeds", "review", "destinations", "workspace", "importing"),
+        (
+            "inspect",
+            "examples",
+            "seeds",
+            "review",
+            "replay",
+            "destinations",
+            "workspace",
+            "importing",
+        ),
     ),
     (
         "Build and correct",
@@ -97,6 +106,17 @@ EXAMPLES: dict[str, tuple[tuple[str, str], ...]] = {
             "uv run scenariobank review --bank ./banks/b --json"
             " | jq '.categories[].duplicates'",
             "the duplicate counts alone",
+        ),
+    ),
+    "replay": (
+        ("uv run scenariobank replay --bank ./banks/junction-1", ""),
+        (
+            "uv run scenariobank replay --bank ./banks/junction-1 --steps 50",
+            "check the round trip without paying for the whole recording",
+        ),
+        (
+            "uv run scenariobank replay --bank ./banks/junction-1 --decision-hz 20 --json",
+            "what a 20 Hz policy would have been asked for",
         ),
     ),
     "destinations": (("uv run scenariobank destinations", ""),),

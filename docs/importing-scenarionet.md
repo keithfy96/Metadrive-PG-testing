@@ -268,6 +268,65 @@ The warnings, worst first, are the six a recording can earn:
 | no attribution | a licence obligation that would not survive into a result |
 | a row with no route | nothing about the drive was measured |
 
+## What an imported bank can do: drive
+
+`scenariobank replay` opens the recording in `ScenarioEnv` and drives it end to end. It is a
+**diagnostic** rather than a runner — no result file, no policy, zero throttle and zero steering —
+and it exists because Steps 1-5 never opened a simulator at all: `import` copies pickles and
+`review` is arithmetic over a manifest, so until this command a bank could describe itself
+perfectly and still not run.
+
+```
+$ uv run scenariobank replay --bank banks/junction-1
+junction-1: junction-1_0000  (junction-1)
+  recording:  junction-1-57dcd345d17e5a86-route-1  index 0
+  replay:     100 Hz, 3782 frames   decisions every step
+  drove:      3782 steps, 3782 actions   ended: ran out of recording
+  observed:   (31,)  unchanged across the episode   action (2,)
+  route:      2.5% completed
+  cost:       9.7 s wall, 2.57 ms/step
+```
+
+Three things it measured that were guesses before, and each is worth knowing before Phase 4 is
+written on top of them.
+
+**A stored episode does not end by itself.** MetaDrive's `horizon` defaults to `None` and
+`ScenarioEnv`'s own config never sets it, so with the default the env was still stepping at 6000
+frames of a 3782-frame recording — neither terminated nor truncated, replaying past the last
+recorded frame in silence. `replay` sets `horizon` to the row's own `max_steps` *and* caps its own
+loop at the same number. Two guards for one number, because the failure they catch does not
+announce itself.
+
+**The observation is 31 scalars wide, not the 19 a procedural bank produces.** Same
+`StateObservation`, same sensor rig, lidar off in both. The whole 12-wide difference is navigation:
+a stored scenario gets `TrajectoryNavigation`, which follows the recorded ego's own path and
+reports 22 scalars, where a PG road gets `NodeNetworkNavigation`'s 10. **A policy trained against
+one kind of bank cannot be handed the other**, and that is a fact about the observation rather than
+a convention anyone chose. Both numbers live in `config.py`.
+
+**`--decision-hz` is a stride, not a simulator setting.** Replay advances exactly one recorded
+frame per `env.step`, which is why `physics_world_step_size` is `1 / step_hz` with
+`decision_repeat = 1`. A policy deciding at 20 Hz over a 100 Hz recording therefore holds each
+action for five steps, and the count is the only thing that moves:
+
+| `--decision-hz` | steps | actions |
+|---|---|---|
+| unset | 3782 | 3782 |
+| 20 | 3782 | 757 |
+| 10 | 3782 | 379 |
+| 5 | 3782 | 190 |
+
+Deciding faster than the recording was sampled is refused: there are no frames to decide on.
+
+It **refuses a procedural bank by name**, the mirror of `compare`'s refusal above. Driving one
+needs `MetaDriveEnv` and a route set per row — a different environment with a different setup — and
+a `replay` that quietly did half of that would be a second step loop for Phase 4 to keep in sync
+with the first.
+
+A full replay costs about 10 s and 2.6 ms per step. Use `--steps` to check the round trip without
+paying for the whole recording; the report then says `capped short` rather than claiming the
+recording ran out.
+
 ## Verify an import
 
 ```bash
@@ -293,7 +352,7 @@ The workspace should be unchanged. A test pins this, and so does the whole suite
 
 ```bash
 uv run pytest tests/unit/test_import.py -v    # 25 tests
-uv run pytest                                  # 509 tests
+uv run pytest                                  # 546 tests
 ```
 
 Three of the import tests need this converter checkout and skip without it.

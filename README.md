@@ -434,7 +434,7 @@ Nothing writes outside the repo, and no command writes to `$HOME`.
 ## Tests
 
 ```bash
-uv run pytest        # 509 tests, ~85s with the sim group installed
+uv run pytest        # 546 tests, ~90s with the sim group installed
 ```
 
 | | pass | skip |

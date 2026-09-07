@@ -1046,6 +1046,72 @@ def import_cmd(
 
 
 @app.command()
+def replay(
+    bank: Annotated[
+        Path, typer.Option("--bank", help="Bank directory holding the recording to drive.")
+    ],
+    scenario: Annotated[
+        str | None,
+        typer.Option("--scenario", help="Which recording, by its id. Defaults to the first."),
+    ] = None,
+    decision_hz: Annotated[
+        float | None,
+        typer.Option(
+            "--decision-hz",
+            help="Hold each action for this decision rate. Defaults to every step.",
+        ),
+    ] = None,
+    steps: Annotated[
+        int | None,
+        typer.Option("--steps", help="Stop after this many steps, for a quick check."),
+    ] = None,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Emit the report as JSON instead of aligned text.")
+    ] = False,
+) -> None:
+    """Drive one imported recording end to end and report what the drive measured.
+
+    A **diagnostic**, and the companion to `review`: that one says what a bank claims about
+    itself off the manifest, this one opens the simulator and checks the claim holds. It writes
+    no result file and loads no policy -- the action is zero throttle and zero steering, which is
+    enough to measure how long the episode is, how wide the observation is and what ends it.
+    Running a bank for results is the runner's job, which Phase 4 builds.
+
+    Three things it settles that nothing else can. **A stored episode does not end by itself:**
+    the env replays past the last recorded frame indefinitely unless `horizon` is set to the
+    recording's own length, which this does. **The observation is 31 wide, not the 19 a PG bank
+    produces** -- same sensors, different navigation -- so a policy trained against one bank kind
+    cannot be handed the other. **`--decision-hz` is a stride in this loop**, not a MetaDrive
+    setting: replay advances one recorded frame per step, so deciding at 20 Hz on a 100 Hz
+    recording holds each action for five steps and changes how many actions were issued, never
+    how long the episode was.
+
+    Needs the simulator, and it costs a full replay -- about 11 s for `banks/junction-1`. Use
+    `--steps` to check the round trip without paying for the whole recording.
+
+    **Refuses a procedural bank by name.** Driving one needs `MetaDriveEnv` plus a per-row route,
+    which is a different env and a different setup, and a `replay` that quietly did half of it
+    would be a second runner.
+    """
+    from scenariobank.bank import BankError, read_manifest
+    from scenariobank.replay import drive, format_episode
+
+    try:
+        episode = drive(
+            bank,
+            read_manifest(bank),
+            scenario=scenario,
+            decision_hz=decision_hz,
+            steps=steps,
+        )
+    except (BankError, ValueError) as error:
+        typer.echo(f"replay failed: {error}", err=True)
+        raise typer.Exit(code=1) from error
+
+    typer.echo(episode.model_dump_json(indent=2) if as_json else format_episode(episode))
+
+
+@app.command()
 def commands(
     out: Annotated[
         Path, typer.Option("--out", "-o", help="Reference document to write.")
