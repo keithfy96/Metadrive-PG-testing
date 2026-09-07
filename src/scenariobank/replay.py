@@ -46,6 +46,7 @@ from pydantic import BaseModel, ConfigDict
 
 from scenariobank.bank import BankError, Manifest, RealWorldEntry, RealWorldRow
 from scenariobank.config import SENSOR_CONFIG
+from scenariobank.options import REPLAY_FLAGS
 
 #: The action a drive issues when it is given none: neither steering nor throttle.
 #:
@@ -222,10 +223,9 @@ def replay_config(bank_dir: Path, entry: RealWorldEntry, row: RealWorldRow) -> d
         "horizon": entry.budget_for(row),
         # The recording's contents, replayed as recorded. These are what Step 5's review already
         # reports about the bank, and turning any of them off would make the drive disagree with
-        # the description.
-        "no_traffic": False,
-        "no_light": False,
-        "reactive_traffic": False,
+        # the description. One dict, shared with `resolve_options`, so the config and the result
+        # record cannot say different things about the same switches.
+        **REPLAY_FLAGS,
         "log_level": logging.WARNING,
     }
 

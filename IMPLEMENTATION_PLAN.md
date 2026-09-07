@@ -377,6 +377,10 @@ TIERS = {   # convenience aliases; resolved before the run and recorded expanded
 }
 ```
 
+*(As shipped by Phase 4 Step 1, every tier carries `lights="none"` and `options.PHASE_8_LIGHTS`
+records the `low` / `medium` above for Phase 8 to flip them to; `resolve_options` refuses the axis
+above `none` until then.)*
+
 The six axes are the contract; tiers are aliases only. Explicit flags win: `--tier hard --cones none`
 resolves to hard everywhere except cones. Keep raw values reachable — `--traffic medium` and
 `--traffic-density 0.15` must both work, because house style in the converter repo is raw values.
@@ -524,7 +528,7 @@ metadrive-PG/
                             #   generate seeds replace commands studio
                             #   calibrate run selftest schema validate
     categories.py           # CATEGORIES dict: block_seq, destination, max_steps, description
-    options.py              # LEVELS, TIERS, resolve_options() -> expanded dict
+    options.py              # LEVELS, TIERS, resolve_options() -> ResolvedOptions (names, numbers, origins)
     config.py               # base config builder
     fingerprint.py          # sha256_hex, lane_geometry_digest (is it the same road?)
                             #            road_shape, shape_gap  (how different is it?)
@@ -2594,7 +2598,7 @@ kind they are driving. **The loop already exists**: `replay.drive` (Phase 3 Step
 runner. Step 2 moves that loop into `runner.py` and turns `replay` into a caller of it; from then
 on `grep -n "env.step(" src/` returns one site, and that is a **Done when** condition below.
 
-### Step 1 — `resolve_options()`: names in, numerics out ⬜
+### Step 1 — `resolve_options()`: names in, numerics out ✅
 
 The only piece of this phase with no environment in it, so it goes first and stays unit-tested.
 
@@ -2634,6 +2638,39 @@ every record carries `kind: "pg"`, the six names and the six numerics; `traffic 
 every other traffic numeric is `>= 0.01`; `--lights low` is refused with a sentence naming Phase 8;
 a `source: "osm-scenario"` manifest resolves to `kind: "recorded"` with the three replay flags and
 no axes.
+
+**Built 2026-09-07** as `options.py` (51 → ~330 lines) and `tests/unit/test_options.py` (39
+tests, none of them needing a simulator). No command gained a flag: `run` is Step 3's, and the
+`--tier` / `--traffic` / `--traffic-density` spellings above are what `run` will map onto the
+resolver's `tier=`, `levels=` and `raw=` arguments. What the step settled beyond the bullets:
+
+1. **The record is a model, `ResolvedOptions`**, with `extra="forbid"` like every other block a
+   result will carry: `kind`, `tier`, and per axis `levels` (name), `values` (the number the env
+   gets), `origin` (`manifest` | `tier` | `flag` | `raw`), plus `raw` (the numbers given directly)
+   and `replay` (the three switches, on a recorded bank). `origin` is what makes an override
+   visible in a result without the manifest beside it, which is the promise Step 10c made.
+2. **A raw value is the number the env gets; its level name is the nearest one, ties to the
+   weaker.** Weaker because a raw value is somebody choosing to sit between two calibrated points,
+   and calling it the harder of the two would report a run as more demanding than it was.
+   Distances are rounded before comparing, because `0.15 - 0.10` is a hair under `0.05` in
+   floating point and the tie test found it.
+3. **Three raw refusals the bullets did not name.** A traffic density in `(0, 0.01)` is refused
+   naming `traffic_manager.py:65-67`, rather than run as `none` under a result that says
+   otherwise; a non-integer on a count axis is refused, because there is no half a cone; `lights`
+   has no raw form at all. The same axis given as both a level and a raw value is refused as two
+   answers, not ordered.
+4. **A bank that already pins `lights` above `none` is refused too**, and the sentence names the
+   unpin command — `scenariobank options` accepts the level today and nothing stopped it. The
+   refusal is by *origin*, so it fires the same way from the manifest, a tier, or a flag.
+5. **`REPLAY_FLAGS` is one dict**, defined here and spread into `replay_config`, so the env config
+   and the result record cannot say different things about the same three switches. `replay.py`
+   is the one file outside `options.py` and its test that changed.
+6. **`options_for(resolved, entry, row)` exists and returns its first argument.** The signature
+   Step 10c named, with the resolved bank options in front because the runner has them in hand
+   per batch and the seam is per row. `entry` and `row` are deleted on entry, on purpose.
+
+**Verify alone:** met — `uv run pytest tests/unit/test_options.py -q` → 39 passed, including the
+on-disk read of `banks/curve` (skips by name where that bank is not checked out); full suite 585.
 
 ### Step 2 — env construction from a bank, and the one loop ⬜
 
