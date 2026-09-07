@@ -1444,6 +1444,14 @@ function actorText(tracks) {
     .join(" · ");
 }
 
+// Counts with the ScenarioNet type names left exactly as the data spells them. `actorText` reads
+// `VEHICLE` back as English because a person thinks in vehicles and pedestrians; nobody thinks in
+// "road edge boundarys", and a map feature type is a format identifier rather than a noun. Same
+// wording `workspace._counts_line` prints, so the bank and the workspace agree.
+function countsText(counts) {
+  return Object.entries(counts || {}).map(([kind, n]) => `${n} ${kind}`).join(", ");
+}
+
 // What a recording has and a built road has no equivalent for: where on earth it is, and how fast
 // it was sampled. The rate is on the row rather than a click away because it is the one property
 // of an import that cannot be changed afterwards -- see `docs/importing-scenarionet.md`.
@@ -1538,6 +1546,9 @@ function renderBankList() {
 // One marker per scenario, worst first, built from the category's review. A card carries the
 // strongest thing true of it: exactly-the-same beats close-enough beats only-the-lane-differs.
 function markersFor(one) {
+  // A recorded review has no `duplicates` block at all -- there is one recording in a bank and
+  // nothing for it to repeat -- so there are no markers to draw rather than an empty set of them.
+  if (!one.duplicates) return {};
   const marks = {};
   const short = (id) => id.replace(`${one.category}_`, "");
   for (const group of one.duplicates.identical_groups) {
@@ -1559,6 +1570,43 @@ function markersFor(one) {
     }
   }
   return marks;
+}
+
+// The chips above an imported conversion. Same shape as `statChips`, none of the same measures:
+// every one of these was measured off the recording rather than derived from a seed, and there is
+// no "N distinct of N" -- a bank holds one recording, so there is nothing for it to be distinct
+// from. `review.py` computed all of it; this arranges it.
+function recordedChips(one) {
+  const chips = [];
+  const add = (html, bad) => chips.push(el("span", { class: `chip${bad ? " bad" : ""}`, html }));
+  const drive = one.drive;
+  const span = (low, high, unit, places) => (low === high
+    ? `${low.toFixed(places)} ${unit}`
+    : `${low.toFixed(places)}–${high.toFixed(places)} ${unit}`);
+
+  add(`<b>${one.total}</b> ${one.total === 1 ? "recording" : "recordings"}`);
+  add(span(drive.route_length_min_m, drive.route_length_max_m, "m", 0));
+  add(span(drive.duration_min_s, drive.duration_max_s, "s", 1));
+  if (drive.speed_kph !== null) {
+    // Both ends, never a mean: a recording whose fastest is 50 and whose slowest is 10 contains
+    // a queue, and 30 kph would describe a drive that never happened.
+    add(`${drive.slowest_kph}–${drive.speed_kph} kph`);
+  }
+  add(`waiting ${drive.waiting_s}s`
+      + (drive.stop_count ? ` · ${drive.stop_count} stops` : ""),
+      drive.waiting_fraction > 0.5);
+  add(`${drive.lane_changes} lane changes · ${drive.junction_movements} junction moves`);
+  add(actorText(one.actors.tracks) || "no actors", one.actors.ego_only.length > 0);
+  const lights = Object.values(one.signals.lights).reduce((sum, n) => sum + n, 0);
+  add(lights ? `${lights} lights` : "no lights",
+      (one.signals.lane_model_signals || 0) > 0 && !one.signals.phase_groups);
+  // `null` and not 0 on a bank imported before schema 1.4. A zero here would be a finding
+  // invented out of a field nothing ever wrote.
+  add(one.map_size.features === null
+    ? "map size not recorded"
+    : `${one.map_size.features} map features`);
+  add(`${one.replay.frames} frames at ${one.replay.at_hz}\u2009Hz`);
+  return el("div", { class: "stats" }, chips);
 }
 
 // The chips above a category: the counts you would otherwise have to derive by reading the grid.
@@ -1639,21 +1687,17 @@ function scenarioCard(bank, row, mark, real) {
     }),
   ];
   if (mark) parts.push(el("span", { class: `mark ${mark.kind}`, text: mark.text }));
-  // A recorded card is a tile, not a button. Everything the selection panel offers -- the
-  // comparison, `replace`, the edit box -- is built on a seed and a block sequence, and a
-  // recording has neither. A panel of blanks over buttons the CLI refuses is worse than a card
-  // that says it has nothing behind it yet.
-  const node = el("div", real
-    ? {
-        class: "shot-card", "data-id": row.scenario_id,
-        title: "Comparing and replacing are built on seeds, and a recording has none.",
-      }
-    : {
-        class: `shot-card${mark && !mark.kind ? " flagged" : ""}`,
-        "data-id": row.scenario_id,
-        role: "button", tabindex: "0", "aria-pressed": "false",
-      }, parts);
-  if (real) return node;
+  // A button on both paths again. Step 4 made a recorded card a tile because the only panel
+  // behind it compared and replaced by rebuilding a seed; `recordedPanel` is the read-only one
+  // this opens instead, so there is something behind the click and it is worth clicking.
+  const node = el("div", {
+    class: `shot-card${mark && !mark.kind ? " flagged" : ""}`,
+    "data-id": row.scenario_id,
+    role: "button", tabindex: "0", "aria-pressed": "false",
+    title: real
+      ? "What was measured off this recording. Comparing and replacing are built on seeds."
+      : null,
+  }, parts);
   const choose = () => pick(bank, row.scenario_id);
   node.addEventListener("click", choose);
   node.addEventListener("keydown", (event) => {
@@ -1764,10 +1808,11 @@ function renderBank(name, manifest, report) {
         mark: marks[row.scenario_id] || null,
         // `step_budget` rounds, and the rule for how belongs to `categories.py`. A page dividing
         // metres by a constant would be a second rounding rule; this reads the review's answer,
-        // and says so plainly when there is no review to read.
-        earned: one ? one.budget.earned[row.scenario_id] : null,
-        // The cap that applies to *this* row, which is its own where schema 1.1 gave it one.
-        cap: one ? one.budget.caps[row.scenario_id] : null,
+        // and says so plainly when there is no review to read. Both are `null` on a recorded
+        // review, which carries no `budget`: a recording's cap is its own length, and
+        // `recordedPanel` reads `row.max_steps` rather than coming through here for it.
+        earned: one && one.budget ? one.budget.earned[row.scenario_id] : null,
+        cap: one && one.budget ? one.budget.caps[row.scenario_id] : null,
       };
     }
     const count = `${entry.scenarios.length} `
@@ -1788,7 +1833,7 @@ function renderBank(name, manifest, report) {
       ]),
     ];
     if (one) {
-      parts.push(statChips(one));
+      parts.push(isReal(manifest) ? recordedChips(one) : statChips(one));
       // Sentences rather than a legend for the chips: `review.py` writes them so the page and the
       // CLI cannot describe the same bank two different ways.
       for (const line of one.warnings) {
@@ -1811,7 +1856,11 @@ function renderBank(name, manifest, report) {
     .reduce((sum, entry) => sum + entry.scenarios.length, 0);
   const types = Object.keys(manifest.categories).length;
   const pill = $("bank-count");
-  const short = report && report.distinct < total ? ` · ${report.distinct} distinct` : "";
+  // `report.distinct` is `null` on a recording, and `null < 4` is **true** in JavaScript -- so
+  // this is an explicit test for a number rather than a comparison, which would draw
+  // "· null distinct" on every imported bank.
+  const short = report && report.distinct !== null && report.distinct < total
+    ? ` · ${report.distinct} distinct` : "";
   pill.className = short ? "pill bad" : "pill";
   pill.textContent =
     `${total} ${total === 1 ? "scenario" : "scenarios"}${short} · ${types} `
@@ -1836,6 +1885,10 @@ function pick(bank, id) {
   const at = picked.indexOf(id);
   if (at >= 0) picked.splice(at, 1);       // clicking a selected card lets go of it
   else {
+    // One at a time on a recording, so the two-card path is unreachable and `/compare` is never
+    // called: `compare` refuses an imported bank, and a second pin that always answered with a
+    // refusal would be a control that exists to fail.
+    if (isReal(dataset.manifest || {})) picked.length = 0;
     picked.push(id);
     if (picked.length > 2) picked.shift();
   }
@@ -1939,6 +1992,61 @@ function detailPanel(bank, id) {
   return parts;
 }
 
+// Everything the manifest holds about one recording. The sibling of `detailPanel`, and read-only
+// on purpose: compare, `replace`, `add`, `remove`, `edit` and the per-scenario step budget all
+// rebuild a seed or override a measurement, and there is neither here. Nothing is computed --
+// every number was measured off the recording by the converter and written into the manifest.
+function recordedPanel(bank, id) {
+  const found = dataset.index[id];
+  if (!found) return [el("p", { class: "failed", text: `${id} is not in this bank` })];
+  const { row, entry, category } = found;
+  const route = row.route;
+  const facts = [
+    ["conversion", category],
+    // So a result can be traced back to the pickle without opening it.
+    ["stored id", row.stored_id],
+    ["file", `${entry.dataset_dir}/${row.file}`],
+  ];
+  if (route) {
+    facts.push(
+      ["route", `${route.start_lane} → ${route.end_lane}`],
+      ["distance", `${route.distance_m.toFixed(1)} m over ${route.lane_count} lanes`],
+      ["what it did",
+        `${route.lane_changes} lane changes · ${route.junction_movements} junction moves`],
+      ["speeds", `up to ${route.speed_kph} kph, slowest ${route.slowest_kph}`],
+      ["waiting", `${route.waiting_s} s · ${route.stop_count} stops`],
+    );
+  } else {
+    facts.push(["route", "not recorded — nothing about this drive was measured"]);
+  }
+  facts.push(
+    ["duration", `${row.duration_s.toFixed(1)} s`],
+    ["rate", `${entry.step_hz} Hz — replay advances one recorded frame per step`],
+    ["actors", actorText(row.tracks) || "none"],
+    ["lights", actorText(row.lights) || "none"],
+    ["map", row.map_features === null || row.map_features === undefined
+      ? "size not recorded — imported before schema 1.4, re-import to gain it"
+      : `${row.map_features} features · ${countsText(row.map_feature_types)}`],
+    // Not `earned / cap`. There is no budget to exceed: replay runs the recording, so its own
+    // length is how long it takes.
+    ["step budget", `${row.max_steps} · measured off the recording`],
+  );
+  return [
+    // No "click a second card to compare the two": a bank holds one recording, and `compare`
+    // refuses an imported bank for that reason.
+    pickHead(bank, `A · ${id}`,
+      el("span", { class: "hint", text: "read-only — nothing here was built from a seed" })),
+    el("div", { class: "side" }, [
+      figureFor(bank, id, "A"),
+      el("div", { class: "numbers" }, [
+        el("dl", { class: "facts" }, facts.flatMap(([key, value]) => [
+          el("dt", { text: key }), el("dd", { text: String(value) }),
+        ])),
+      ]),
+    ]),
+  ];
+}
+
 // How much the verdict should worry you, in a colour. `same-drive` is deliberately neither: two
 // rows separated only by the spawn lane are a real difference and a weak one.
 const CALL_TONE = {
@@ -1989,7 +2097,9 @@ async function renderPick(bank) {
     return;
   }
   if (picked.length === 1) {
-    panel.replaceChildren(...detailPanel(bank, picked[0]));
+    panel.replaceChildren(...(isReal(dataset.manifest || {})
+      ? recordedPanel(bank, picked[0])
+      : detailPanel(bank, picked[0])));
     return;
   }
   const [left, right] = picked;

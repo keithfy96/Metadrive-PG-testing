@@ -351,6 +351,11 @@ def create_app(*, banks_root: Path, state_dir: Path, workdir: Path | None = None
         except LookupError as error:
             # The bank is fine and the request is well formed; the id names nothing in it.
             raise HTTPException(status_code=404, detail=str(error)) from error
+        except BankError as error:
+            # An imported bank, which `compare` refuses: it holds one recording, so there is no
+            # second drive in it to compare the first against. 422 and not 500 -- the refusal is
+            # a fact about the bank rather than a fault here, and the page shows the sentence.
+            raise HTTPException(status_code=422, detail=str(error)) from error
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
 

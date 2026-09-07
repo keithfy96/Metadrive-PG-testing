@@ -12,7 +12,14 @@ from __future__ import annotations
 
 import pytest
 
-from scenariobank.bank import CategoryEntry, Manifest, OptionLevels, ScenarioRow
+from scenariobank.bank import (
+    CategoryEntry,
+    Manifest,
+    OptionLevels,
+    RealWorldEntry,
+    RealWorldRow,
+    ScenarioRow,
+)
 from scenariobank.handedness import DRIVE_SIDE_LEFT
 from scenariobank.review import (
     DISTINCT,
@@ -20,6 +27,7 @@ from scenariobank.review import (
     INCOMPARABLE,
     NEAR_DUPLICATE,
     NEAR_DUPLICATE_VERDICT,
+    NO_OPTIONS,
     SAME_DRIVE,
     compare,
     describe_options,
@@ -27,8 +35,10 @@ from scenariobank.review import (
     gap,
     review,
     review_category,
+    review_real_world,
     verdict,
 )
+from scenariobank.workspace import Provenance, Route, Signals
 
 
 def row(name, seed, *, dest="2C0_1_", lane=0, length=340.0, rotation=90.0, pairs=""):
@@ -492,3 +502,286 @@ def test_the_review_carries_the_line_so_the_page_does_not_write_its_own():
         categories={"curve": entry([row("c0", 0, pairs="LL")])},
     )
     assert review(manifest).options_line == "runs at traffic=medium, everything else none"
+
+
+# ------------------------------------------------- a bank that was driven rather than built
+
+
+def recording(
+    name="junction-1_0000",
+    *,
+    frames=3782,
+    length=395.11,
+    duration=37.81,
+    tracks=None,
+    lights=None,
+    features=974,
+    route=True,
+    speed=50.0,
+    slowest=10.42,
+    waiting=0.0,
+    stops=0,
+):
+    """One `RealWorldRow`, defaulting to the numbers `scenariobank workspace` prints for
+    `junction-1`'s 100 Hz conversion. Real, so a change to a measure has to argue with the drive
+    that motivated it -- the same rule the procedural rows above follow."""
+    return RealWorldRow(
+        scenario_id=name,
+        scenario_index=0,
+        file=f"sd_{name}.pkl",
+        stored_id=f"osm-scenario_v1_{name}",
+        max_steps=frames,
+        route_length_m=length,
+        duration_s=duration,
+        tracks={"PEDESTRIAN": 101, "CYCLIST": 25, "TRAFFIC_BARRIER": 24, "VEHICLE": 1}
+        if tracks is None
+        else tracks,
+        lights={"TRAFFIC_LIGHT": 8} if lights is None else lights,
+        map_features=features,
+        map_feature_types={"LANE_SURFACE_STREET": features} if features is not None else {},
+        route=Route(
+            source="generated",
+            name="route-1",
+            start_lane="1eef4a136cc4167d",
+            end_lane="863caef770461b65",
+            lane_count=18,
+            lane_changes=3,
+            junction_movements=14,
+            distance_m=length,
+            speed_kph=speed,
+            slowest_kph=slowest,
+            duration_s=duration,
+            driving_duration_s=duration - waiting,
+            waiting_s=waiting,
+            stop_count=stops,
+        )
+        if route
+        else None,
+        thumbnail="thumbs/junction-1.png",
+    )
+
+
+NOTE = (
+    "OSM records only that a signal exists; it carries no cycle, split or offset. Every number "
+    "here was chosen in the Stage 6 signal builder, not surveyed."
+)
+
+
+def signals(*, groups=3, lanes=8, declared=1, cycle=60.0, note=NOTE):
+    return Signals(
+        source="synthesised",
+        version=1,
+        cycle_seconds=cycle,
+        time_step_s=0.1,
+        phase_groups=groups,
+        signalled_lanes=lanes,
+        lane_model_signals=declared,
+        note=note,
+    )
+
+
+def recorded(rows=None, *, step_hz=100.0, plan=None, attribution="(c) OpenStreetMap"):
+    return RealWorldEntry(
+        description="one imported conversion",
+        dataset_dir="dataset",
+        step_hz=step_hz,
+        origin={"latitude": 3.1858943, "longitude": 101.6115546},
+        attribution=attribution,
+        provenance=Provenance(
+            generator_version="v1",
+            generation_fingerprint="a" * 64,
+            source_osm_sha256="b" * 64,
+            reviewed_lane_model_sha256="c" * 64,
+            stage_5_status="passed",
+        ),
+        tool_versions={"osmnx": "2.0"},
+        artifacts={},
+        copied=["source/manifest.json"],
+        signals=signals() if plan is None else plan,
+        max_steps=max((one.max_steps for one in (rows or [recording()])), default=0),
+        scenarios=[recording()] if rows is None else rows,
+    )
+
+
+def recorded_bank(entry=None, bank_id="junction-1"):
+    return Manifest(
+        schema_version="1.4",
+        bank_id=bank_id,
+        source="osm-scenario",
+        created_utc="2026-09-07T00:00:00Z",
+        metadrive={"edition": None, "dist_version": None, "commit": None, "asset_version": None},
+        base_config={},
+        drive_side=DRIVE_SIDE_LEFT,
+        categories={"junction-1": recorded() if entry is None else entry},
+    )
+
+
+def test_the_measures_are_the_ones_the_workspace_already_prints():
+    """The design constraint of the whole real-world half: a bank that described its recording
+    differently from the workspace it was converted from would be a second description of one
+    thing. Every number here is what `scenariobank workspace` prints for `scenarionet-100hz`."""
+    one = review_real_world("junction-1", recorded())
+    assert one.drive.route_length_max_m == 395.11
+    assert one.drive.duration_max_s == 37.81
+    assert (one.drive.speed_kph, one.drive.slowest_kph) == (50.0, 10.42)
+    assert (one.drive.lane_changes, one.drive.junction_movements) == (3, 14)
+    assert one.actors.tracks == {
+        "CYCLIST": 25, "PEDESTRIAN": 101, "TRAFFIC_BARRIER": 24, "VEHICLE": 1
+    }
+    assert one.signals.lights == {"TRAFFIC_LIGHT": 8}
+    assert one.map_size.features == 974
+    assert (one.replay.frames, one.replay.at_hz) == (3782, 100.0)
+    assert one.replay.seconds == 37.82
+
+
+def test_a_recording_reports_no_distinct_count_at_all():
+    """Not zero and not the total. `import` writes one workspace as one bank as one category and
+    every conversion in the four workspaces holds one scenario, so there is no second drive to be
+    distinct from -- and "1 distinct of 1" is the computation that never ran."""
+    report = review(recorded_bank())
+    assert report.distinct is None
+    assert report.total == 1
+    assert report.source == "osm-scenario"
+    assert not hasattr(report.categories[0], "duplicates")
+
+
+def test_a_recording_says_the_option_axes_are_not_knobs_here():
+    """`describe_options` would say "every axis is none", which is true and misleading: they were
+    not left at none, they are not levels. The wording is `Manifest._one_kind_of_bank`'s."""
+    line = review(recorded_bank()).options_line
+    assert line == NO_OPTIONS
+    assert "cannot" in line and "contents of a recording" in line
+
+
+def test_the_actors_are_summed_and_the_busiest_recording_is_named():
+    entry = recorded(rows=[
+        recording("a", tracks={"VEHICLE": 1, "PEDESTRIAN": 3}),
+        recording("b", tracks={"VEHICLE": 2}),
+    ])
+    one = review_real_world("junction-1", entry)
+    assert one.actors.tracks == {"PEDESTRIAN": 3, "VEHICLE": 3}
+    assert (one.actors.busiest, one.actors.busiest_tracks) == ("a", 4)
+
+
+def test_the_map_size_is_absent_rather_than_zero_on_a_bank_from_before_1_4():
+    """`None` is the converter's own meaning for the field -- "it did not say" -- and a reader
+    drawing a zero would be inventing a finding out of a field nothing wrote."""
+    one = review_real_world("junction-1", recorded(rows=[recording(features=None)]))
+    assert one.map_size.features is None
+    assert one.map_size.by_type == {}
+
+
+def test_one_recording_without_a_map_size_makes_the_total_absent():
+    # An undercount is worse than saying nothing: a number silently missing one conversion's map
+    # reads exactly like a smaller map.
+    entry = recorded(rows=[recording("a"), recording("b", features=None)])
+    assert review_real_world("junction-1", entry).map_size.features is None
+
+
+# ------------------------------------------------- the warnings, worst first
+
+
+def test_the_invented_signal_plan_travels_verbatim_as_the_first_warning():
+    """Carried word for word rather than paraphrased: it is a caveat about the data and not about
+    us, and a result scored against these lights is scored against a plan nobody surveyed."""
+    one = review_real_world("junction-1", recorded())
+    assert one.warnings[0] == NOTE
+    assert one.signals.note == NOTE
+
+
+def test_a_recording_with_no_lights_does_not_carry_the_signal_caveat():
+    entry = recorded(rows=[recording(lights={})], plan=signals(groups=None, declared=None,
+                                                              cycle=None))
+    assert NOTE not in review_real_world("junction-1", entry).warnings
+
+
+def test_signals_declared_and_never_built_are_named():
+    """The real `mosque` case: four signals in the lane model, no phase groups built from them.
+    A junction whose lights were never built reads exactly like a junction with no lights."""
+    entry = recorded(rows=[recording(lights={})],
+                     plan=signals(groups=0, lanes=0, declared=4, cycle=None))
+    warnings = review_real_world("mosque", entry).warnings
+    assert any("declares 4 signal(s)" in line and "no phase groups" in line for line in warnings)
+
+
+def test_a_recording_whose_signals_were_built_says_nothing_about_them():
+    warnings = review_real_world("junction-1", recorded()).warnings
+    assert not any("no phase groups" in line for line in warnings)
+
+
+def test_a_recording_that_is_mostly_stationary_says_so():
+    """Fires on nothing in the four workspaces here -- every conversion records `waiting 0 s` --
+    so the numbers are constructed rather than measured, and this is the one measure in the
+    real-world half not exercised against real data."""
+    entry = recorded(rows=[recording(duration=40.0, waiting=30.0, stops=4)])
+    one = review_real_world("junction-1", entry)
+    assert one.drive.waiting_fraction == 0.75
+    assert any("75% of this recording is spent stopped" in line for line in one.warnings)
+
+
+def test_a_recording_that_never_stops_is_not_warned_about():
+    one = review_real_world("junction-1", recorded())
+    assert one.drive.waiting_fraction == 0.0
+    assert not any("spent stopped" in line for line in one.warnings)
+
+
+def test_a_conversion_holding_the_ego_and_nothing_else_is_named():
+    """`mosque`'s two 100 Hz conversions are exactly this, and the sentence is `workspace`'s own
+    so the bank and the workspace do not describe one recording two ways."""
+    entry = recorded(rows=[recording("m0", tracks={"VEHICLE": 1}, lights={})],
+                     plan=signals(groups=None, declared=None, cycle=None))
+    one = review_real_world("mosque", entry)
+    assert one.actors.ego_only == ["m0"]
+    assert any("the ego and nothing else" in line for line in one.warnings)
+
+
+def test_a_recording_with_lights_but_no_traffic_is_not_called_ego_only():
+    # There is still something to react to. `workspace` draws the line in the same place.
+    entry = recorded(rows=[recording("m0", tracks={"VEHICLE": 1})])
+    assert review_real_world("mosque", entry).actors.ego_only == []
+
+
+def test_a_bank_with_no_attribution_is_warned_about():
+    entry = recorded(attribution=None)
+    warnings = review_real_world("junction-1", entry).warnings
+    assert any("licence obligation" in line for line in warnings)
+
+
+def test_a_row_with_no_route_is_named_and_measures_nothing():
+    entry = recorded(rows=[recording("a"), recording("b", route=False)])
+    one = review_real_world("junction-1", entry)
+    assert one.drive.routeless == ["b"]
+    assert any("no route was recorded" in line for line in one.warnings)
+
+
+def test_an_entry_with_no_recordings_is_a_report_rather_than_a_crash():
+    one = review_real_world("empty", recorded(rows=[]))
+    assert one.total == 0
+    assert one.warnings == ["empty holds no recordings."]
+
+
+def test_reviewing_a_recording_builds_nothing_either(tmp_path):
+    """The same subprocess check as above, on the other half -- and it covers one thing the PG
+    one does not: the recorded CLI printer reaches into `workspace` for `_counts_line`, so this
+    is the path that could pull a simulator in through a module the PG review never touches."""
+    import subprocess
+    import sys
+
+    from scenariobank.bank import write_manifest
+
+    write_manifest(tmp_path, recorded_bank())
+    done = subprocess.run(
+        [
+            sys.executable, "-c",
+            "import sys;"
+            "from scenariobank.bank import read_manifest;"
+            "from scenariobank.review import review;"
+            "from scenariobank.workspace import _counts_line;"
+            f"review(read_manifest({str(tmp_path)!r}));"
+            "print([m for m in sys.modules if m.startswith('metadrive')])",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert done.stdout.strip() == "[]", done.stdout

@@ -20,9 +20,11 @@ import pytest
 
 from scenariobank import importing
 from scenariobank.importing import (
+    CARRIED,
     EXAMPLE_WORKSPACE,
     IMPORTING_DOC,
     LEFT,
+    MINTED,
     SECTIONS,
     choose,
     render,
@@ -175,6 +177,47 @@ def test_a_row_naming_a_field_nothing_reads_is_an_error(monkeypatch):
 def test_a_field_listed_twice_is_an_error(monkeypatch):
     monkeypatch.setattr(importing, "LEFT", {**LEFT, "driving_side": "already carried above"})
     with pytest.raises(ValueError, match="more than once"):
+        importing._check()
+
+
+def test_every_field_a_bank_row_carries_names_where_it_came_from():
+    """The other half of the coverage guarantee, on the bank's side.
+
+    `_check` proves the checklist and `workspace.py` agree. This proves the checklist and
+    `bank.RealWorldRow` do -- the gap `map_features` fell through for two steps, where the page
+    promised a field the row did not have and neither `_verify` (copied files) nor `_check`
+    (the reader) was looking.
+    """
+    listed = {key for _, _, fields in SECTIONS for key in fields}
+    importing._check_carried(listed | set(importing.CONTAINERS) | set(LEFT))
+
+
+def test_a_row_field_with_no_declared_source_is_an_error(monkeypatch):
+    # A field added to `RealWorldRow` and nowhere else: the shape the map-size drift had.
+    monkeypatch.setattr(
+        importing, "CARRIED", {k: v for k, v in CARRIED.items() if v != "map_features"}
+    )
+    with pytest.raises(ValueError, match=r"\['map_features'\] are on a bank row"):
+        importing._check()
+
+
+def test_sourcing_a_field_no_row_has_is_an_error(monkeypatch):
+    monkeypatch.setattr(importing, "MINTED", {**MINTED, "invented": "a field nothing carries"})
+    with pytest.raises(ValueError, match="are sourced and not on a row"):
+        importing._check()
+
+
+def test_a_row_field_sourced_twice_is_an_error(monkeypatch):
+    monkeypatch.setattr(importing, "MINTED", {**MINTED, "tracks": "already carried above"})
+    with pytest.raises(ValueError, match="for a bank row more than once"):
+        importing._check()
+
+
+def test_carrying_a_field_the_checklist_does_not_name_is_an_error(monkeypatch):
+    # A row cannot be carried over from a page row that does not exist -- the mirror of the
+    # "on the checklist and not read" failure, one model further along.
+    monkeypatch.setattr(importing, "CARRIED", {**CARRIED, "scenario.invented": "thumbnail"})
+    with pytest.raises(ValueError, match="which the checklist does not name"):
         importing._check()
 
 

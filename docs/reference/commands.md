@@ -171,17 +171,25 @@ uv run scenariobank seeds -c roundabout --scan 0,7,22          # score three nam
 
 ### `review`
 
-Say what is actually in a bank: duplicates, coverage, step budgets and spread.
+Say what is actually in a bank -- either kind, and they are not the same question.
 
-**A bank of 55 rows is not automatically 55 scenarios.** `intersection_left` resolves every
-seed to the same destination, the same route and the same turn -- the `X` junction does not
-vary with the seed -- so five seeds draw two scenarios, one per spawn lane, and the other three
-are padding. Nothing said so until this command.
+**A procedural bank of 55 rows is not automatically 55 scenarios.** `intersection_left`
+resolves every seed to the same destination, the same route and the same turn -- the `X`
+junction does not vary with the seed -- so five seeds draw two scenarios, one per spawn lane,
+and the other three are padding. Nothing said so until this command. That half reports
+duplicates, coverage, step budgets and spread.
+
+**An imported bank was driven rather than built**, so none of those apply: there is no seed to
+repeat, no exit to resolve and no budget to exceed, and it holds one recording. What it
+reports instead is what was measured off the recording -- the route and how long it took, the
+speeds and how much of it was spent stopped, who else is in it, the traffic lights and the
+invented plan behind them, the map size, and what replaying it costs.
 
 Reads the manifest and nothing else: **no simulator, no environment, and no rebuild**, so it
 runs on a machine with no MetaDrive and answers in milliseconds. The companion to `seeds`,
 which needs the simulator and asks the other question -- that one is *what should I build*,
-this one is *what did I build*.
+this one is *what did I build*. For a recording the companion is `workspace`, which says the
+same things about the conversion the bank was imported from.
 
 | flag | | repeats | meaning |
 |---|---|---|---|

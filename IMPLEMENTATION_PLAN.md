@@ -1969,12 +1969,13 @@ measured as unusable; ad-hoc roads as bank rows.
 
 # Phase 3 — Import: stored scenarios from the converter 🔨  ⟵ *the number is reused*
 
-**Status:** Steps 1-4 are built — `scenariobank workspace` reads a converter workspace and says
+**Status:** Steps 1-5 are built — `scenariobank workspace` reads a converter workspace and says
 what is in it, `scenariobank importing` turns that reading into
 [`docs/reference/importing.md`](docs/reference/importing.md), the checklist an import must satisfy,
 and `scenariobank import` satisfies it: one workspace becomes one bank under schema 1.3, beside the
-procedural ones. Steps 1-4 are built: the studio now reads `source` off the manifest and lists the
-two kinds under their own headings. Step 5, what a real-world bank's review *is*, is next.
+procedural ones. Steps 1-5 are built: the studio reads `source` off the manifest, lists the two
+kinds under their own headings, and reviews a recording with measures of its own. Step 6, the
+one-scenario round trip, is next — and it is the first step here that builds an environment.
 
 > **This is not the old Phase 3.** `scenariobank verify` was the gate over `map_id`, `config_hash`
 > and the recorded MetaDrive commit; all three were cut with the durable-bank premise on
@@ -2354,8 +2355,9 @@ Today `GET /api/banks` returns one flat list (`web/api.py:218`) and `renderBankL
 sections, the search filters both, and a PG-only root shows one section with no empty heading.
 
 *(Done 2026-09-07. 481 tests pass, ruff clean. Verified in a running studio on a scratch root
-holding `roundy` and `curve` procedural, `junction-1` and `mosque` imported, and a `broken`
-directory whose manifest will not parse: three headings, the search filters across all of them,
+holding `roundy` and `curve` procedural, `junction-1` and `mosque` **written by a test helper as
+real-world manifests** -- not run through `import`, so they carried no thumbnail and no `route`
+block -- and a `broken` directory whose manifest will not parse: three headings, the search filters across all of them,
 `junction` narrows to one group and the headings vanish, and a PG-only root renders byte for byte
 what it rendered before. No console errors.)*
 
@@ -2387,7 +2389,14 @@ a picker, so it carries the bank's total. The converter counts the ego as a `VEH
 every other, and subtracting it here would make the row disagree with what `scenariobank workspace`
 prints about the same recording.*
 
-### Step 5 — `review` for a bank with no seeds ⬜
+*(Amended 2026-09-07, in Step 5: the scratch banks above were **manifests**, written directly by
+`tests/unit/test_web.py:_real_bank`, and the note first said they were "imported". Nothing Step 4
+reads was missing from them -- the rate, the frame count, the route length, the duration and the
+actor counts are all there -- but the thumbnail and the `route` block were `None`, so what the
+scratch root did not exercise was the page rendering a real picture and a real route. Both are
+verified against `banks/junction-1` in Step 5 below.)*
+
+### Step 5 — `review` for a bank with no seeds ✅
 
 `review`, the duplicate detection and the coverage chips are built on seeds, block sequences and
 turn pairs. None of those exist here. This step decides what a real-world bank's review *is* —
@@ -2396,6 +2405,75 @@ of the PG chips.
 
 **Verify alone:** open an imported bank in the studio; every chip shown is a measured property of
 the recording, and nothing reads "0 duplicates" from a computation that never ran.
+
+*(Done 2026-09-07. 509 tests pass, ruff clean. Verified in a running studio against the real
+`banks/` root — `banks/junction-1` re-imported at schema 1.4 and the four procedural banks
+untouched. Every number the review reports matches what `scenariobank workspace` prints for
+`scenarionet-100hz`: 395.1 m over 18 lanes, 3 lane changes, 14 junction moves, 37.8 s, up to 50 kph
+slowest 10.42, 0 s waiting, 101 pedestrians / 25 cyclists / 24 barriers / 1 vehicle, 8 traffic
+lights, 974 map features. No console errors; the procedural banks render exactly as before.)*
+
+**The design constraint, and where it came from.** `scenariobank workspace` already prints exactly
+this report about the conversion a bank was imported from (`workspace.format_report`), so the
+review is **that, read out of the bank instead of the workspace** — same fields, same wording,
+reusing `workspace._counts_line`. A bank that described its recording differently from the
+workspace it came from would be a second description of one thing, and the two would part company
+the day either was edited. If a number here disagrees with `workspace`, the review is wrong.
+
+**Two models, never a mixture**, the rule schema 1.3 set. `Report.source` is the discriminator and
+`Report.categories` is `list[CategoryReview | RealWorldReview]`. `RealWorldReview` carries `Drive`,
+`Actors`, `SignalCover`, `Replay` and `MapSize` — siblings of `Duplicates` / `Coverage` / `Budget`
+/ `Spread`, and not one of them a PG measure in disguise.
+
+*Six things the plan above did not say, all from building it:*
+
+*1. **Duplicates are absent, not zero — and `null` is a trap in JavaScript.** An import writes one
+workspace as one bank as one recording, and every conversion in all four workspaces holds exactly
+one scenario (measured with `workspace`), so there is no second drive to be distinct from.
+`Report.distinct` is `None` rather than equal to `total`, because an equal number reads as a
+computation that ran and found no repetition. But `null < 4` is **true** in JS, so the page's
+"N distinct" pill needed an explicit `!== null` test — a truthiness check would have drawn
+"· null distinct" on every imported bank.*
+
+*2. **`review` gave up the refusal; `compare` kept it.** `_procedural()` is now `compare`'s guard
+alone, and its message says why: a bank holds one recording, so there is no second drive in it to
+compare the first against. The `/compare` endpoint was returning **500** on an imported bank —
+`BankError` is a `RuntimeError` and only `LookupError` and `ValueError` were caught — which is now
+a 422 with the sentence. Found by writing the test, not by looking at the page.*
+
+*3. **The map-size drift, and the guarantee that now prevents it.** `importing.SECTIONS` has told
+the reader since Step 2 that a bank carries `scenario.map_features` and
+`scenario.map_feature_types`. It carried neither: `_rows()` never passed them, and nothing raised,
+because `_verify` checks copied **files** and `_check` checks the **reader** — a claim about a
+manifest field sat between the two guarantees. Fixed by schema 1.4, and closed structurally by
+`importing.CARRIED` / `MINTED` and `_check_carried`, which raises unless every field of
+`RealWorldRow` names the checklist key it came from. `workspace` reports 974 map features for
+`junction-1` and 1322 for `mosque`, and neither number used to survive an import.*
+
+*4. **Schema 1.4 costs a re-import, and `write_manifest` makes that worth saying.** The two fields
+are defaulted, so a 1.3 bank keeps opening and reads honestly — `None` means "the converter did not
+say", which is already what it means on `workspace.Scenario`, and both the CLI and the page print
+"map size not recorded" rather than drawing a zero. But `write_manifest` stamps `SCHEMA_VERSION` on
+the way out, so **any edit to a 1.3 bank restamps it 1.4 without gaining the numbers.** Only a
+re-import gains them. `banks/` is gitignored and disposable, so that is one command per bank.*
+
+*5. **A recorded card is a button again, and single-select.** Step 4 made it a tile because the
+only panel behind it compared and replaced by rebuilding a seed. `recordedPanel` is the read-only
+sibling of `detailPanel`: the conversion, the pickle it traces back to, the route from start lane
+to end lane, the speeds, the waiting, the actors, the lights, the map size, and the step budget as
+`3782 · measured off the recording` rather than `earned / cap`. It offers no compare, replace, add,
+remove, edit or budget control. `pick()` clears the selection first on a recording, so the two-card
+path is unreachable and `/compare` is never called from the page at all.*
+
+*6. **One warning ships untested against real data.** "Mostly stationary" fires on nothing here —
+every conversion in all four workspaces records `waiting 0 s, 0 stops` — so its numbers are
+constructed in the test rather than measured. The other five are real: the signal note fires on
+`junction-1`, "declared and never built" is the `mosque` case (four signals in the lane model, no
+phase groups), and "the ego and nothing else" is `mosque`'s two 100 Hz conversions.*
+
+*Also, a smaller one: `actorText` reads `VEHICLE` back as English because a person thinks in
+vehicles and pedestrians. Nobody thinks in "road edge boundarys", so map feature types are printed
+with the ScenarioNet names exactly as the data spells them — which is what `workspace` prints too.*
 
 ### Step 6 — the one-scenario round trip ⬜  ⟵ *gate*
 

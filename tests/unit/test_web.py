@@ -528,7 +528,7 @@ def test_an_unreadable_manifest_is_listed_with_its_reason(client):
 
 
 def _real_bank(root, name, *, created="2026-09-01T00:00:00Z", step_hz=100.0,
-               tracks=None, origin=None, scenarios=1):
+               tracks=None, origin=None, scenarios=1, route=False, features=None):
     """An imported bank on disk. Written directly rather than through `import_workspace`.
 
     `test_import.py` owns the copy; what this file needs is the *file* an import leaves behind,
@@ -543,6 +543,14 @@ def _real_bank(root, name, *, created="2026-09-01T00:00:00Z", step_hz=100.0,
         write_manifest,
     )
     from scenariobank.handedness import DRIVE_SIDE_LEFT
+    from scenariobank.workspace import Route
+
+    drive = Route(
+        source="generated", name="route-1", start_lane="a", end_lane="b", lane_count=18,
+        lane_changes=3, junction_movements=14, distance_m=395.1, speed_kph=50.0,
+        slowest_kph=10.42, duration_s=3782 / step_hz, driving_duration_s=3782 / step_hz,
+        waiting_s=0.0, stop_count=0,
+    ) if route else None
 
     directory = root / name
     directory.mkdir(parents=True)
@@ -558,7 +566,9 @@ def _real_bank(root, name, *, created="2026-09-01T00:00:00Z", step_hz=100.0,
             duration_s=3782 / step_hz,
             tracks=dict(tracks),
             lights={"TRAFFIC_LIGHT": 8},
-            route=None,
+            map_features=features,
+            map_feature_types={"LANE_SURFACE_STREET": features} if features else {},
+            route=drive,
             thumbnail=None,
         )
         for index in range(scenarios)
@@ -1160,3 +1170,49 @@ def test_the_palette_is_served_the_rule_and_not_only_a_sentence_about_it(client)
     assert {block_id for block_id, needs in rows.items() if needs} == {"f", "F", "P"}
     assert rows["P"]["after_any"] == "y" and rows["P"]["insert"] == "yy"
     assert all(rows[block.id] is None for block in BLOCKS if block.id not in {"f", "F", "P"})
+
+
+def test_the_review_endpoint_answers_for_an_imported_bank(client):
+    """Step 3 left this 422-ing and the page swallowed it with `.catch(() => null)`, so an
+    imported bank drew no chips and said nothing about why. Step 5 gave a recording a review of
+    its own, and this is the endpoint the page reads it from."""
+    _real_bank(client.workdir / "banks", "junction-1", route=True, features=974)
+
+    answer = client.get("/api/banks/junction-1/review")
+    assert answer.status_code == 200
+    report = answer.json()
+    assert report["source"] == "osm-scenario"
+    # Absent, not zero and not the total: there is no second recording to be distinct from.
+    assert report["distinct"] is None
+    assert report["total"] == 1
+
+    one = report["categories"][0]
+    assert one["drive"]["route_length_max_m"] == 395.1
+    assert one["actors"]["tracks"] == {"PEDESTRIAN": 31, "VEHICLE": 120}
+    assert one["map_size"]["features"] == 974
+    assert one["replay"]["at_hz"] == 100.0
+    assert "duplicates" not in one
+
+
+def test_comparing_two_recordings_is_still_refused_by_the_endpoint(client):
+    """A bank holds one recording, so there is no second drive in it to compare the first
+    against. `/compare` keeps the guard `/review` gave up."""
+    _real_bank(client.workdir / "banks", "junction-1")
+
+    answer = client.get(
+        "/api/banks/junction-1/compare", params={"left": "junction-1_0000",
+                                                 "right": "junction-1_0000"}
+    )
+    assert answer.status_code == 422
+    assert "no second drive" in answer.json()["detail"]
+
+
+def test_a_procedural_review_is_unchanged_but_for_the_discriminator(client):
+    _bank(client.workdir / "banks", "curvy")
+
+    report = client.get("/api/banks/curvy/review").json()
+    assert report["source"] == "pg"
+    # A number rather than `None`: the count is the point of a procedural review, and the two
+    # `curvy` rows collapse to one drive.
+    assert (report["total"], report["distinct"]) == (2, 1)
+    assert "duplicates" in report["categories"][0]

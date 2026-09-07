@@ -228,7 +228,7 @@ def test_an_import_writes_the_files_a_runner_needs(tmp_path, monkeypatch):
     assert (bank / "source" / "manifest.json").is_file()
     assert (bank / "reports" / "scenario-conversion-100hz.json").is_file()
     assert (bank / "thumbs" / "junction-x.png").is_file()
-    assert manifest.schema_version == "1.3"
+    assert manifest.schema_version == "1.4"
     assert manifest.source == "osm-scenario"
 
 
@@ -397,15 +397,42 @@ def test_a_1_2_manifest_reads_as_a_procedural_1_3_one(tmp_path):
     assert isinstance(manifest.categories["curve"], CategoryEntry)
 
 
-def test_review_refuses_an_imported_bank_by_name(tmp_path, monkeypatch):
-    """The plan's Verify alone said `review` runs on an imported bank. It cannot yet, and a review
-    built on seeds reporting zeroes would be worse than a refusal -- so it refuses, and Step 5 is
-    where it learns what a real-world bank's review is."""
-    from scenariobank.review import review
+def test_review_reads_an_imported_bank_and_reports_no_distinct_count(tmp_path, monkeypatch):
+    """Step 3 refused this by name and Step 5 is where it learned what a recording's review is.
+
+    The refusal existed so a review built on seeds would not report zeroes from computations that
+    never ran. That constraint outlives the refusal: an imported bank holds one recording, so
+    `distinct` is **absent** rather than equal to `total`.
+    """
+    from scenariobank.review import RealWorldReview, review
+
+    report = review(imported(tmp_path, monkeypatch))
+    assert report.source == "osm-scenario"
+    assert report.total == 1
+    assert report.distinct is None
+    assert isinstance(report.categories[0], RealWorldReview)
+
+
+def test_comparing_two_recordings_is_still_refused_by_name(tmp_path, monkeypatch):
+    """`compare` keeps the guard `review` gave up: a bank holds one recording, so there is no
+    second drive in it to compare the first against."""
+    from scenariobank.review import compare
 
     manifest = imported(tmp_path, monkeypatch)
+    row = manifest.categories["junction-x"].scenarios[0]
     with pytest.raises(BankError, match="built on seeds, block sequences and resolved exits"):
-        review(manifest)
+        compare(manifest, row.scenario_id, row.scenario_id)
+
+
+def test_a_bank_row_carries_the_map_size_the_checklist_promises(tmp_path, monkeypatch):
+    """Schema 1.4. `importing.SECTIONS` has said since Step 2 that a bank carries the map size;
+    until 1.4 `_rows` passed neither field and nothing caught it, because `_verify` checks copied
+    files and `_check` checks the reader. `_check_carried` closes that gap structurally and this
+    closes it by value."""
+    manifest = imported(tmp_path, monkeypatch)
+    row = manifest.categories["junction-x"].scenarios[0]
+    assert row.map_features == 3
+    assert row.map_feature_types == {"LANE_SURFACE_STREET": 3}
 
 
 def test_the_editing_commands_refuse_an_imported_bank(tmp_path, monkeypatch):

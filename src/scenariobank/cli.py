@@ -755,6 +755,63 @@ def _parse_scan(raw: str) -> tuple[int, ...]:
     return _parse_seeds(raw, hint="--scan")
 
 
+def _print_recorded(report) -> None:
+    """The `review` printer for an imported bank. The PG one above is untouched.
+
+    Deliberately the same field selection and the same wording `scenariobank workspace` uses for
+    the conversion this was imported from (`workspace.format_report`). A bank that described its
+    recording differently from the workspace it came from would be a second description of one
+    thing, and the two would part company the day either was edited.
+
+    No "N distinct of N" headline: `Report.distinct` is `None` here, because an imported bank
+    holds one recording and there is nothing for it to be distinct from.
+    """
+    from scenariobank.workspace import _counts_line
+
+    typer.echo(f"{report.bank_id}: {report.total} recording(s)")
+    for one in report.categories:
+        drive, replay = one.drive, one.replay
+        typer.echo(
+            f"\n{one.category}  {one.step_hz:g} Hz  {replay.frames} frames"
+            f"  {replay.seconds:.1f} s"
+        )
+        typer.echo(
+            f"  route:      {drive.route_length_min_m:.1f} to {drive.route_length_max_m:.1f} m"
+            f"  {drive.lane_changes} lane changes, {drive.junction_movements} junction moves"
+        )
+        speed = f"{drive.speed_kph:g}" if drive.speed_kph is not None else "?"
+        slowest = f"{drive.slowest_kph:g}" if drive.slowest_kph is not None else "?"
+        typer.echo(
+            f"  drive:      {drive.duration_min_s:.1f} to {drive.duration_max_s:.1f} s at up to "
+            f"{speed} kph (slowest {slowest}), waiting {drive.waiting_s:g} s, "
+            f"{drive.stop_count} stops"
+        )
+        typer.echo(f"  actors:     {_counts_line(one.actors.tracks)}")
+        signals = one.signals
+        cycle = f"{signals.cycle_seconds:g} s cycle" if signals.cycle_seconds else "no cycle"
+        typer.echo(
+            f"  lights:     {_counts_line(signals.lights)}"
+            f"   ({signals.phase_groups} phase groups over {signals.signalled_lanes} lanes, "
+            f"{cycle})"
+        )
+        # `None` rather than 0 on a bank imported before schema 1.4, and said as such: a zero
+        # here would be a finding invented out of a field that was never written.
+        size = one.map_size
+        features = f"{size.features} map features" if size.features is not None else (
+            "map size not recorded (imported before schema 1.4; re-import to gain it)"
+        )
+        kinds = f"  ({_counts_line(size.by_type)})" if size.by_type else ""
+        typer.echo(f"  map:        {features}{kinds}")
+        typer.echo(
+            f"  replay:     {replay.longest} frames at {replay.at_hz:g} Hz"
+            f"  ({replay.seconds:.1f} s of driving)"
+        )
+        for line in one.warnings:
+            typer.echo(f"  ! {line}")
+
+    typer.echo(f"\n{report.options_line}")
+
+
 @app.command("review")
 def review_bank(
     bank: Annotated[
@@ -764,17 +821,25 @@ def review_bank(
         bool, typer.Option("--json", help="Emit the report as JSON instead of aligned text.")
     ] = False,
 ) -> None:
-    """Say what is actually in a bank: duplicates, coverage, step budgets and spread.
+    """Say what is actually in a bank -- either kind, and they are not the same question.
 
-    **A bank of 55 rows is not automatically 55 scenarios.** `intersection_left` resolves every
-    seed to the same destination, the same route and the same turn -- the `X` junction does not
-    vary with the seed -- so five seeds draw two scenarios, one per spawn lane, and the other three
-    are padding. Nothing said so until this command.
+    **A procedural bank of 55 rows is not automatically 55 scenarios.** `intersection_left`
+    resolves every seed to the same destination, the same route and the same turn -- the `X`
+    junction does not vary with the seed -- so five seeds draw two scenarios, one per spawn lane,
+    and the other three are padding. Nothing said so until this command. That half reports
+    duplicates, coverage, step budgets and spread.
+
+    **An imported bank was driven rather than built**, so none of those apply: there is no seed to
+    repeat, no exit to resolve and no budget to exceed, and it holds one recording. What it
+    reports instead is what was measured off the recording -- the route and how long it took, the
+    speeds and how much of it was spent stopped, who else is in it, the traffic lights and the
+    invented plan behind them, the map size, and what replaying it costs.
 
     Reads the manifest and nothing else: **no simulator, no environment, and no rebuild**, so it
     runs on a machine with no MetaDrive and answers in milliseconds. The companion to `seeds`,
     which needs the simulator and asks the other question -- that one is *what should I build*,
-    this one is *what did I build*.
+    this one is *what did I build*. For a recording the companion is `workspace`, which says the
+    same things about the conversion the bank was imported from.
     """
     from scenariobank.bank import BankError, read_manifest
     from scenariobank.review import review
@@ -787,6 +852,10 @@ def review_bank(
 
     if as_json:
         typer.echo(report.model_dump_json(indent=2))
+        return
+
+    if report.source != "pg":
+        _print_recorded(report)
         return
 
     typer.echo(f"{report.bank_id}: {report.distinct} distinct of {report.total}")

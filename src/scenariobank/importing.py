@@ -91,6 +91,39 @@ CONTAINERS: dict[str, str] = {
     "scenario.provenance": "provenance",
 }
 
+#: Which checklist key ends up on which `RealWorldRow` field. The other half of `_check`, on the
+#: bank's side: the coverage above proves every field `workspace.py` reads is *mentioned*, and
+#: this proves every field the bank's row *has* was mentioned as coming from somewhere.
+#:
+#: It exists because the gap was real. The section below has told the reader since Step 2 that a
+#: bank carries `scenario.map_features` and `scenario.map_feature_types`; until schema 1.4 it
+#: carried neither, `_rows` never passed them, and nothing raised -- `_verify` checks copied
+#: *files* and `_check` checks the *reader*, so a claim about a manifest field sat between the
+#: two guarantees and drifted.
+CARRIED: dict[str, str] = {
+    "scenario.scenario_id": "stored_id",
+    "scenario.file": "file",
+    "scenario.length": "max_steps",
+    "scenario.duration_s": "duration_s",
+    "scenario.tracks": "tracks",
+    "scenario.lights": "lights",
+    "scenario.map_features": "map_features",
+    "scenario.map_feature_types": "map_feature_types",
+    "scenario.route": "route",
+    "route.distance_m": "route_length_m",
+    "dataset.map_image": "thumbnail",
+}
+
+#: The two row fields that come from no checklist key, because the bank mints them rather than
+#: carrying them. Declared so `_check_carried` can tell a field minted on purpose from one whose
+#: source somebody forgot to record.
+MINTED: dict[str, str] = {
+    "scenario_id": "`bank.scenario_id(name, index)` -- this bank's own key, the same function a "
+    "generated row's id comes from, so the two kinds of bank share one id shape",
+    "scenario_index": "the recording's position in the dataset's index, which is what "
+    "ScenarioNet addresses a scenario by. It is where the row sits, not something read off it",
+}
+
 #: The checklist itself: sections in reading order, each a title, a blurb, and the fields it
 #: covers with why each must be brought over. Keys are `<model>.<field>`, unprefixed for the
 #: report's own fields; `_value` resolves them against the measured example.
@@ -361,6 +394,40 @@ def _check() -> None:
             f"the checklist and workspace.py disagree: {missing} are read and not on the "
             f"checklist, {unknown} are on the checklist and not read. Every field the reader "
             "has must be either brought over, or listed in LEFT with the reason it is not."
+        )
+    _check_carried(set(listed))
+
+
+def _check_carried(listed: set[str]) -> None:
+    """Raise unless every field of a bank's row has a declared source, and every source is real.
+
+    `_check` proves the checklist and `workspace.py` agree. This proves the checklist and
+    `bank.RealWorldRow` do. Without it a row could claim a field the page never mentions, or --
+    the way `map_features` did for two steps -- the page could promise a field the row does not
+    have.
+    """
+    # Sources first: a key naming a checklist row that does not exist is a broken source, and
+    # reporting the coverage of a set built on one would be a second finding about one fault.
+    unlisted = sorted(set(CARRIED) - listed)
+    if unlisted:
+        raise ValueError(
+            f"importing.CARRIED sources a bank row from {unlisted}, which the checklist does "
+            "not name. A field cannot be carried over from a row the page does not have."
+        )
+
+    accounted = list(CARRIED.values()) + list(MINTED)
+    if len(accounted) != len(set(accounted)):
+        twice = sorted({name for name in accounted if accounted.count(name) > 1})
+        raise ValueError(f"importing sources {twice} for a bank row more than once")
+
+    fields = set(RealWorldRow.model_fields)
+    unsourced = sorted(fields - set(accounted))
+    invented = sorted(set(accounted) - fields)
+    if unsourced or invented:
+        raise ValueError(
+            f"the checklist and bank.RealWorldRow disagree: {unsourced} are on a bank row with "
+            f"no source on the checklist, {invented} are sourced and not on a row. Every field "
+            "a row carries must name the checklist key it came from, or be listed in MINTED."
         )
 
 
@@ -797,6 +864,8 @@ def _rows(dataset: Dataset, name: str, thumbnail: str | None) -> list[RealWorldR
                 duration_s=float(scenario.duration_s or 0.0),
                 tracks=scenario.tracks,
                 lights=scenario.lights,
+                map_features=scenario.map_features,
+                map_feature_types=scenario.map_feature_types,
                 route=route,
                 thumbnail=thumbnail,
             )
@@ -894,12 +963,14 @@ def import_workspace(
 
 
 __all__ = [
+    "CARRIED",
     "COPIED",
     "DATASET_DIR",
     "DEFAULT_RATE",
     "EXAMPLE_WORKSPACE",
     "IMPORTING_DOC",
     "LEFT",
+    "MINTED",
     "SECTIONS",
     "VERDICTS",
     "choose",

@@ -190,7 +190,7 @@ Nothing of the 10 Hz conversion is left behind after the second command.
 
 ```
 banks/junction-1/
-  manifest.json                          schema 1.3, source "osm-scenario"
+  manifest.json                          schema 1.4, source "osm-scenario"
   dataset/                               the summary, the mapping, and the sd_*.pkl recording
   reports/scenario-conversion-100hz.json this conversion's own report, not another's
   source/manifest.json                   the converter's manifest, for provenance
@@ -221,9 +221,11 @@ Each of these fails before a byte is copied, and the message says which one it i
 
 ## What an imported bank cannot do
 
-- **`review` refuses it by name.** Every measure review makes is built on a seed, a block sequence
-  and a resolved exit. A recording has none of them, and a review reporting "0 duplicates" from a
-  computation that never ran is worse than a refusal.
+- **`compare` refuses it by name.** The measure is a distance between two drives that were
+  *chosen*, and a recording chose nothing — and an import writes one workspace as one bank as one
+  recording, so there is no second drive in a bank to compare the first against.
+- **`review` does not report duplicates, coverage, spread or a step budget.** All four are built on
+  a seed, a block sequence and a resolved exit. What it reports instead is below.
 - **The five editing commands refuse it the same way.** `replace`, `add` and the rest edit a bank
   by rebuilding a seed. There is no seed here to rebuild.
 - **`options` cannot pin levels on it.** The six difficulty axes are contents of the recording, not
@@ -231,6 +233,40 @@ Each of these fails before a byte is copied, and the message says which one it i
 - **The manifest records no `base_config` and no simulator.** MetaDrive did not build this bank,
   the converter did. Which simulator replays it is a property of the run, and the runner records
   that.
+
+## What `review` says about one
+
+`scenariobank review --bank banks/junction-1` reads the same fields `scenariobank workspace` prints
+for the conversion it was imported from, out of the bank instead of the workspace. If a number
+disagrees with `workspace`, the review is wrong and the workspace is right.
+
+```
+junction-1: 1 recording(s)
+
+junction-1  100 Hz  3782 frames  37.8 s
+  route:      395.1 to 395.1 m  3 lane changes, 14 junction moves
+  drive:      37.8 to 37.8 s at up to 50 kph (slowest 10.42), waiting 0 s, 0 stops
+  actors:     25 CYCLIST, 101 PEDESTRIAN, 24 TRAFFIC_BARRIER, 1 VEHICLE
+  lights:     8 TRAFFIC_LIGHT   (3 phase groups over 8 lanes, 60 s cycle)
+  map:        974 map features  (434 LANE_SURFACE_STREET, 455 ROAD_EDGE_BOUNDARY, ...)
+  replay:     3782 frames at 100 Hz  (37.8 s of driving)
+  ! OSM records only that a signal exists; it carries no cycle, split or offset. ...
+```
+
+There is **no "N distinct of N"** headline and the JSON reports `"distinct": null` rather than a
+number: a bank holds one recording, so there is nothing for it to be distinct from, and a count
+equal to the total would read as a computation that ran and found no repetition.
+
+The warnings, worst first, are the six a recording can earn:
+
+| warning | when |
+|---|---|
+| the signal note, verbatim | the recording has lights. Every number in their plan was invented by stage 6, and a result scored against them is scored against a plan nobody surveyed |
+| declared and never built | the lane model declares signals and stage 6 built no phase groups. This is `mosque`: four declared, none built, and it reads exactly like a junction with no lights |
+| mostly stationary | over half the recording is spent stopped. Fires on none of the four workspaces here — every conversion records `waiting 0 s` |
+| the ego and nothing else | one `VEHICLE` track and no lights: nothing to react to. `mosque`'s two 100 Hz conversions |
+| no attribution | a licence obligation that would not survive into a result |
+| a row with no route | nothing about the drive was measured |
 
 ## Verify an import
 
@@ -240,8 +276,12 @@ du -sh banks/junction-1
 python -c "import json;m=json.load(open('banks/junction-1/manifest.json'));print(m['schema_version'],m['source'])"
 ```
 
-You should see `1.3 osm-scenario`, a `dataset/` directory with three files, and a size near 50 MB
+You should see `1.4 osm-scenario`, a `dataset/` directory with three files, and a size near 50 MB
 at the default rate.
+
+**Schema 1.4 added the map size to a row.** A bank imported before it opens fine and reads honestly
+— `review` says "map size not recorded" rather than drawing a zero — but only a re-import gains the
+numbers. That is one command per bank; `banks/` is gitignored and disposable by design.
 
 Then confirm the import read the workspace without touching it:
 
@@ -252,8 +292,8 @@ cd ../wingfin-osm-scenarionet-converter && git status --short && cd -
 The workspace should be unchanged. A test pins this, and so does the whole suite:
 
 ```bash
-uv run pytest tests/unit/test_import.py -v    # 23 tests
-uv run pytest                                  # 481 tests
+uv run pytest tests/unit/test_import.py -v    # 25 tests
+uv run pytest                                  # 509 tests
 ```
 
 Three of the import tests need this converter checkout and skip without it.

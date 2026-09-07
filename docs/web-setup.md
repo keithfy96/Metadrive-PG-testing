@@ -332,13 +332,31 @@ A real-world row carries what a procedural one has no equivalent for: where on e
 is, the rate it was sampled at, and who else is in it. The rate is on the row rather than a click
 away because it is the one thing about an import that cannot be changed afterwards.
 
-Behind an imported bank, three things read differently and one is switched off. The category band
-leads with the rate instead of a road and an exit rule. The **option levels** card is a sentence
-rather than six dropdowns: traffic, pedestrians and the rest are contents of a recording rather
-than knobs a run sets, and the manifest refuses to pin them. A card shows the recording's frames
-and its duration where a generated one shows the seed and the destination. And a recorded card is
-not clickable: the selection panel compares and replaces by rebuilding a seed, and a recording has
-none.
+Behind an imported bank, four things read differently and several are switched off. The category
+band leads with the rate instead of a road and an exit rule. The **option levels** card is a
+sentence rather than six dropdowns: traffic, pedestrians and the rest are contents of a recording
+rather than knobs a run sets, and the manifest refuses to pin them. A card shows the recording's
+frames and its duration where a generated one shows the seed and the destination. And the chips
+above the grid are different measures entirely.
+
+**The chips on a recording are what was measured off it**, not what a seed drew: how many
+recordings, the route length and duration, the fastest and slowest speeds, how much of it was
+spent stopped, the lane changes and junction movements, who is in it, the traffic lights, the map
+size, and the frames it replays. There is **no "N distinct of N"** — an import writes one workspace
+as one bank as one recording, so there is nothing for it to be distinct from, and a count equal to
+the total would read as a computation that ran and found no repetition. The warnings underneath
+come from `review.py`, so the page and `scenariobank review` cannot describe one bank two ways; the
+first of them is the converter's own sentence about the traffic lights being invented rather than
+surveyed, carried word for word.
+
+**A recorded card opens a read-only panel.** It says what the manifest holds about that recording:
+which conversion it came from, the pickle it traces back to, the route from its start lane to its
+end lane, what the drive did, the speeds, the waiting, the actors, the lights, the map size, and
+its step budget — which is the recording's own length rather than a cap it could exceed. It offers
+**no compare, no replace, no add or remove, no edit and no budget control**: all six rebuild a seed
+or override a measurement, and there is neither here. Only one card at a time can be selected, for
+the same reason — a bank holds one recording, so there is no second drive in it to compare against,
+and `scenariobank compare` refuses an imported bank by name.
 
 **The picture is the unit.** This is not a table with a thumbnail column: what you are judging is
 an image, so the card is mostly image, with the `scenario_id`, the seed, and the destination and
@@ -357,8 +375,8 @@ Three endpoints behind it, and nothing else:
 | `GET /api/banks` | directories under `--banks-root` holding a `manifest.json`, summarised: name, `bank_id`, when it was built, its categories and its scenario count |
 | `GET /api/banks/{bank}` | that bank's manifest, **as it is on disk** |
 | `GET /api/banks/{bank}/thumbs/{name}.png` | one scenario's picture |
-| `GET /api/banks/{bank}/review` | what is in it: duplicates, coverage, step budgets and spread — computed, never stored |
-| `GET /api/banks/{bank}/compare?left=&right=` | two of its scenarios read against each other |
+| `GET /api/banks/{bank}/review` | what is in it — computed, never stored. Duplicates, coverage, step budgets and spread on a procedural bank; the drive, the actors, the signals, the map size and the replay cost on a recording. `source` says which shape came back |
+| `GET /api/banks/{bank}/compare?left=&right=` | two of its scenarios read against each other. 422 on an imported bank, which holds one recording |
 | `GET /api/looks/{name}.png` | a candidate seed drawn by `inspect`, before it is committed to anything |
 | `POST /api/banks/{bank}/scenarios/{id}/budget` | set or clear one scenario's own `max_steps` — one of the two writes here that are not jobs |
 | `POST /api/banks/{bank}/options` | pin some of the bank's option levels — the other |

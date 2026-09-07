@@ -59,17 +59,19 @@ from scenariobank.sockets import (
 from scenariobank.workspace import Provenance, Route, Signals
 
 #: Bumped when a reader would break. The runner validates against it rather than duck-typing.
-SCHEMA_VERSION = "1.3"
+SCHEMA_VERSION = "1.4"
 
 #: Every version this build can read. 1.1 added the three optional per-scenario overrides below,
 #: so a 1.0 manifest is a 1.1 one that overrides nothing and the banks already on disk keep
 #: opening; 1.2 added `options`, so a 1.1 manifest is a 1.2 one that pins nothing; 1.3 added
 #: `source` and the real-world half of the file, so a 1.2 manifest is a 1.3 one whose source is
-#: `pg`. The reverse does not hold -- `extra="forbid"` means a 1.0 reader refuses a row that
-#: declares its own budget, a 1.1 reader refuses a manifest that declares option levels, and a
-#: 1.2 reader refuses a category that names a dataset directory -- which is why the number moved
-#: rather than the fields being slipped in quietly under the old one.
-READABLE_VERSIONS = ("1.0", "1.1", "1.2", "1.3")
+#: `pg`; 1.4 added the map size to a real-world row, so a 1.3 manifest is a 1.4 one whose rows
+#: do not record it. The reverse does not hold -- `extra="forbid"` means a 1.0 reader refuses a
+#: row that declares its own budget, a 1.1 reader refuses a manifest that declares option levels,
+#: a 1.2 reader refuses a category that names a dataset directory, and a 1.3 reader refuses a row
+#: that counts map features -- which is why the number moved rather than the fields being slipped
+#: in quietly under the old one.
+READABLE_VERSIONS = ("1.0", "1.1", "1.2", "1.3", "1.4")
 
 #: Where thumbnails go, relative to the bank root. Stored in the manifest as a relative path so
 #: a bank directory can be moved or mounted anywhere.
@@ -238,6 +240,13 @@ class RealWorldRow(BaseModel):
     #: The converter's own route record, carried whole. `route_length_m` above is its
     #: `distance_m` promoted to the name both kinds of row use.
     route: Route | None
+    #: How many map features the recording carries, and what kinds. New in schema 1.4 and
+    #: defaulted, so a 1.3 bank keeps opening and reads as "the converter did not say" rather
+    #: than as a map with no features -- which is what `None` already means on
+    #: `workspace.Scenario`. A conversion that lost its lane markings reads identically to one
+    #: that lost its road edges until the kinds are counted apart, which is why both are here.
+    map_features: int | None = None
+    map_feature_types: dict[str, int] = {}
     #: The converter's picture of the map, relative to the bank root. Not `figures.render_route`:
     #: a stored scenario has no PG road to draw and no navigation to draw a route on, so what a
     #: real-world bank has instead is the picture stage 6 already drew.
@@ -315,7 +324,7 @@ class Manifest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["1.0", "1.1", "1.2", "1.3"]
+    schema_version: Literal["1.0", "1.1", "1.2", "1.3", "1.4"]
     bank_id: str
     created_utc: str
     #: Which half of this schema the categories below use. `pg` is the default, so every 1.0,
