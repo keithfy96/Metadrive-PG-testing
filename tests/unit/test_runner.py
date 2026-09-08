@@ -149,3 +149,41 @@ def test_the_package_has_exactly_one_step_loop():
     sources = Path("src/scenariobank").rglob("*.py")
     sites = [path for path in sources if call.search(path.read_text())]
     assert sites == [Path("src/scenariobank/runner.py")]
+
+
+def test_a_stop_ends_the_episode_between_two_steps_and_says_so():
+    """Step 3's hook: read before each step, so a stop lands between steps and never inside
+    one. Nothing else about the drive changes -- not capped, not truncated, seven steps taken."""
+    env = FakeEnv()
+    drive = run_episode(
+        env,
+        seed=0,
+        prepare=lambda _env: None,
+        cap=100,
+        stride=1,
+        act=zero,
+        stop=lambda: env.taken >= 7,
+    )
+    assert (drive.steps, drive.stopped) == (7, True)
+    assert env.taken == 7
+    assert not drive.terminated and not drive.truncated
+
+
+def test_the_loop_sums_reward_and_cost_and_keeps_every_action_it_issued():
+    class Rewarding(FakeEnv):
+        def step(self, action):
+            observation, _reward, terminated, truncated, info = super().step(action)
+            info["cost"] = 0.5
+            return observation, 2.0, terminated, truncated, info
+
+    asked: list[int] = []
+
+    def counting(_observation):
+        asked.append(1)
+        return (0.1 * len(asked), 0.0)
+
+    env = Rewarding(ends_at=6)
+    drive = run_episode(env, seed=0, prepare=lambda _env: None, cap=100, stride=3, act=counting)
+    assert (drive.reward, drive.cost) == (12.0, 3.0)
+    assert drive.issued_actions == [[0.1, 0.0], [0.2, 0.0]]
+    assert drive.stopped is False

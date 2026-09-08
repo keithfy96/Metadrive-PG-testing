@@ -1113,6 +1113,221 @@ def replay(
     typer.echo(episode.model_dump_json(indent=2) if as_json else format_episode(episode))
 
 
+#: One axis's level flag on `run`, where it overrides the bank's pinned level for this run only.
+def _run_axis(axis: str, label: str) -> Any:
+    return Annotated[
+        str | None,
+        typer.Option(f"--{axis}", help=f"{label} level for this run, over the bank's pinned one."),
+    ]
+
+
+#: One axis's raw-number flag on `run`. The converter repo's house style is raw values, so both
+#: spellings work; the result records the number and the nearest level name.
+def _run_raw(flag: str, axis: str, label: str) -> Any:
+    return Annotated[
+        float | None,
+        typer.Option(f"--{flag}", help=f"{label} as a number, instead of a level name for {axis}."),
+    ]
+
+
+def _parse_ids(raw: list[str] | None) -> list[str] | None:
+    """`--scenarios a,b --scenarios c` -> `[a, b, c]`; nothing given -> `None`."""
+    if not raw:
+        return None
+    return [item.strip() for chunk in raw for item in chunk.split(",") if item.strip()]
+
+
+@app.command()
+def run(
+    out: Annotated[
+        Path,
+        typer.Option("--out", help="Directory to write results.json and results/<id>.json into."),
+    ],
+    bank: Annotated[
+        Path | None, typer.Option("--bank", help="Bank directory holding the scenarios to run.")
+    ] = None,
+    job: Annotated[
+        Path | None,
+        typer.Option(
+            "--job",
+            help="A Job file to run instead of flags. The container's entrypoint and the queue "
+            "hand the runner one of these; every flag but --out is then refused.",
+        ),
+    ] = None,
+    categories: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--categories", help="Run only these categories. Comma-separated, or repeated."
+        ),
+    ] = None,
+    scenarios: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--scenarios", help="Run only these scenario ids. Comma-separated, or repeated."
+        ),
+    ] = None,
+    policy: Annotated[
+        str, typer.Option("--policy", help="What drives, as `pkg.mod:Name`.")
+    ] = "scenariobank.policies:ConstantPolicy",
+    checkpoint: Annotated[
+        Path | None,
+        typer.Option("--checkpoint", help="Handed to the policy as `checkpoint_path`."),
+    ] = None,
+    tier: Annotated[
+        str | None, typer.Option("--tier", help="Expand a tier to its six levels first.")
+    ] = None,
+    traffic: _run_axis("traffic", "Moving traffic") = None,
+    cones: _run_axis("cones", "Coned-off lanes") = None,
+    barriers: _run_axis("barriers", "Barriers and breakdowns") = None,
+    pedestrians: _run_axis("pedestrians", "People on foot") = None,
+    cyclists: _run_axis("cyclists", "People on bikes") = None,
+    lights: _run_axis("lights", "Traffic lights") = None,
+    traffic_density: _run_raw("traffic-density", "traffic", "Traffic density") = None,
+    cones_count: _run_raw("cones-count", "cones", "How many cone corridors") = None,
+    barriers_count: _run_raw("barriers-count", "barriers", "How many barrier scenes") = None,
+    pedestrians_count: _run_raw("pedestrians-count", "pedestrians", "How many pedestrians") = None,
+    cyclists_count: _run_raw("cyclists-count", "cyclists", "How many cyclists") = None,
+    decision_hz: Annotated[
+        float | None,
+        typer.Option(
+            "--decision-hz",
+            help="Hold each action for this decision rate. Defaults to every step.",
+        ),
+    ] = None,
+    save_trajectories: Annotated[
+        bool,
+        typer.Option(
+            "--save-trajectories",
+            help="Also write each scenario's per-decision actions under trajectories/.",
+        ),
+    ] = False,
+) -> None:
+    """Score a policy against a bank, one result per scenario, and never abort the batch.
+
+    The runner proper. `replay` drives one scenario and prints a report; this drives every
+    scenario a job names, through the same env builder and the same loop, and writes the record
+    everything downstream reads: `results.json` at the end, and `results/<scenario_id>.json` the
+    moment each scenario ends, so a run that is killed part way is a scored partial run rather
+    than a lost one.
+
+    **The flags build a `Job`, and a `Job` is the one input.** The same model is what the
+    container's entrypoint reads from a file (`--job`) and what a message on the queue carries,
+    so a run submitted from the studio, from a terminal and from the NAS is the same run. Options
+    travel as names and are resolved against the bank here: the bank's pinned levels, then
+    `--tier`, then a level or a raw number per axis, the same precedence `resolve_options` pins.
+
+    **A scenario that raises is a row, not an abort**: `status: "error"` with its traceback, and
+    the next scenario runs. **A SIGTERM or Ctrl-C ends the scenario it lands in** with
+    `failure_reason: "stopped"`, writes what has been scored, closes the env cleanly and exits 0
+    -- an interrupt raised into `env.close()` has wedged a GPU before, so the signal sets a flag
+    and nothing is ever raised into teardown. Every refusal -- the wrong bank at a path, a level
+    the axis does not have, an unknown scenario id, a policy that will not load, a decision rate
+    the env cannot step at -- comes before the simulator is opened.
+
+    Needs the simulator. A `T` road is well under a second per scenario; `banks/junction-1` is
+    about 11 s.
+    """
+    from pydantic import ValidationError
+
+    from scenariobank.bank import BankError, read_manifest
+    from scenariobank.options import OptionError
+    from scenariobank.policies import PolicyError
+    from scenariobank.results import JOB_SCHEMA_VERSION, Job, JobBank, JobOptions
+    from scenariobank.runner import RunError, run_bank
+
+    levels = {
+        axis: level
+        for axis, level in (
+            ("traffic", traffic),
+            ("cones", cones),
+            ("barriers", barriers),
+            ("pedestrians", pedestrians),
+            ("cyclists", cyclists),
+            ("lights", lights),
+        )
+        if level is not None
+    }
+    raw = {
+        axis: value
+        for axis, value in (
+            ("traffic", traffic_density),
+            ("cones", cones_count),
+            ("barriers", barriers_count),
+            ("pedestrians", pedestrians_count),
+            ("cyclists", cyclists_count),
+        )
+        if value is not None
+    }
+    flags_given = [
+        name
+        for name, value in (
+            ("--bank", bank),
+            ("--categories", categories),
+            ("--scenarios", scenarios),
+            ("--checkpoint", checkpoint),
+            ("--tier", tier),
+            ("--decision-hz", decision_hz),
+        )
+        if value
+    ] + [f"--{axis}" for axis in levels] + [f"--{axis}" for axis in raw]
+    if policy != "scenariobank.policies:ConstantPolicy":
+        flags_given.append("--policy")
+    if save_trajectories:
+        flags_given.append("--save-trajectories")
+
+    try:
+        if job is not None:
+            if flags_given:
+                raise typer.BadParameter(
+                    f"--job carries the whole job; drop {', '.join(flags_given)}",
+                    param_hint="--job",
+                )
+            what = Job.model_validate_json(job.read_text())
+        else:
+            if bank is None:
+                raise typer.BadParameter("name a bank to run, or a --job file", param_hint="--bank")
+            manifest = read_manifest(bank)
+            wanted = _parse_ids(scenarios)
+            chosen = _parse_ids(categories)
+            if chosen is not None:
+                unknown = sorted(set(chosen) - set(manifest.categories))
+                if unknown:
+                    raise typer.BadParameter(
+                        f"{manifest.bank_id} has no category named {', '.join(unknown)}",
+                        param_hint="--categories",
+                    )
+                in_categories = [
+                    row.scenario_id
+                    for name, entry in manifest.categories.items()
+                    if name in chosen
+                    for row in entry.scenarios
+                ]
+                wanted = in_categories if wanted is None else [
+                    scenario_id for scenario_id in wanted if scenario_id in in_categories
+                ]
+            what = Job(
+                schema_version=JOB_SCHEMA_VERSION,
+                bank=JobBank(id=manifest.bank_id, path=str(bank)),
+                scenarios=wanted,
+                options=JobOptions(tier=tier, levels=levels, raw=raw),
+                policy=policy,
+                checkpoint_path=None if checkpoint is None else str(checkpoint),
+                decision_hz=decision_hz,
+                save_trajectories=save_trajectories,
+            )
+        report = run_bank(what, out, progress=lambda line: typer.echo(line, err=True))
+    except (BankError, OptionError, PolicyError, RunError, ValidationError, ValueError) as error:
+        typer.echo(f"run failed: {error}", err=True)
+        raise typer.Exit(code=1) from error
+
+    summary = report.summary
+    stopped = "  (stopped before the end)" if report.stopped else ""
+    typer.echo(
+        f"results written: {out / 'results.json'}  "
+        f"{summary.n} scenarios, success rate {summary.success_rate:.2f}{stopped}"
+    )
+
+
 @app.command()
 def commands(
     out: Annotated[

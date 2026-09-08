@@ -1,0 +1,25 @@
+{
+  "actions": 0,
+  "actions_digest": null,
+  "category": "t_junction",
+  "collisions": {
+    "building": 0,
+    "human": 0,
+    "object": 0,
+    "sidewalk": 0,
+    "vehicle": 0
+  },
+  "cost": 0.0,
+  "destination": null,
+  "failure_reason": null,
+  "reward": 0.0,
+  "route_completion": null,
+  "scenario_id": "t_junction_0002",
+  "scenario_index": null,
+  "seed": 2,
+  "status": "error",
+  "steps": 0,
+  "success": false,
+  "traceback": "Traceback (most recent call last):\n  File \"/home/keith/Desktop/work/wingfin/metadrive-complete/metadrive-PG/src/scenariobank/runner.py\", line 355, in _score\n    drive = run_episode(\n  File \"/home/keith/Desktop/work/wingfin/metadrive-complete/metadrive-PG/src/scenariobank/runner.py\", line 182, in run_episode\n    action = [float(value) for value in act(observation)]\n  File \"/home/keith/Desktop/work/wingfin/metadrive-complete/metadrive-PG/src/scenariobank/policies.py\", line 51, in __call__\n    raise RuntimeError(\"RaisingPolicy raised, as it is for\")\nRuntimeError: RaisingPolicy raised, as it is for\n",
+  "wall_time_s": 0.043
+}

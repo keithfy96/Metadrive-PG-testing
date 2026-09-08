@@ -1,0 +1,85 @@
+{
+  "attempt": null,
+  "bank": {
+    "attribution": "OpenStreetMap contributors",
+    "id": "junction-1",
+    "path": "banks/junction-1",
+    "provenance": {
+      "generation_fingerprint": "57dcd345d17e5a862f9f38c97916fefe1799873c72b1e280407bb69b2e1da42c",
+      "generator_version": "direct-osm-stage2-v24",
+      "reviewed_lane_model_sha256": "fc205bca2305a0cc3cb68e7a7ee83b5c8d8a200622d6a1749dde0b258cab65fb",
+      "source_osm_sha256": "4607fd469ebaf1cf552599ba85640d03e9d5b7c1202dbcaca4fd4c9b97920191",
+      "stage_5_status": "passed"
+    },
+    "schema_version": "1.4",
+    "source": "osm-scenario"
+  },
+  "env": {
+    "decision_hz": null,
+    "metadrive_commit": "85e5dadc6c7436d324348f6e3d8f8e680c06b4db",
+    "observation_shape_after": [
+      31
+    ],
+    "observation_shape_before": [
+      31
+    ],
+    "step_hz": 100.0,
+    "stride": 1
+  },
+  "finished_utc": "2026-09-08T10:57:32Z",
+  "job_id": null,
+  "options": {
+    "kind": "recorded",
+    "levels": {},
+    "origin": {},
+    "raw": {},
+    "replay": {
+      "no_light": false,
+      "no_traffic": false,
+      "reactive_traffic": false
+    },
+    "tier": null,
+    "values": {}
+  },
+  "policy": "scenariobank.policies:ConstantPolicy",
+  "results": [
+    {
+      "actions": 3782,
+      "actions_digest": "c9b876c1d672e2f93881b5744e20b3b27588ce35364cb35b5054036afb765dc6",
+      "category": "junction-1",
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "cost": 0.0,
+      "destination": null,
+      "failure_reason": "max_step",
+      "reward": 0.906916,
+      "route_completion": 0.025145,
+      "scenario_id": "junction-1_0000",
+      "scenario_index": 0,
+      "seed": null,
+      "status": "ok",
+      "steps": 3782,
+      "success": false,
+      "traceback": null,
+      "wall_time_s": 10.144
+    }
+  ],
+  "schema_version": 1,
+  "started_utc": "2026-09-08T10:57:20Z",
+  "stopped": false,
+  "summary": {
+    "by_failure_reason": {
+      "max_step": 1
+    },
+    "by_status": {
+      "ok": 1
+    },
+    "n": 1,
+    "success_rate": 0.0
+  }
+}

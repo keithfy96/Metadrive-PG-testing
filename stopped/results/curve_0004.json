@@ -1,0 +1,25 @@
+{
+  "actions": 325,
+  "actions_digest": "4ce217ee4291d6105796be8bf5f5e939d1b7ed3b46ee493879041feb43dbad43",
+  "category": "curve",
+  "collisions": {
+    "building": 0,
+    "human": 0,
+    "object": 0,
+    "sidewalk": 0,
+    "vehicle": 0
+  },
+  "cost": 0.0,
+  "destination": "2C0_1_",
+  "failure_reason": "stopped",
+  "reward": 0.012992,
+  "route_completion": 0.016005,
+  "scenario_id": "curve_0004",
+  "scenario_index": null,
+  "seed": 22,
+  "status": "ok",
+  "steps": 325,
+  "success": false,
+  "traceback": null,
+  "wall_time_s": 0.228
+}

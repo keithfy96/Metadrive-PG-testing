@@ -55,7 +55,8 @@ from scenariobank.env import (
     step_hz_for,
 )
 from scenariobank.options import Kind, resolve_options
-from scenariobank.runner import run_episode
+from scenariobank.results import TERMINATIONS
+from scenariobank.runner import run_episode, stride_for
 
 #: The action a drive issues when it is given none: neither steering nor throttle.
 #:
@@ -64,6 +65,19 @@ from scenariobank.runner import run_episode
 #: anywhere. Policies arrive in Phase 4 Step 4.
 IDLE_ACTION: tuple[float, float] = (0.0, 0.0)
 
+#: The phrase printed for each ending, keyed by the `info` flag.
+_PHRASES: dict[str, str] = {
+    "crash_vehicle": "hit a vehicle",
+    "crash_object": "hit an object",
+    "crash_building": "hit a building",
+    "crash_human": "hit a pedestrian",
+    "crash_sidewalk": "hit the kerb",
+    "crash": "crashed",
+    "out_of_road": "left the road",
+    "arrive_dest": "arrived",
+    "max_step": "ran out of recording",
+}
+
 #: What ended the episode, worst first, as `info` key -> the phrase printed for it.
 #:
 #: Ordered rather than mapped, because more than one can be true at once: a crash on the last
@@ -71,17 +85,9 @@ IDLE_ACTION: tuple[float, float] = (0.0, 0.0)
 #: `max_step` last of the real endings, since on a clean replay under a zero action it is the
 #: expected one -- the recording ran out, which is success for a replay and would be a timeout
 #: for a drive. On a procedural road the same flag means the step cap, and is phrased as such.
-ENDINGS: tuple[tuple[str, str], ...] = (
-    ("crash_vehicle", "hit a vehicle"),
-    ("crash_object", "hit an object"),
-    ("crash_building", "hit a building"),
-    ("crash_human", "hit a pedestrian"),
-    ("crash_sidewalk", "hit the kerb"),
-    ("crash", "crashed"),
-    ("out_of_road", "left the road"),
-    ("arrive_dest", "arrived"),
-    ("max_step", "ran out of recording"),
-)
+#: The order is `results.TERMINATIONS`, the measured list, so this report and the result record
+#: cannot rank an ending differently; a key phrased here and not measured there raises at import.
+ENDINGS: tuple[tuple[str, str], ...] = tuple((key, _PHRASES[key]) for key in TERMINATIONS)
 
 #: What `max_step` reads as by kind. A recording that ran out is the expected ending; a road whose
 #: step cap was hit under a zero action is one too, but "ran out of recording" would be a lie there.
@@ -176,26 +182,6 @@ def select(manifest: Manifest, scenario: str | None = None) -> tuple[str, Entry,
     if scenario is None:
         raise BankError(f"{manifest.bank_id} holds no scenarios to drive")
     raise BankError(f"no scenario named {scenario!r} in {manifest.bank_id}")
-
-
-def stride_for(step_hz: float, decision_hz: float | None, *, what: str = "the recording") -> int:
-    """How many env steps one action is held for.
-
-    Not a MetaDrive setting. `decision_repeat` is pinned at 1 on a recording because replay
-    advances exactly one recorded frame per `env.step`, and left at MetaDrive's 5 on a road, so
-    the only place a slower decision rate can live is the loop's own counter. `what` names the
-    thing whose rate is the ceiling, for the refusal.
-    """
-    if decision_hz is None:
-        return 1
-    if decision_hz <= 0:
-        raise ValueError(f"--decision-hz must be positive, not {decision_hz}")
-    if decision_hz > step_hz:
-        raise ValueError(
-            f"--decision-hz {decision_hz:g} is faster than {what}'s {step_hz:g} Hz. "
-            "A drive cannot decide more often than the env steps."
-        )
-    return max(1, round(step_hz / decision_hz))
 
 
 def _ending(flags: dict[str, bool], *, steps: int, cap: int, budget: int, kind: str) -> str:

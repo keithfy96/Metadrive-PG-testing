@@ -56,6 +56,12 @@ GROUPS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
         ("generate", "import", "replace", "add", "remove", "budget", "options", "commands"),
     ),
     (
+        "Run it",
+        "Score a policy against a bank. The one command that writes a result record, and the "
+        "record is the same whether the run was started here, from the studio or from the queue.",
+        ("run",),
+    ),
+    (
         "Do all of it in a page",
         "The same commands behind a local web page, for the parts of the job that are pictures.",
         ("studio",),
@@ -106,6 +112,27 @@ EXAMPLES: dict[str, tuple[tuple[str, str], ...]] = {
             "uv run scenariobank review --bank ./banks/b --json"
             " | jq '.categories[].duplicates'",
             "the duplicate counts alone",
+        ),
+    ),
+    "run": (
+        (
+            "uv run scenariobank run --bank ./banks/t-junction --out ./runs/floor",
+            "the whole bank against the constant-action floor",
+        ),
+        (
+            "uv run scenariobank run --bank ./banks/curve --tier hard --traffic low "
+            "--policy scenariobank.policies:ConstantPolicy --out ./runs/hard",
+            "hard everywhere except traffic",
+        ),
+        (
+            "uv run scenariobank run --bank ./banks/junction-1 --decision-hz 20 --out ./runs/j1",
+            "a recording, deciding at 20 Hz",
+        ),
+        ("uv run scenariobank run --job ./job.json --out ./runs/queued", "what the container runs"),
+        (
+            "uv run scenariobank run --bank ./banks/curve --scenarios curve_0000,curve_0003 "
+            "--save-trajectories --out ./runs/two",
+            "two rows, with their per-decision actions",
         ),
     ),
     "replay": (
@@ -237,6 +264,7 @@ INDEX: tuple[tuple[str, str], ...] = (
     ("know what must be brought over when I import one", "importing"),
     ("turn a converter workspace into a bank", "import"),
     ("set the traffic level once instead of on every run", "options"),
+    ("score a policy against every scenario of a bank", "run"),
     ("do all of that by looking rather than typing", "studio"),
 )
 
@@ -280,10 +308,11 @@ def _value_notes() -> dict[str, str]:
     flag exists is no use without knowing what may follow it.
     """
     from scenariobank.categories import BLOCKS, CATEGORIES, SEEDS, VALID_BLOCK_IDS, ExitRule
-    from scenariobank.options import AXES, LEVEL_NAMES
+    from scenariobank.options import AXES, LEVEL_NAMES, NUMERIC_AXES, TIERS, TRAFFIC_FLOOR
 
     seeds = ",".join(str(seed) for seed in SEEDS)
     levels = ", ".join(f"`{level}`" for level in LEVEL_NAMES)
+    tiers = ", ".join(f"`{tier}`" for tier in TIERS)
     categories = ", ".join(f"`{name}`" for name in CATEGORIES)
     rules = ", ".join(f"`{rule.value}`" for rule in ExitRule)
     blocks = ", ".join(f"`{block.id}` {block.label}" for block in BLOCKS)
@@ -322,6 +351,29 @@ def _value_notes() -> dict[str, str]:
             )
             for axis in AXES
         },
+        "--tier": (
+            f"One of: {tiers}. Expanded to six levels first; an axis flag then overrides one."
+        ),
+        "--categories": "Category names from the bank's manifest, comma-separated or repeated.",
+        "--scenarios": "Scenario ids from the bank's manifest, comma-separated or repeated.",
+        "--policy": (
+            "`pkg.mod:Name`, instantiated once per run and called with each observation. "
+            "`scenariobank.policies:ConstantPolicy` is the floor."
+        ),
+        "--traffic-density": f"A density, 0 for none or at least {TRAFFIC_FLOOR}.",
+        **{
+            f"--{axis}-count": "A whole number, 0 or more."
+            for axis in NUMERIC_AXES
+            if axis != "traffic"
+        },
+        "--decision-hz": (
+            "A rate no faster than the env steps: 10 on a road, the recording's own rate on an "
+            "import."
+        ),
+        "--out": (
+            "A directory. Created if absent; `results.json` and `results/` are written into it."
+        ),
+        "--job": "A `Job` JSON file, the same record the queue carries.",
     }
 
 
@@ -333,11 +385,12 @@ def _choices() -> dict[str, list[str]]:
     reason everything else here is -- a hand-listed set goes stale the day a category is added.
     """
     from scenariobank.categories import CATEGORIES, ExitRule
-    from scenariobank.options import AXES, LEVEL_NAMES
+    from scenariobank.options import AXES, LEVEL_NAMES, TIERS
 
     return {
         "--category": list(CATEGORIES),
         "--rule": [rule.value for rule in ExitRule],
+        "--tier": list(TIERS),
         # The six option axes, all drawing on the same four levels. Listed per flag rather than
         # once, because the studio keys its dropdowns on the flag name.
         **{f"--{axis}": list(LEVEL_NAMES) for axis in AXES},

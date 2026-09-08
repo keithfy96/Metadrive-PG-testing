@@ -1,0 +1,25 @@
+{
+  "actions": 320,
+  "actions_digest": "388c2463c9c3a42f5a1debace5e3ed14901cffb93c0d0d00756964396ea9c758",
+  "category": "intersection_left",
+  "collisions": {
+    "building": 0,
+    "human": 0,
+    "object": 0,
+    "sidewalk": 0,
+    "vehicle": 0
+  },
+  "cost": 0.0,
+  "destination": "1X0_1_",
+  "failure_reason": "max_step",
+  "reward": 0.012831,
+  "route_completion": 0.044825,
+  "scenario_id": "intersection_left_0004",
+  "scenario_index": null,
+  "seed": 4,
+  "status": "ok",
+  "steps": 320,
+  "success": false,
+  "traceback": null,
+  "wall_time_s": 0.134
+}

@@ -24,6 +24,7 @@ Every command is `uv run scenariobank <command>`.
 | know what must be brought over when I import one | [`importing`](#importing) |
 | turn a converter workspace into a bank | [`import`](#import) |
 | set the traffic level once instead of on every run | [`options`](#options) |
+| score a policy against every scenario of a bank | [`run`](#run) |
 | do all of that by looking rather than typing | [`studio`](#studio) |
 
 **Changing one scenario does not mean rebuilding the bank.** `replace` rebuilds exactly
@@ -116,7 +117,7 @@ adds `composed_name`, the category `add --block-seq` would file this road under.
 | `--block-seq/-b <str>` | optional |  | Build this road instead of a category's. Any string of these 15 block ids: `C` curve, `S` straight, `r` on-ramp, `R` off-ramp, `X` crossroads, `T` T junction, `O` roundabout, `f` fork in, `F` fork out, `y` lane merge, `Y` lane split, `P` parking lot, `$` toll gate, `B` two-way road, `U` crossroads with U-turn. `I` is prepended automatically and is never written into a sequence. `f`: MetaDrive refuses to build it at any seed. `F`: MetaDrive refuses to build it at any seed. `P`: needs a road already narrowed to one lane each way — put `yy` in front of it. |
 | `--rule <str>` | optional |  | Which exit to drive to. Required with --block-seq. One of: `only`, `left`, `right`, `straight`, `sharpest`. |
 | `--seed/-s <int>` | default `0` |  | Map seed. Any non-negative integer. |
-| `--out/-o <path>` | optional |  | PNG to write. Defaults under docs/. |
+| `--out/-o <path>` | optional |  | PNG to write. Defaults under docs/. A directory. Created if absent; `results.json` and `results/` are written into it. |
 | `--json` | default `false` |  | Emit what was drawn as JSON instead of a line. |
 
 ```bash
@@ -135,7 +136,7 @@ the failure is silent.
 
 | flag | | repeats | meaning |
 |---|---|---|---|
-| `--out/-o <path>` | default `docs/reference/examples` |  | Directory to write the example pictures into. |
+| `--out/-o <path>` | default `docs/reference/examples` |  | Directory to write the example pictures into. A directory. Created if absent; `results.json` and `results/` are written into it. |
 | `--category/-c <str>` | optional |  | Redraw one category instead of all of them. One of: `intersection_left`, `intersection_right`, `intersection_straight`, `t_junction`, `roundabout`, `curve`, `ramp_traffic_merge`, `off_ramp_hold`, `lane_merge`, `lane_split`, `tollgate`. |
 | `--seed/-s <int>` | default `0` |  | Map seed. Any non-negative integer. |
 
@@ -233,7 +234,7 @@ under a second. Use `--steps` to check the round trip without paying for the who
 |---|---|---|---|
 | `--bank <path>` | **required** |  | Bank directory holding the scenario to drive. |
 | `--scenario <str>` | optional |  | Which scenario, by its id. Defaults to the first. A `scenario_id` from the bank's manifest, e.g. `curve_0004`. |
-| `--decision-hz <float>` | optional |  | Hold each action for this decision rate. Defaults to every step. |
+| `--decision-hz <float>` | optional |  | Hold each action for this decision rate. Defaults to every step. A rate no faster than the env steps: 10 on a road, the recording's own rate on an import. |
 | `--steps <int>` | optional |  | Stop after this many steps, for a quick check. |
 | `--json` | default `false` |  | Emit the report as JSON instead of aligned text. |
 
@@ -253,7 +254,7 @@ destination is reachable and measure the route.
 
 | flag | | repeats | meaning |
 |---|---|---|---|
-| `--out/-o <path>` | default `docs/reference/destinations.md` |  | Reference document to write. |
+| `--out/-o <path>` | default `docs/reference/destinations.md` |  | Reference document to write. A directory. Created if absent; `results.json` and `results/` are written into it. |
 
 ```bash
 uv run scenariobank destinations
@@ -299,7 +300,7 @@ MetaDrive.
 | flag | | repeats | meaning |
 |---|---|---|---|
 | `--path/-p <path>` | default `../wingfin-osm-scenarionet-converter/workspaces/junction-1` |  | The converter workspace the checklist is measured on. |
-| `--out/-o <path>` | default `docs/reference/importing.md` |  | Reference document to write. |
+| `--out/-o <path>` | default `docs/reference/importing.md` |  | Reference document to write. A directory. Created if absent; `results.json` and `results/` are written into it. |
 
 ```bash
 uv run scenariobank importing                                                                              # the checklist, measured on `junction-1`
@@ -323,7 +324,7 @@ minutes of silence otherwise.
 
 | flag | | repeats | meaning |
 |---|---|---|---|
-| `--out/-o <path>` | **required** |  | Bank directory to write. Created if absent. |
+| `--out/-o <path>` | **required** |  | Bank directory to write. Created if absent. A directory. Created if absent; `results.json` and `results/` are written into it. |
 | `--bank-id <str>` | **required** |  | Name recorded in the manifest, e.g. pg-bank-2026-08. |
 | `--category/-c <str>` | optional | yes | Repeatable. Defaults to every category. One of: `intersection_left`, `intersection_right`, `intersection_straight`, `t_junction`, `roundabout`, `curve`, `ramp_traffic_merge`, `off_ramp_hold`, `lane_merge`, `lane_split`, `tollgate`. |
 | `--seeds <str>` | optional | yes | Which seeds to build each category at. A comma-separated list. Also takes `category=list` to override one category, and repeats, so later flags win. Omitted, every category uses `0,1,2,3,4`. |
@@ -360,7 +361,7 @@ from the same module as this command.
 | flag | | repeats | meaning |
 |---|---|---|---|
 | `--path/-p <path>` | **required** |  | The converter workspace to import, the one holding source/manifest.json. |
-| `--out/-o <path>` | **required** |  | Bank directory to write. Created if absent. |
+| `--out/-o <path>` | **required** |  | Bank directory to write. Created if absent. A directory. Created if absent; `results.json` and `results/` are written into it. |
 | `--bank-id <str>` | optional |  | Name recorded in the manifest. Defaults to the workspace's. |
 | `--rate <float>` | default `100.0` |  | Which conversion to take, in Hz. 100 keeps every decision rate that divides it. |
 
@@ -522,10 +523,73 @@ Needs no simulator.
 
 | flag | | repeats | meaning |
 |---|---|---|---|
-| `--out/-o <path>` | default `docs/reference/commands.md` |  | Reference document to write. |
+| `--out/-o <path>` | default `docs/reference/commands.md` |  | Reference document to write. A directory. Created if absent; `results.json` and `results/` are written into it. |
 
 ```bash
 uv run scenariobank commands  # rewrite this page
+```
+
+## Run it
+
+Score a policy against a bank. The one command that writes a result record, and the record is the same whether the run was started here, from the studio or from the queue.
+
+### `run`
+
+Score a policy against a bank, one result per scenario, and never abort the batch.
+
+The runner proper. `replay` drives one scenario and prints a report; this drives every
+scenario a job names, through the same env builder and the same loop, and writes the record
+everything downstream reads: `results.json` at the end, and `results/<scenario_id>.json` the
+moment each scenario ends, so a run that is killed part way is a scored partial run rather
+than a lost one.
+
+**The flags build a `Job`, and a `Job` is the one input.** The same model is what the
+container's entrypoint reads from a file (`--job`) and what a message on the queue carries,
+so a run submitted from the studio, from a terminal and from the NAS is the same run. Options
+travel as names and are resolved against the bank here: the bank's pinned levels, then
+`--tier`, then a level or a raw number per axis, the same precedence `resolve_options` pins.
+
+**A scenario that raises is a row, not an abort**: `status: "error"` with its traceback, and
+the next scenario runs. **A SIGTERM or Ctrl-C ends the scenario it lands in** with
+`failure_reason: "stopped"`, writes what has been scored, closes the env cleanly and exits 0
+-- an interrupt raised into `env.close()` has wedged a GPU before, so the signal sets a flag
+and nothing is ever raised into teardown. Every refusal -- the wrong bank at a path, a level
+the axis does not have, an unknown scenario id, a policy that will not load, a decision rate
+the env cannot step at -- comes before the simulator is opened.
+
+Needs the simulator. A `T` road is well under a second per scenario; `banks/junction-1` is
+about 11 s.
+
+| flag | | repeats | meaning |
+|---|---|---|---|
+| `--out <path>` | **required** |  | Directory to write results.json and results/<id>.json into. A directory. Created if absent; `results.json` and `results/` are written into it. |
+| `--bank <path>` | optional |  | Bank directory holding the scenarios to run. |
+| `--job <path>` | optional |  | A Job file to run instead of flags. The container's entrypoint and the queue hand the runner one of these; every flag but --out is then refused. A `Job` JSON file, the same record the queue carries. |
+| `--categories <str>` | optional | yes | Run only these categories. Comma-separated, or repeated. Category names from the bank's manifest, comma-separated or repeated. |
+| `--scenarios <str>` | optional | yes | Run only these scenario ids. Comma-separated, or repeated. Scenario ids from the bank's manifest, comma-separated or repeated. |
+| `--policy <str>` | default `scenariobank.policies:ConstantPolicy` |  | What drives, as `pkg.mod:Name`. `pkg.mod:Name`, instantiated once per run and called with each observation. `scenariobank.policies:ConstantPolicy` is the floor. |
+| `--checkpoint <path>` | optional |  | Handed to the policy as `checkpoint_path`. |
+| `--tier <str>` | optional |  | Expand a tier to its six levels first. One of: `easy`, `medium`, `hard`. Expanded to six levels first; an axis flag then overrides one. |
+| `--traffic <str>` | optional |  | Moving traffic level for this run, over the bank's pinned one. One of: `none`, `low`, `medium`, `high`. Applied when a run happens, not when the bank was built. |
+| `--cones <str>` | optional |  | Coned-off lanes level for this run, over the bank's pinned one. One of: `none`, `low`, `medium`, `high`. Applied when a run happens, not when the bank was built. |
+| `--barriers <str>` | optional |  | Barriers and breakdowns level for this run, over the bank's pinned one. One of: `none`, `low`, `medium`, `high`. Applied when a run happens, not when the bank was built. |
+| `--pedestrians <str>` | optional |  | People on foot level for this run, over the bank's pinned one. One of: `none`, `low`, `medium`, `high`. Applied when a run happens, not when the bank was built. |
+| `--cyclists <str>` | optional |  | People on bikes level for this run, over the bank's pinned one. One of: `none`, `low`, `medium`, `high`. Applied when a run happens, not when the bank was built. |
+| `--lights <str>` | optional |  | Traffic lights level for this run, over the bank's pinned one. One of: `none`, `low`, `medium`, `high`. Applied when a run happens, not when the bank was built. |
+| `--traffic-density <float>` | optional |  | Traffic density as a number, instead of a level name for traffic. A density, 0 for none or at least 0.01. |
+| `--cones-count <float>` | optional |  | How many cone corridors as a number, instead of a level name for cones. A whole number, 0 or more. |
+| `--barriers-count <float>` | optional |  | How many barrier scenes as a number, instead of a level name for barriers. A whole number, 0 or more. |
+| `--pedestrians-count <float>` | optional |  | How many pedestrians as a number, instead of a level name for pedestrians. A whole number, 0 or more. |
+| `--cyclists-count <float>` | optional |  | How many cyclists as a number, instead of a level name for cyclists. A whole number, 0 or more. |
+| `--decision-hz <float>` | optional |  | Hold each action for this decision rate. Defaults to every step. A rate no faster than the env steps: 10 on a road, the recording's own rate on an import. |
+| `--save-trajectories` | default `false` |  | Also write each scenario's per-decision actions under trajectories/. |
+
+```bash
+uv run scenariobank run --bank ./banks/t-junction --out ./runs/floor                                                                    # the whole bank against the constant-action floor
+uv run scenariobank run --bank ./banks/curve --tier hard --traffic low --policy scenariobank.policies:ConstantPolicy --out ./runs/hard  # hard everywhere except traffic
+uv run scenariobank run --bank ./banks/junction-1 --decision-hz 20 --out ./runs/j1                                                      # a recording, deciding at 20 Hz
+uv run scenariobank run --job ./job.json --out ./runs/queued                                                                            # what the container runs
+uv run scenariobank run --bank ./banks/curve --scenarios curve_0000,curve_0003 --save-trajectories --out ./runs/two                     # two rows, with their per-decision actions
 ```
 
 ## Do all of it in a page

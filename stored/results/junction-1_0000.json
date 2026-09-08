@@ -1,0 +1,25 @@
+{
+  "actions": 3782,
+  "actions_digest": "c9b876c1d672e2f93881b5744e20b3b27588ce35364cb35b5054036afb765dc6",
+  "category": "junction-1",
+  "collisions": {
+    "building": 0,
+    "human": 0,
+    "object": 0,
+    "sidewalk": 0,
+    "vehicle": 0
+  },
+  "cost": 0.0,
+  "destination": null,
+  "failure_reason": "max_step",
+  "reward": 0.906916,
+  "route_completion": 0.025145,
+  "scenario_id": "junction-1_0000",
+  "scenario_index": 0,
+  "seed": null,
+  "status": "ok",
+  "steps": 3782,
+  "success": false,
+  "traceback": null,
+  "wall_time_s": 10.144
+}

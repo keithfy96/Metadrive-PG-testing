@@ -2845,24 +2845,26 @@ was run against the real banks and gave the expected number: `curve` seed 30 res
 `test_replay.py` 35 (33 unchanged); full suite 609 passed, ruff clean, `commands.md`
 regenerated with `replay` describing both kinds.
 
-### Step 3 — the result record, and a batch that never aborts ⬜
+### Step 3 — the result record, and a batch that never aborts ✅
 
 The schema everything downstream reads. Built before any policy worth scoring, so the record is
 designed once rather than grown around whatever the first run happened to emit. **The fields are
 named here**, because Steps 4-5, Phase 5 Step 4 and Phase 7 all `jq` them and this plan had been
 inventing them at each site:
 
-- **top level:** `schema_version`, `started_utc`, `job_id` (`str | None`: the queue message's
-  id or the studio-minted one; `null` from the CLI), `attempt` (`int | None`: the lease's
-  `attempts`, so a redelivered job's second result says it is one — these two are the only
-  queue facts a result carries, and the queue is otherwise invisible below the orchestrator),
-  `bank` (`path`, `id`, `source`, `schema`, and
+- **top level:** `schema_version`, `started_utc`, `finished_utc`, `job_id` (`str | None`: the
+  queue message's id or the studio-minted one; `null` from the CLI), `attempt` (`int | None`:
+  the lease's `attempts`, so a redelivered job's second result says it is one — these two are
+  the only queue facts a result carries, and the queue is otherwise invisible below the
+  orchestrator), `stopped` (`bool`: the batch was told to stop, so the orchestrator can tell a
+  partial run from a whole one without scanning rows),
+  `bank` (`path`, `id`, `source`, `schema_version` — `schema` is a pydantic name — and
   for a recorded bank `provenance` and `attribution` — the entry already carries both),
   `policy`, `options` (Step 1's record, names and numerics, with its `kind`), `env`
   (`observation_shape_before`, `observation_shape_after`, `step_hz`, `decision_hz`, `stride`,
-  `metadrive` commit), `results[]`, `summary` (`n`, `success_rate`, `by_failure_reason`,
+  `metadrive_commit`), `results[]`, `summary` (`n`, `success_rate`, `by_failure_reason`,
   `by_status`).
-- **per result:** `scenario_id`, `category`, `seed` or `scenario_index`, `status` (`ok` |
+- **per result:** `scenario_id`, `category`, `seed` or `scenario_index`, `destination`, `status` (`ok` |
   `error`), `success` (`info["arrive_dest"]`), `failure_reason`, `steps`, `actions`, `reward`,
   `cost`, `wall_time_s`, `collisions` (`{vehicle, object, human, building, sidewalk}`, rising-edge
   counts from Step 2), `route_completion`, `actions_digest` (`fingerprint.sha256_hex` over the
@@ -2895,8 +2897,11 @@ inventing them at each site:
   job_id, bank: {id, path}, scenarios: [scenario_id] | null, options: {tier, levels, raw},
   policy, checkpoint_path | null, decision_hz | null, save_trajectories}`, `extra="forbid"`.
   `run_bank(job, out)` is the one entry point; the CLI's `run` flags build a `Job`, the
-  container's entrypoint reads one from a file, and **the queue message payload is a `Job`** —
-  which is what unblocks Phase 2c Step 12 and gives Phase 6 its second schema.
+  container's entrypoint reads one from a file (`run --job FILE --out DIR`, every other flag
+  refused beside it), and **the queue message payload is a `Job`** — which is what unblocks
+  Phase 2c Step 12 and gives Phase 6 its second schema. *(Built with one more field than
+  listed: `attempt: int | None`. The container reads nothing but the job, so the lease's
+  attempt count has to travel in it to reach the result.)*
 - **`horizon` and the loop cap are the same belt and braces on both kinds.** *(Corrected
   2026-09-07 — this bullet used to say a stored scenario's `horizon` is `None` and the loop cap is
   the only thing that ends it. Phase 3 Step 6 measured otherwise: `ScenarioEnv.done_function`
@@ -2904,7 +2909,12 @@ inventing them at each site:
   it to the row's budget. With it unset the env does run past the end of the recording in
   silence — 6000 frames of a 3782-frame scenario, neither terminated nor truncated — which is
   why the loop cap stays as well.)*
-- `replay.Episode` is subsumed: `replay --json` prints one result of this shape.
+- ~~`replay.Episode` is subsumed: `replay --json` prints one result of this shape.~~ *Decided
+  against at build time (2026-09-08): `Episode` is a report — `ended_by` as a phrase, `budget`,
+  `ms_per_step`, the `CHANGED to` warning — and a result is a record; folding one into the
+  other loses the phrasing or bloats the schema. What the two share is `results.TERMINATIONS`:
+  `replay.ENDINGS` is built from it, so the diagnostic and the record cannot rank an ending
+  differently, and a test pins the two lists equal.*
 
 **Verify alone:** *(old test 4, plus the recorded kind)*
 
@@ -2915,11 +2925,11 @@ ls raising/results | wc -l                                                      
 jq '.summary.by_status, (.results[0] | {scenario_id, status, traceback})' raising/results.json
 uv run scenariobank run --bank banks/junction-1 \
   --policy scenariobank.policies:ConstantPolicy --out stored
-jq '.results[] | {scenario_id, steps, failure_reason, status}, .env.observation_shape_after, .bank.attribution' stored/results.json
+jq '(.results[] | {scenario_id, steps, failure_reason, status}), .env.observation_shape_after, .bank.attribution' stored/results.json
 uv run scenariobank run --bank banks/curve --policy scenariobank.policies:ConstantPolicy --out stopped & \
-  sleep 4; kill -TERM %1; wait %1; echo "exit=$?"                               # stopped mid-episode
-jq '.results[] | {scenario_id, failure_reason, steps}' stopped/results.json
-uv run pytest tests/unit/test_results.py tests/unit/test_runner.py -q
+  PID=$!; sleep 5; kill -TERM $PID; wait $PID; echo "exit=$?"                    # stopped mid-episode
+jq '.stopped, (.results[] | {scenario_id, failure_reason, steps})' stopped/results.json
+uv run pytest tests/unit/test_results.py tests/unit/test_policies.py tests/unit/test_runner.py -q
 ```
 **Expect:** exit 0 every time, `results.json` present every time, and `job_id`/`attempt` `null` in
 all of them (the CLI is not the queue); `by_status` is `{"error": 4}` and each traceback names
@@ -2932,6 +2942,56 @@ precedence is pinned against a hand-built `info` carrying `crash` and `env_seed`
 held high for thirty steps counts once; `run_episode(stop=...)` against `FakeEnv` returns
 `steps == 7, stopped=True` when the flag goes up at 7, and the nine existing `test_runner.py`
 tests pass untouched.
+
+**Built 2026-09-08** as `results.py` (the two records, ~320 lines), `policies.py` (`load_policy`,
+`ConstantPolicy`, `RaisingPolicy`, ~80 lines), `run_bank` and the stop flag in `runner.py`
+(145 → ~550 lines), `run` in `cli.py`, and `tests/unit/test_results.py` (41 tests) plus
+`tests/unit/test_policies.py` (10) and two more in `test_runner.py` (11; the nine untouched).
+None of the new tests opens a simulator: the bank is a manifest in `tmp_path` and the env is a
+scripted fake handed in through `runner.build_env`, which is what lets the batch's promises —
+one file per row the moment it ends, an error is a row, a stop lands between two steps and the
+env is still closed — be checked on every machine. Every command in the block above was run
+against the real banks: `RaisingPolicy` on the four `t_junction` rows gave `by_status: {error:
+4}` with each traceback naming it, exit 0; `junction-1` gave `steps: 3782`, `max_step`, `[31]`
+at both ends, the attribution and the whole provenance block copied from the entry; SIGTERM
+into `banks/curve` landed in `curve_0004` at step 1022, the four rows before it scored, exit 0,
+no traceback, `stopped: true`. What the step settled beyond the bullets:
+
+1. **The stop is a flag, and the flag is the loop's only contact with the outside.**
+   `stop_on_signals()` installs SIGTERM/SIGINT handlers that set it, for the length of the batch
+   *including* `env.close()`, and puts the old handlers back after. `run_episode(stop=...)` reads
+   it before each step, so a stop lands between two steps and never inside one. A test really
+   sends SIGTERM to the pytest process; another checks Ctrl-C becomes a flag rather than a
+   `KeyboardInterrupt`. Off the main thread — where Python refuses handlers — the flag comes
+   back unarmed and the caller's own `stop` is the way to end a batch, which is how every test
+   ends one.
+2. **Three things the loop had to start returning**, additively, with defaults so Step 2's tests
+   held: `reward` and `cost` summed (the env's `cost` is written only by `MetaDriveEnv`, on an
+   out-of-road or a crash; a recording reads 0), and `issued_actions`, one per decision, which is
+   what `actions_digest` hashes and `--save-trajectories` writes. `stride_for` moved here from
+   `replay` (re-exported, so Step 2's tests import it unchanged).
+3. **A `sleep 4` is too early for `banks/curve`.** The five rows run at about 0.8 s each after a
+   ~2 s import, so the kill landed in the fifth row at 5 s and the block above says so. On a
+   bank that finishes before the signal arrives there is nothing to interrupt, and the test of
+   the mechanism is the offline one, not the timing.
+4. **An entry whose env will not build is one error row per scenario, and the next entry runs.**
+   "Never abort" as written was per episode; a `build_env` failure is per entry and would have
+   been an abort, so it is caught at that level too, with the traceback in every row.
+5. **Every refusal comes before the simulator**: the wrong bank at the path (by id), an unknown
+   scenario id (by name, all of them), a policy that will not load (which part of the spec), a
+   level or raw value the resolver refuses, a decision rate the env cannot step at, and a bank
+   whose entries step at two rates (one run holds one stride). A test asserts no env was built
+   after any of them.
+6. **`--categories` and `--scenarios` intersect at the CLI**, and a `Job` carries ids only. The
+   CLI reads the manifest anyway (for the bank id), so expanding categories to ids there keeps
+   the payload one list — what the queue, the studio and the container all hand over.
+7. **`ConstantPolicy` defaults to `(0, 0)`**, the same idle action `replay` drives with, so the
+   stop test's rows run their full 1200 steps rather than leaving the road in a second. Step 4
+   chooses the floor's action; the class takes one.
+
+**Verify alone:** met — every command above, `test_results.py` 41, `test_policies.py` 10,
+`test_runner.py` 11; full suite 663 passed, ruff clean, `commands.md` regenerated with `run` in
+a group of its own.
 
 ### Step 4 — the reference policies: floor and ceiling ⬜
 

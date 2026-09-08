@@ -1,0 +1,196 @@
+{
+  "attempt": null,
+  "bank": {
+    "attribution": null,
+    "id": "t-junction-left-intersection",
+    "path": "banks/t-junction-left-intersection",
+    "provenance": null,
+    "schema_version": "1.1",
+    "source": "pg"
+  },
+  "env": {
+    "decision_hz": null,
+    "metadrive_commit": "85e5dadc6c7436d324348f6e3d8f8e680c06b4db",
+    "observation_shape_after": [
+      19
+    ],
+    "observation_shape_before": [
+      19
+    ],
+    "step_hz": 10.0,
+    "stride": 1
+  },
+  "finished_utc": "2026-09-08T10:53:46Z",
+  "job_id": null,
+  "options": {
+    "kind": "pg",
+    "levels": {
+      "barriers": "none",
+      "cones": "high",
+      "cyclists": "none",
+      "lights": "none",
+      "pedestrians": "none",
+      "traffic": "none"
+    },
+    "origin": {
+      "barriers": "manifest",
+      "cones": "flag",
+      "cyclists": "manifest",
+      "lights": "manifest",
+      "pedestrians": "manifest",
+      "traffic": "manifest"
+    },
+    "raw": {},
+    "replay": {},
+    "tier": null,
+    "values": {
+      "barriers": 0,
+      "cones": 6,
+      "cyclists": 0,
+      "lights": null,
+      "pedestrians": 0,
+      "traffic": 0.0
+    }
+  },
+  "policy": "scenariobank.policies:ConstantPolicy",
+  "results": [
+    {
+      "actions": 320,
+      "actions_digest": "388c2463c9c3a42f5a1debace5e3ed14901cffb93c0d0d00756964396ea9c758",
+      "category": "intersection_left",
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "cost": 0.0,
+      "destination": "1X0_1_",
+      "failure_reason": "max_step",
+      "reward": 0.013199,
+      "route_completion": 0.044829,
+      "scenario_id": "intersection_left_0000",
+      "scenario_index": null,
+      "seed": 0,
+      "status": "ok",
+      "steps": 320,
+      "success": false,
+      "traceback": null,
+      "wall_time_s": 0.137
+    },
+    {
+      "actions": 320,
+      "actions_digest": "388c2463c9c3a42f5a1debace5e3ed14901cffb93c0d0d00756964396ea9c758",
+      "category": "intersection_left",
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "cost": 0.0,
+      "destination": "1X0_1_",
+      "failure_reason": "max_step",
+      "reward": 0.012831,
+      "route_completion": 0.044825,
+      "scenario_id": "intersection_left_0001",
+      "scenario_index": null,
+      "seed": 1,
+      "status": "ok",
+      "steps": 320,
+      "success": false,
+      "traceback": null,
+      "wall_time_s": 0.139
+    },
+    {
+      "actions": 320,
+      "actions_digest": "388c2463c9c3a42f5a1debace5e3ed14901cffb93c0d0d00756964396ea9c758",
+      "category": "intersection_left",
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "cost": 0.0,
+      "destination": "1X0_1_",
+      "failure_reason": "max_step",
+      "reward": 0.013199,
+      "route_completion": 0.044829,
+      "scenario_id": "intersection_left_0002",
+      "scenario_index": null,
+      "seed": 2,
+      "status": "ok",
+      "steps": 320,
+      "success": false,
+      "traceback": null,
+      "wall_time_s": 0.142
+    },
+    {
+      "actions": 320,
+      "actions_digest": "388c2463c9c3a42f5a1debace5e3ed14901cffb93c0d0d00756964396ea9c758",
+      "category": "intersection_left",
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "cost": 0.0,
+      "destination": "1X0_1_",
+      "failure_reason": "max_step",
+      "reward": 0.012831,
+      "route_completion": 0.044825,
+      "scenario_id": "intersection_left_0003",
+      "scenario_index": null,
+      "seed": 3,
+      "status": "ok",
+      "steps": 320,
+      "success": false,
+      "traceback": null,
+      "wall_time_s": 0.136
+    },
+    {
+      "actions": 320,
+      "actions_digest": "388c2463c9c3a42f5a1debace5e3ed14901cffb93c0d0d00756964396ea9c758",
+      "category": "intersection_left",
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "cost": 0.0,
+      "destination": "1X0_1_",
+      "failure_reason": "max_step",
+      "reward": 0.012831,
+      "route_completion": 0.044825,
+      "scenario_id": "intersection_left_0004",
+      "scenario_index": null,
+      "seed": 4,
+      "status": "ok",
+      "steps": 320,
+      "success": false,
+      "traceback": null,
+      "wall_time_s": 0.136
+    }
+  ],
+  "schema_version": 1,
+  "started_utc": "2026-09-08T10:53:45Z",
+  "stopped": false,
+  "summary": {
+    "by_failure_reason": {
+      "max_step": 5
+    },
+    "by_status": {
+      "ok": 5
+    },
+    "n": 5,
+    "success_rate": 0.0
+  }
+}
