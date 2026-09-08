@@ -27,6 +27,12 @@ the converter's complaint -- a per-step count "reports one collision as thirty, 
 describes the frame rate" -- is actually about. Per-vehicle identity via the `contactTest` nodes
 is a Step 3 check to attempt, not a promise made here.
 
+**What was placed is read off the scene, not off the levels.** After the reset the loop counts
+the engine's objects by class -- cones, barriers, people, traffic, the ego -- into `placed`,
+and asks the actor manager for its layout digest when one is registered. A manager that is
+registered and places nothing (the obstacle axes on an `X`, `T` or `O` road) then shows as
+nothing placed, in the row, rather than as a success rate that did not move.
+
 **The decision rate is a stride in this loop**, never a MetaDrive key: the same action is handed
 to `env.step` until the next decision is due, so a slower rate changes how many actions are
 issued and never how long the episode is.
@@ -123,12 +129,39 @@ class Drive:
     #: Every action issued, one per decision. What `actions_digest` is computed over and what
     #: `--save-trajectories` writes; a 1320-step episode at every step is 1320 pairs, cheap.
     issued_actions: list[list[float]] = field(default_factory=list)
+    #: `placed_counts(env)` after the reset. Empty on an env without an engine.
+    placed: dict[str, int] = field(default_factory=dict)
+    #: `actor_layout_digest(env)` after the reset. `None` without an actor manager.
+    actor_layout_digest: str | None = None
 
 
 def shape_of(value: Any) -> tuple[int, ...] | None:
     """The shape of an observation or a space, or `None` if it has none."""
     shape = getattr(value, "shape", None)
     return tuple(int(n) for n in shape) if shape else None
+
+
+def placed_counts(env: Any) -> dict[str, int]:
+    """Every object in the scene, by class name, sorted. Empty on an env with no engine.
+
+    Read off `engine.get_objects()`, which holds what the managers spawned -- the ego, the
+    traffic, the obstacles, the actors -- and not the map. The class name is the object's own
+    (`TrafficCone`, `Pedestrian`, `DefaultVehicle`), so the record says what MetaDrive calls it.
+    """
+    engine = getattr(env, "engine", None)
+    if engine is None:
+        return {}
+    counts: dict[str, int] = {}
+    for placed in engine.get_objects().values():
+        name = type(placed).__name__
+        counts[name] = counts.get(name, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def actor_layout_digest(env: Any) -> str | None:
+    """`VRUManager.layout_digest()` off the env's engine, or `None` when none is registered."""
+    manager = getattr(getattr(env, "engine", None), "vru_manager", None)
+    return None if manager is None else manager.layout_digest()
 
 
 def count_rising_edges(counts: dict[str, int], previous: dict[str, bool], info: dict) -> None:
@@ -159,6 +192,8 @@ def run_episode(
     """
     observation, _ = env.reset(seed=seed)
     destination = prepare(env)
+    placed = placed_counts(env)
+    layout = actor_layout_digest(env)
     at_reset = shape_of(observation)
     action_shape = shape_of(env.action_space)
     counts: dict[str, int] = {name: 0 for _, name in COLLISION_FLAGS}
@@ -208,6 +243,8 @@ def run_episode(
         reward=reward,
         cost=cost,
         issued_actions=issued_actions,
+        placed=placed,
+        actor_layout_digest=layout,
     )
 
 
@@ -387,6 +424,8 @@ def _score(
         collisions=dict(drive.collisions),
         route_completion=None if completion is None else round(float(completion), 6),
         actions_digest=sha256_hex(stream),
+        placed=dict(drive.placed),
+        actor_layout_digest=drive.actor_layout_digest,
     )
     return result, drive
 
@@ -555,8 +594,10 @@ __all__ = [
     "Drive",
     "RunError",
     "StopFlag",
+    "actor_layout_digest",
     "bind_policy",
     "count_rising_edges",
+    "placed_counts",
     "run_bank",
     "run_episode",
     "select_rows",

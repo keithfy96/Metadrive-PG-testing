@@ -12,6 +12,7 @@ a cap" and never learn which kind they are driving. Written out, the seam is:
 | select a row | `reset(seed=row.seed)` | `reset(seed=row.scenario_index)` |
 | prepare | `set_route(lane_index, row.destination)` | nothing; the recording has its route |
 | options | the six axes, `resolve_options` | the three replay switches, pinned |
+| managers | `ObstacleManager`, `VRUManager`, off the counts | the recording's |
 | observation | `OBSERVATION_SHAPE` (19) | `SCENARIO_OBSERVATION_SHAPE` (31) |
 
 Both columns bound an **index** with `num_scenarios`, so `num_scenarios_for` sizes both:
@@ -34,12 +35,24 @@ MetaDrive's `physics_world_step_size` x `decision_repeat` at 0.02 x 5, so one `e
 on a procedural road; a recording is stepped one frame at a time, at the rate its tracks were
 sampled at. `step_hz_for` says which, off the manifest.
 
+**The procedural env is a subclass, built on first use.** Four of the six axes are counts for
+managers MetaDrive does not register -- `ObstacleManager` for cones and barriers, `VRUManager`
+for pedestrians and cyclists -- and `MetaDriveEnv` registers its managers in `setup_engine`,
+which only a subclass can extend. `procedural_env_class()` is that subclass: it knows the four
+counts as config keys, registers each manager only when its axis is above zero (the way
+`metadrive_env.py:296-300` registers the stock object manager only above `accident_prob`'s
+floor), and carries the `crash_human_penalty` / `crash_human_cost` pair that MetaDrive
+terminates on but never scores (`metadrive_env.py:74-83` has the vehicle and object pairs and
+no human one). The class is made inside a function because its base is the simulator's.
+
 Nothing here imports MetaDrive at module scope, so every refusal a caller makes off the manifest
-still works on a machine without the simulator; the env classes are imported inside `build_env`.
+still works on a machine without the simulator; the env classes are imported inside `build_env`
+and `procedural_env_class`.
 """
 
 from __future__ import annotations
 
+import functools
 import logging
 from collections.abc import Callable
 from pathlib import Path
@@ -67,6 +80,16 @@ Row = ScenarioRow | RealWorldRow
 #: Named so `step_hz_for` can say what a procedural env steps at without importing the simulator.
 DEFAULT_PHYSICS_STEP_S = 0.02
 DEFAULT_DECISION_REPEAT = 5
+
+#: The four option axes that are counts for our managers, as the config keys the procedural
+#: env class registers. `traffic` is not here: it is `traffic_density`, stock MetaDrive's.
+COUNT_AXES: tuple[str, ...] = ("cones", "barriers", "pedestrians", "cyclists")
+
+#: What hitting a person costs, mirroring `crash_object_penalty` / `crash_object_cost`
+#: (`metadrive_env.py:75`, `:83`). MetaDrive ends the episode on `crash_human` and scores it
+#: nothing; these are the missing pair, registered by `procedural_env_class`.
+CRASH_HUMAN_PENALTY = 5.0
+CRASH_HUMAN_COST = 1.0
 
 
 def seed_for(row: Row) -> int:
@@ -154,9 +177,10 @@ def build_config(bank_dir: Path, entry: Entry, options: ResolvedOptions) -> dict
     """The env config for every row of one entry: one branch per kind, the seam's first half.
 
     On the procedural side the three `_PER_RUN_KEYS` are filled the way `variety.scan` fills
-    them, `horizon` becomes the entry's `max_steps`, and the traffic axis becomes
-    `traffic_density`, the one option knob stock MetaDrive reads. The other four numeric axes are
-    counts for the managers Step 4b builds, and nothing consumes them here yet.
+    them, `horizon` becomes the entry's `max_steps`, the traffic axis becomes `traffic_density`,
+    the one option knob stock MetaDrive reads, and the four `COUNT_AXES` become the keys
+    `procedural_env_class` registers -- which is why this config fits that class and not a
+    stock `MetaDriveEnv`, whose `Config` refuses a key it does not know.
 
     Needs the simulator: both branches name `StateObservation`.
     """
@@ -180,7 +204,67 @@ def build_config(bank_dir: Path, entry: Entry, options: ResolvedOptions) -> dict
         num_scenarios=num_scenarios_for(seeds),
         horizon=entry.max_steps,
         traffic_density=float(options.values["traffic"]),
+        **{axis: int(options.values[axis]) for axis in COUNT_AXES},
     )
+
+
+@functools.cache
+def procedural_env_class() -> type:
+    """`MetaDriveEnv` with the count axes, the two managers and the crash-human pair. Cached.
+
+    `default_config` is where MetaDrive's `Config` learns a key; anything else passed to the
+    constructor is refused by name (`base_env.py:293`). `setup_engine` is where managers are
+    registered, after the engine exists and before the first reset; a manager whose axis is at
+    zero is not registered at all, so a run at `none` has exactly the managers a stock env has
+    and `placed` shows nothing it did not put there. The reward and cost overrides slot
+    `crash_human` in behind `crash_object`, at the same numbers.
+    """
+    from metadrive.envs.metadrive_env import MetaDriveEnv
+
+    from scenariobank.actors import VRUManager
+    from scenariobank.obstacles import ObstacleManager
+
+    class ScenarioBankEnv(MetaDriveEnv):
+        @classmethod
+        def default_config(cls):
+            config = super().default_config()
+            config.update(
+                {
+                    **{axis: 0 for axis in COUNT_AXES},
+                    "crash_human_penalty": CRASH_HUMAN_PENALTY,
+                    "crash_human_cost": CRASH_HUMAN_COST,
+                }
+            )
+            return config
+
+        def setup_engine(self) -> None:
+            super().setup_engine()
+            if self.config["cones"] or self.config["barriers"]:
+                # The stock name: `PGTrafficManager` reads `engine.object_manager.accident_lanes`.
+                self.engine.register_manager("object_manager", ObstacleManager())
+            if self.config["pedestrians"] or self.config["cyclists"]:
+                self.engine.register_manager("vru_manager", VRUManager())
+
+        def reward_function(self, vehicle_id: str):
+            reward, step_info = super().reward_function(vehicle_id)
+            vehicle = self.agents[vehicle_id]
+            outranked = (
+                self._is_arrive_destination(vehicle)
+                or self._is_out_of_road(vehicle)
+                or vehicle.crash_vehicle
+                or vehicle.crash_object
+            )
+            if vehicle.crash_human and not outranked:
+                reward = -self.config["crash_human_penalty"]
+            return reward, step_info
+
+        def cost_function(self, vehicle_id: str):
+            cost, step_info = super().cost_function(vehicle_id)
+            if not cost and self.agents[vehicle_id].crash_human:
+                cost = step_info["cost"] = self.config["crash_human_cost"]
+            return cost, step_info
+
+    return ScenarioBankEnv
 
 
 def build_env(
@@ -201,9 +285,7 @@ def build_env(
 
         return ScenarioEnv(config), _prepare_recorded
 
-    from metadrive.envs.metadrive_env import MetaDriveEnv
-
-    return MetaDriveEnv(config), _prepare_procedural
+    return procedural_env_class()(config), _prepare_procedural
 
 
 def _prepare_recorded(env: Any, row: Row) -> None:
@@ -220,6 +302,9 @@ def _prepare_procedural(env: Any, row: Row) -> str:
 
 
 __all__ = [
+    "COUNT_AXES",
+    "CRASH_HUMAN_COST",
+    "CRASH_HUMAN_PENALTY",
     "DEFAULT_DECISION_REPEAT",
     "DEFAULT_PHYSICS_STEP_S",
     "Entry",
@@ -227,6 +312,7 @@ __all__ = [
     "build_config",
     "build_env",
     "expected_shape",
+    "procedural_env_class",
     "replay_config",
     "seed_for",
     "step_hz_for",

@@ -960,10 +960,11 @@ an install reads 6.2 s — that one also builds matplotlib's font cache.)*
 
 ---
 
-# Phase 2b — *(folded into a unit test)* ⬜
+# Phase 2b — *(folded into a unit test)* ✅  ⟵ *written 2026-09-08, with Phase 4 Step 4b*
 
-**Status:** neither test is written. Everything below is a decision that already holds;
-the two tests in `tests/unit/test_invariance.py` are the entire remaining deliverable.
+**Status:** both tests are written, in `tests/unit/test_invariance.py`, and green on `curve` and
+`intersection_left`. They shipped with the two managers they guard (Phase 4 Step 4b), which is
+where the decision below said they belonged. Everything below is a decision that already held.
 
 The storage design assumes changing traffic, cones, actors or lights leaves the map and the route
 untouched. That still matters: comparing a score at `traffic=none` against `traffic=high` only means
@@ -3177,7 +3178,7 @@ jq -c '[.summary.success_rate, .summary.by_failure_reason, [.results[].steps]]' 
 (137-139 steps per row on the right-hand control run), and Step 4's "ceiling substantially above
 floor" is met without touching `policies.py`. *Measured: 139, 138, 138, 137, 137 -- identical.*
 
-### Step 4b — the option managers: `obstacles.py` and `actors.py` ⬜
+### Step 4b — the option managers: `obstacles.py` and `actors.py` ✅  ⟵ *built 2026-09-08*
 
 *(Added 2026-09-07. Both modules are specified in full under **New modules**; the Target layout
 lists them; Step 2 referred to `VRUManager` as if it existed; and Step 5's `--tier hard` cannot
@@ -3210,10 +3211,10 @@ one.)*
 
 ```bash
 uv run pytest tests/unit/test_invariance.py tests/unit/test_obstacles.py tests/unit/test_actors.py -q
-uv run scenariobank run --bank banks/curve --cones high --policy scenariobank.policies:ConstantPolicy --out cones.json
+uv run scenariobank run --bank banks/curve --cones high --policy scenariobank.policies:ConstantPolicy --out cones
 uv run scenariobank run --bank banks/t-junction-left-intersection --categories intersection_left \
-  --cones high --policy scenariobank.policies:ConstantPolicy --out cones-x.json
-jq '.results[0].placed' cones.json cones-x.json
+  --cones high --policy scenariobank.policies:ConstantPolicy --out cones-x
+jq -c '.results[0].placed' cones/results.json cones-x/results.json
 ```
 **Expect:** the invariance test green — `lane_geometry_digest` and `navigation.checkpoints`
 identical across levels, `assert_array_equal` not `allclose`; `test_random_traffic_breaks_
@@ -3221,6 +3222,58 @@ invariance` fails the same comparison, as it must, or a green run proved nothing
 seed and level place identical actor spawns and patrol endpoints; `placed` shows cones on `curve`
 (a `CC` road) and **zero** on `intersection_left` (an `X`) — the documented trap, as a test rather
 than a footnote.
+
+**Built 2026-09-08.** Seven things the spec above did not say, all measured:
+
+1. **The env grew a subclass, made inside a function.** MetaDrive's `Config` refuses a
+   constructor key it was not told about in `default_config` (`base_env.py:293`), and managers
+   are registered in `setup_engine`, which only a subclass can extend. `env.procedural_env_class()`
+   is that subclass, cached: the four counts (`env.COUNT_AXES`) and the crash-human pair as config
+   keys, each manager registered only when its axis is above zero, `reward_function` /
+   `cost_function` slotting `crash_human` in behind `crash_object` at 5.0 / 1.0. It is built
+   inside a function because its base is the simulator's, so `env.py` stays importable without
+   it. `build_config` writes the four counts; `build_env` builds the subclass. `bank`,
+   `variety` and `destinations` still build a stock `MetaDriveEnv` off `base_config`, which is
+   why the counts are not in `base_config`.
+2. **The push goes to the physics body, not through `set_velocity`.** Any write to an actor's
+   transform — `set_heading_theta`, `standup`, and so the stock `set_velocity`, which calls
+   `standup` — costs the next physics substep: an actor pushed that way every step moves
+   `(decision_repeat - 1) / decision_repeat` of its speed, 0.096 m per step at 1.2 m/s and
+   MetaDrive's five substeps, and **nothing at all at `decision_repeat = 1`**. Writing the body's
+   linear velocity directly costs nothing. So `actors._push` does that and rewrites the heading
+   only when it has turned by more than 0.1 rad. Pedestrians then walk 0.120 m per step exactly;
+   a cyclist on an arc rides 0.394 of its 0.400, the rewrite every fourteen steps.
+3. **Cyclists drawn onto one lane get disjoint stretches of it.** Four cyclists on `curve`, three
+   of them on one 106 m arc, rode head-on into each other and spent the episode stalled (0.14 to
+   0.32 m per step of 0.40, with steps of zero). `actors._stretches` splits a shared lane's run
+   into equal shares 3 m apart, *after* every cyclist's draws, so the split cannot move a later
+   draw. A layout collision is the layout's fault, not the ego's.
+4. **The layout is drawn off the map, not the route.** The route is pinned *after* the reset
+   (`env._prepare_procedural`, `navigation.set_route`), so at `reset()` `navigation.checkpoints`
+   is not yet the row's. Candidates are every positive road of every block after the first — the
+   first is the ego's — and a road is picked per actor from `self.np_random`. The **Scenario
+   options** sentence "objects are placed along the ego's route lanes" is superseded: for
+   obstacles by the 2026-09-04 correction already under **New modules**, for actors by this.
+5. **No broken-down car, ever.** The stock barrier branch spawns a vehicle half the time;
+   `ObstacleManager` uses `prohibit_scene` and `barrier_scene` only. Measured: `curve` at
+   `traffic=none, cones=medium, barriers=medium` places 36 cones, 2 barriers and one
+   `DefaultVehicle`. The first fact in the bullet above is therefore a fact about stock
+   MetaDrive, not about this bank.
+6. **The results schema stays at 1.** `ScenarioResult` gains `placed` and `actor_layout_digest`;
+   the bump rule in `results.py` is for a record somebody reads, and until Phase 6 hands it over
+   the only readers are this repo's tests.
+7. **The `X` trap, in numbers.** `cones-x` at `--cones high`: `placed` is `{"DefaultVehicle": 1}`
+   with the manager registered and `scenes == []`. `cones` on `curve`: 72 cones — six corridors
+   of twelve at a 3.5 m lane — beside the manifest's pinned `barriers=medium` (4), `pedestrians=low`
+   (1) and traffic. And a first look past the gate: the expert at `--tier hard` on
+   `intersection_left` arrives 5/5 in 176-247 steps against 137-139 at easy, every row carrying
+   its own actor-layout digest.
+
+**Verify alone: met.** 16 tests across the three files, green in 7 s; `placed` as in note 7; the
+invariance ladder (`none`, traffic alone, everything `high`) leaves the map digest and the
+checkpoints identical on both banks while `placed` moves; `random_traffic=True` gives two
+different traffic layouts at one seed where `False` gives one, on both banks. Full suite 691
+passed, ruff clean.
 
 ### Step 5 — reproducibility, and options that do something ⬜  ⟵ *gate*
 
@@ -3237,16 +3290,16 @@ alone. `banks/curve` is where cones and barriers bite.
 B=banks/t-junction-left-intersection; P=scenariobank.policies:ExpertPolicy
 # 3. Reproducibility -- the real acceptance test, at the hard tier so it covers the managers and not just the map
 for t in easy hard; do for i in 1 2; do
-  uv run scenariobank run --bank $B --categories intersection_left --tier $t --policy $P --out $t$i.json
+  uv run scenariobank run --bank $B --categories intersection_left --tier $t --policy $P --out $t$i
 done; done
-diff <(jq 'del(.started_utc) | del(.results[].wall_time_s)' hard1.json) \
-     <(jq 'del(.started_utc) | del(.results[].wall_time_s)' hard2.json)
+diff <(jq 'del(.started_utc, .finished_utc) | del(.results[].wall_time_s)' hard1/results.json) \
+     <(jq 'del(.started_utc, .finished_utc) | del(.results[].wall_time_s)' hard2/results.json)
 # 6. Options actually do something
-jq -s '[.[0].summary.success_rate, .[1].summary.success_rate]' easy1.json hard1.json
-uv run scenariobank run --bank banks/curve --tier easy --policy $P --out c-easy.json
-uv run scenariobank run --bank banks/curve --tier hard --policy $P --out c-hard.json
-jq -s '[.[0].summary.success_rate, .[1].summary.success_rate]' c-easy.json c-hard.json
-jq '.results[0].placed' c-hard.json hard1.json
+jq -s '[.[0].summary.success_rate, .[1].summary.success_rate]' easy1/results.json hard1/results.json
+uv run scenariobank run --bank banks/curve --tier easy --policy $P --out c-easy
+uv run scenariobank run --bank banks/curve --tier hard --policy $P --out c-hard
+jq -s '[.[0].summary.success_rate, .[1].summary.success_rate]' c-easy/results.json c-hard/results.json
+jq '.results[0].placed' c-hard/results.json hard1/results.json
 ```
 **Expect: the diff empty** — identical steps, reward, cost, `failure_reason` and `actions_digest`
 for every scenario, with the option managers on. Hard below easy on both banks. `placed` on

@@ -33,10 +33,12 @@ from scenariobank.bank import (
 from scenariobank.config import OBSERVATION_SHAPE, SCENARIO_OBSERVATION_SHAPE
 from scenariobank.doctor import has_simulator
 from scenariobank.env import (
+    COUNT_AXES,
     DEFAULT_DECISION_REPEAT,
     DEFAULT_PHYSICS_STEP_S,
     build_config,
     expected_shape,
+    procedural_env_class,
     replay_config,
     seed_for,
     step_hz_for,
@@ -202,15 +204,45 @@ def test_num_scenarios_bounds_an_index_so_a_gapped_seed_list_is_sized_by_its_spa
 
 
 @needs_sim
-def test_the_traffic_axis_is_the_one_option_knob_the_config_reads():
-    """The pinned level's number, from `LEVELS`, and nothing else moves. The other four numeric
-    axes are counts for the managers Step 4b builds and no config key exists for them yet."""
+def test_the_traffic_axis_is_the_one_option_knob_stock_metadrive_reads():
+    """The pinned level's number, from `LEVELS`, into `traffic_density`; nothing else moves."""
     entry = pg_entry([0])
     config = build_config(Path("."), entry, resolve_options(pg_manifest(entry, traffic="low")))
     assert config["traffic_density"] == 0.05
     assert config["random_traffic"] is False
     unpinned = build_config(Path("."), entry, resolve_options(pg_manifest(entry)))
     assert unpinned["traffic_density"] == 0.0
+
+
+def test_the_four_count_axes_ride_into_the_config_under_their_own_names():
+    """Step 4b: the keys `procedural_env_class` registers, as whole numbers, present at zero
+    when unpinned -- so "never set" and "at the floor" are the same config, as with traffic."""
+    entry = pg_entry([0])
+    pinned = resolve_options(pg_manifest(entry, cones="high", pedestrians="low"))
+    config = build_config(Path("."), entry, pinned)
+    assert {axis: config[axis] for axis in COUNT_AXES} == {
+        "cones": 6, "barriers": 0, "pedestrians": 1, "cyclists": 0
+    }
+    assert all(type(config[axis]) is int for axis in COUNT_AXES)
+    unpinned = build_config(Path("."), entry, resolve_options(pg_manifest(entry)))
+    assert {axis: unpinned[axis] for axis in COUNT_AXES} == dict.fromkeys(COUNT_AXES, 0)
+    assert "accident_prob" in unpinned and unpinned["accident_prob"] == 0.0, "generation truth"
+
+
+@needs_sim
+def test_the_procedural_env_class_knows_the_keys_a_stock_env_refuses():
+    """`base_env.py:293` merges a constructor config with `allow_add_new_key=False`, so the
+    four counts and the crash-human pair have to be registered in `default_config` -- and a
+    stock `MetaDriveEnv` given `build_config`'s dict would refuse it by name."""
+    from metadrive.envs.metadrive_env import MetaDriveEnv
+
+    ours = procedural_env_class().default_config()
+    stock = MetaDriveEnv.default_config()
+    for key in (*COUNT_AXES, "crash_human_penalty", "crash_human_cost"):
+        assert key in ours and key not in stock, key
+    assert (ours["crash_human_penalty"], ours["crash_human_cost"]) == (5.0, 1.0)
+    assert (ours["crash_object_penalty"], ours["crash_object_cost"]) == (5.0, 1.0), "mirrored"
+    assert procedural_env_class() is procedural_env_class(), "one class, cached"
 
 
 @needs_sim

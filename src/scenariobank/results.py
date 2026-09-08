@@ -126,6 +126,14 @@ class ScenarioResult(BaseModel):
     #: `fingerprint.sha256_hex` over the per-decision action stream. Two runs of one policy on one
     #: scenario that diff here differ in what they did, whatever their summaries say.
     actions_digest: str | None = None
+    #: Every object in the scene after the reset, by MetaDrive class name: the ego, the traffic,
+    #: the cones, the people. What the option managers actually placed on this road -- which on
+    #: an `X`, `T` or `O` road is no cone or barrier at any level. Empty on an error row.
+    placed: dict[str, int] = Field(default_factory=dict)
+    #: `VRUManager.layout_digest()`: where every pedestrian and cyclist was put and walks
+    #: between. `None` when no actor manager was registered. A sibling of the bank's
+    #: `lane_geometry_digest`, measured on the run rather than stored.
+    actor_layout_digest: str | None = None
     traceback: str | None = None
 
 

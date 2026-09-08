@@ -169,6 +169,50 @@ def test_a_stop_ends_the_episode_between_two_steps_and_says_so():
     assert not drive.terminated and not drive.truncated
 
 
+class TrafficCone:
+    pass
+
+
+class DefaultVehicle:
+    pass
+
+
+class FakeLayout:
+    def layout_digest(self):
+        return "abc123"
+
+
+class FakeEngine:
+    """What the loop reads off an env's engine: the objects, and an actor manager if any."""
+
+    def __init__(self, objects, manager=None):
+        self.objects = objects
+        if manager is not None:
+            self.vru_manager = manager
+
+    def get_objects(self):
+        return self.objects
+
+
+def test_placed_and_the_actor_layout_are_read_off_the_engine_after_the_reset():
+    """Step 4b: by class name, sorted; the digest from the actor manager when one is
+    registered. An env with no engine -- every fake in these tests -- reads as nothing placed
+    and no layout, rather than as an error."""
+    env = FakeEnv(ends_at=1)
+    env.engine = FakeEngine({"a": DefaultVehicle(), "b": TrafficCone(), "c": TrafficCone()})
+    drive = run_episode(env, seed=0, prepare=lambda _env: None, cap=5, stride=1, act=zero)
+    assert drive.placed == {"DefaultVehicle": 1, "TrafficCone": 2}
+    assert drive.actor_layout_digest is None
+    assert list(drive.placed) == sorted(drive.placed)
+    env.engine = FakeEngine({"a": DefaultVehicle()}, manager=FakeLayout())
+    drive = run_episode(env, seed=0, prepare=lambda _env: None, cap=5, stride=1, act=zero)
+    assert (drive.placed, drive.actor_layout_digest) == ({"DefaultVehicle": 1}, "abc123")
+    bare = run_episode(
+        FakeEnv(ends_at=1), seed=0, prepare=lambda _env: None, cap=5, stride=1, act=zero
+    )
+    assert (bare.placed, bare.actor_layout_digest) == ({}, None)
+
+
 def test_the_loop_sums_reward_and_cost_and_keeps_every_action_it_issued():
     class Rewarding(FakeEnv):
         def step(self, action):
