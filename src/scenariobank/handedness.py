@@ -23,10 +23,18 @@ Three sign changes produce it, and no others:
    centreline -- including the opposing carriageway, the lane lines, and the sidewalks, because
    they are all derived from lane frames rather than placed independently.
 
-2. **Every `CircularLane` traverses the other way.** `clockwise` is inverted at construction,
-   which inverts `end_phase` (the arc sweeps the other way), `direction` (heading and lateral
-   sign follow), and therefore `heading_theta_at`. A right-hand bend becomes a left-hand bend.
+2. **Every `CircularLane` traverses the other way, and keeps its lateral axis.** `clockwise`
+   is inverted at construction, which inverts `end_phase` (the arc sweeps the other way),
+   `direction`, and therefore `heading_theta_at`. A right-hand bend becomes a left-hand bend.
    This is what makes roundabouts circulate clockwise, which is what a left-side market expects.
+   But `direction` also carries the sign of the lateral term in `position` and
+   `local_coordinates` (`circular_lane.py:57-61`, `:130`), so inverting the sweep alone hands
+   every arc a lateral axis pointing the *other* way from a straight lane's -- the centreline
+   mirrors exactly and everything placed off it (lane lines, sidewalks, a vehicle's offset in
+   the lane, a navigation checkpoint) lands on the wrong side. So the mirrored class negates
+   the lateral in both methods as well, and the axis is the true mirror on arcs as on
+   straights. Found 2026-09-08 by driving the same row on both maps and comparing the
+   observation entry by entry; the exactness test now samples off the centreline too.
 
 3. **The three `is_clockwise()` sites that do lateral arithmetic are inverted to compensate.**
    `create_pg_block_utils` uses `is_clockwise()` for two different jobs: which way the arc goes
@@ -153,8 +161,17 @@ def _mirror_straight_lanes(straight_lane: type) -> None:
 
 
 def _mirror_circular_lanes(circular_lane: type) -> None:
-    """Change 2: every arc sweeps the other way."""
+    """Change 2: every arc sweeps the other way, and its lateral axis stays a true mirror.
+
+    The sweep is inverted through `clockwise`. That also inverts `direction`, which the class
+    uses as the sign of the lateral term, so `position` and `local_coordinates` are wrapped to
+    negate the lateral back -- otherwise `position(lon, +w/2)` on a mirrored arc is the mirror
+    of `position(lon, -w/2)` on the original, while on a mirrored straight it is the mirror of
+    `position(lon, +w/2)`. `polygon` samples both edges and needs no wrapping.
+    """
     original_init = circular_lane.__init__
+    original_position = circular_lane.position
+    original_local_coordinates = circular_lane.local_coordinates
 
     def __init__(
         self: Any,
@@ -168,7 +185,16 @@ def _mirror_circular_lanes(circular_lane: type) -> None:
     ) -> None:
         original_init(self, center, radius, start_phase, angle, not clockwise, *args, **kwargs)
 
+    def position(self: Any, longitudinal: float, lateral: float) -> Any:
+        return original_position(self, longitudinal, -lateral)
+
+    def local_coordinates(self: Any, position: Any) -> tuple[float, float]:
+        longitudinal, lateral = original_local_coordinates(self, position)
+        return longitudinal, -lateral
+
     circular_lane.__init__ = __init__
+    circular_lane.position = position
+    circular_lane.local_coordinates = local_coordinates
 
 
 def _mirror_block_utils(utils: Any) -> dict[str, Any]:

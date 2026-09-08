@@ -157,14 +157,12 @@ def mirror_expert_observation(observation: np.ndarray) -> np.ndarray:
     are the same from either side. Applied *after* the expert's own `obs_correction`, which is
     what its weights expect to see.
 
-    **Measured, 2026-09-08, and exact on straight lanes only.** The same row driven on both
-    maps with mirrored actions tracks to the millimetre, and every entry above classifies as
-    predicted while the vehicle is on a straight lane. On an arc the lane frame's lateral axis
-    comes out inverted -- the offset in the lane flips instead of holding, the border distances
-    match neither way, and the checkpoints sit off by a few percent -- because `handedness`
-    mirrors an arc's centreline exactly but not its lateral parametrisation. That is the
-    mirror's to fix, not this function's; until it is, the expert drives mirrored straights as
-    the original and loses the road in the turns.
+    **Measured, 2026-09-08.** The same row driven on both maps with mirrored actions tracks to
+    the millimetre for 200 steps, 120 of them on arcs, and every entry above classifies as
+    predicted on both. The first measurement did not: on an arc the lane frame's lateral axis
+    came out inverted, because `handedness` mirrored an arc's sweep but not the sign of its
+    lateral term. That was the mirror's to fix and it was fixed there (change 2), not here; the
+    expert now drives the mirrored bank with the same step counts as the original.
     """
     obs = np.asarray(observation)
     if obs.shape != (EXPERT_OBSERVATION_WIDTH,):

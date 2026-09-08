@@ -11,6 +11,13 @@ It is also the test that found the real bug. An earlier mirror flipped `is_clock
 arcs but not for the lateral arithmetic that places the *sibling* lanes of a multi-lane curve.
 Every map still built, node names all matched, lane counts all matched, and the pictures looked
 plausibly left-side -- the only symptom was that curved lanes came out the wrong length.
+
+It did not find the second one, because it sampled centrelines only. A mirrored arc's lateral
+axis pointed the other way from a mirrored straight's, so every centreline reflected exactly
+while every sidewalk and lane line on an arc landed on the wrong side, and a vehicle's offset
+in its lane changed sign at every bend. That was found from the driver's seat (Phase 4 Step 4a).
+So the test now samples both lane edges, asks each lane where a reflected point is, and compares
+every sidewalk polygon -- the whole map, not the line down the middle of it.
 """
 
 import importlib.util
@@ -62,10 +69,19 @@ for seq in sequences:
             for end, group in tos.items():
                 for index, lane in enumerate(group):
                     steps = np.linspace(0, lane.length, samples)
-                    points = [[float(p[0]), float(p[1])]
-                              for p in (lane.position(s, 0) for s in steps)]
-                    lanes["{}|{}|{}".format(start, end, index)] = [float(lane.length), points]
-        out[seq] = lanes
+                    half = lane.width_at(0) / 2
+                    trace = lambda lat: [[float(p[0]), float(p[1])]
+                                         for p in (lane.position(s, lat) for s in steps)]
+                    probe = lane.position(lane.length / 3, half / 2)
+                    lanes["{}|{}|{}".format(start, end, index)] = [
+                        float(lane.length), trace(0), trace(half), trace(-half),
+                        [float(probe[0]), float(probe[1])],
+                    ]
+        sidewalks = {}
+        for block in env.engine.current_map.blocks:
+            for name, sidewalk in block.sidewalks.items():
+                sidewalks[name] = [[float(p[0]), float(p[1])] for p in sidewalk["polygon"]]
+        out[seq] = {"lanes": lanes, "sidewalks": sidewalks}
     finally:
         env.close()
 with open(target, "w") as handle:
@@ -93,8 +109,16 @@ def unmirrored_maps(tmp_path_factory):
     return json.loads(target.read_text())
 
 
-def trace_map(block_seq):
-    """Lane traces of `block_seq` as this process builds it -- that is, mirrored."""
+REFLECT = np.array([1.0, -1.0])
+
+
+def reflect(points):
+    return np.asarray(points, dtype=float) * REFLECT
+
+
+def trace_map(block_seq, reference):
+    """`block_seq` as this process builds it -- that is, mirrored -- traced the way the reference
+    was, plus what each mirrored lane says the *reference's* probe point is once reflected."""
     from metadrive.envs.metadrive_env import MetaDriveEnv
 
     from scenariobank.config import base_config
@@ -106,33 +130,72 @@ def trace_map(block_seq):
         for start, tos in env.engine.current_map.road_network.graph.items():
             for end, group in tos.items():
                 for index, lane in enumerate(group):
+                    key = f"{start}|{end}|{index}"
                     steps = np.linspace(0, lane.length, SAMPLES_PER_LANE)
-                    points = np.array([lane.position(s, 0) for s in steps], dtype=float)
-                    lanes[f"{start}|{end}|{index}"] = (float(lane.length), points)
-        return lanes
+                    half = lane.width_at(0) / 2
+                    edges = {
+                        lat: np.array([lane.position(s, lat) for s in steps], dtype=float)
+                        for lat in (0, half, -half)
+                    }
+                    located = None
+                    if key in reference["lanes"]:
+                        probe = reflect(reference["lanes"][key][4])
+                        located = tuple(float(v) for v in lane.local_coordinates(probe))
+                    lanes[key] = (float(lane.length), edges, located, half)
+        sidewalks = {
+            name: np.asarray(sidewalk["polygon"], dtype=float)
+            for block in env.engine.current_map.blocks
+            for name, sidewalk in block.sidewalks.items()
+        }
+        return lanes, sidewalks
     finally:
         env.close()
+
+
+def as_point_set(points, decimals=2):
+    return {tuple(p) for p in np.round(np.asarray(points, dtype=float), decimals).tolist()}
 
 
 @needs_sim
 @pytest.mark.parametrize("block_seq", BLOCK_SEQUENCES)
 def test_the_mirror_is_an_exact_reflection_lane_by_lane(block_seq, unmirrored_maps):
     reference = unmirrored_maps[block_seq]
-    mirrored = trace_map(block_seq)
+    mirrored, sidewalks = trace_map(block_seq, reference)
 
     # A reflection cannot add, drop or rename a lane. If these differ the map was rebuilt
     # differently, not reflected.
-    assert set(mirrored) == set(reference), "the mirror changed the road network's topology"
+    assert set(mirrored) == set(reference["lanes"]), "the mirror changed the network's topology"
 
-    for key, (length, points) in mirrored.items():
-        expected_length, expected_points = reference[key]
+    for key, (length, edges, located, half) in mirrored.items():
+        expected_length, centre, plus, minus, _probe = reference["lanes"][key]
         assert length == pytest.approx(expected_length, abs=1e-3), (
             f"{key}: mirrored length {length:.3f} != {expected_length:.3f}. A reflection is an "
             "isometry, so this lane is not a reflection of the original -- most likely its "
             "radius was offset to the wrong side."
         )
-        reflected = np.asarray(expected_points, dtype=float) * np.array([1.0, -1.0])
-        assert points == pytest.approx(reflected, abs=1e-2), f"{key}: geometry is not reflected"
+        assert edges[0] == pytest.approx(reflect(centre), abs=1e-2), f"{key}: centreline"
+        # The lateral axis: the mirrored lane's +w/2 edge must be the mirror of the original's
+        # +w/2 edge, not of its -w/2 edge. The centreline cannot tell the two apart; an arc
+        # whose sweep was inverted without its lateral term is exactly that failure.
+        assert edges[half] == pytest.approx(reflect(plus), abs=1e-2), (
+            f"{key}: the +w/2 edge is not the mirror of the original's +w/2 edge; the lane's "
+            "lateral axis points the wrong way"
+        )
+        assert edges[-half] == pytest.approx(reflect(minus), abs=1e-2), f"{key}: -w/2 edge"
+        # And the inverse: asked where the reflected probe point is, the mirrored lane must
+        # answer with the coordinates the original gave it -- a third of the way along, a
+        # quarter width to the positive side.
+        assert located == pytest.approx((expected_length / 3, half / 2), abs=1e-2), (
+            f"{key}: local_coordinates of the reflected probe is {located}"
+        )
+
+    # Everything built off a lane edge -- here, every sidewalk -- must reflect as a whole.
+    assert set(sidewalks) == set(reference["sidewalks"]), "the mirror changed the sidewalks"
+    for name, polygon in sidewalks.items():
+        assert as_point_set(polygon) == as_point_set(reflect(reference["sidewalks"][name])), (
+            f"sidewalk {name} is not the mirror of the original's; a lane edge on an arc is on "
+            "the wrong side"
+        )
 
 
 @needs_sim

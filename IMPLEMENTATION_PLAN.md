@@ -2993,7 +2993,7 @@ no traceback, `stopped: true`. What the step settled beyond the bullets:
 `test_runner.py` 11; full suite 663 passed, ruff clean, `commands.md` regenerated with `run` in
 a group of its own.
 
-### Step 4 — the reference policies: floor and ceiling ⬜  *(built 2026-09-08; the ceiling waits on Step 4a)*
+### Step 4 — the reference policies: floor and ceiling ✅
 
 - **Diagnostic policies keep the old signature.** `load_policy("pkg.mod:Name")` still instantiates
   and checks callability, and `ConstantPolicy` / `ExpertPolicy` still take
@@ -3017,9 +3017,9 @@ a group of its own.
   stays, the 240 lidar points reverse about the first -- runs the same network on it, and
   negates the steering. Which entries reflect was *measured*, not derived: the same row driven
   on both maps with mirrored actions tracks to the millimetre, and each entry classifies as
-  equal or flipped. On straight lanes every one does. On arcs the lane frame's lateral axis comes
-  out inverted, which is Step 4a, and until it is fixed the mirrored expert loses the road in
-  the turns.
+  equal or flipped. On straight lanes every one did at once; on arcs the lane frame's lateral
+  axis came out inverted, which became Step 4a. With 4a in, every entry classifies the same on
+  arcs, and the mirrored expert arrives with the original's step counts.
 - **The policy protocol gains one optional half: `bind(env)`.** A policy with that method is
   handed each env the batch builds, before that env's rows run. It is how the expert reaches the
   agent (`env.agent`, read at every call, since the agent is respawned at every reset) and how
@@ -3074,7 +3074,7 @@ was learned:
    not flipped -- they are read off the lane frame, which `handedness` mirrors -- and only the
    vehicle-frame entries flip. Corrected. Measured again through a curve (`banks/curve`, 200
    steps mirrored to 5 mm, 140 of them on arcs): on arcs the in-lane offset *flips* and the
-   border distances match neither way. That is Step 4a; the wrapper does not paper over it.
+   border distances match neither way. That became Step 4a; the wrapper did not paper over it.
 4. **The shape check is the batch's, after the write.** `run_bank` writes `results.json` with
    both shapes and then raises `RunError` naming them, so the evidence is on disk and the exit
    code says the run is not to be trusted. Measured `[19]` / `[19]` on every expert run here.
@@ -3083,15 +3083,15 @@ was learned:
    `(0, 1, 0, 0, 0)`. The mirror leaves a block that reads exactly that alone; flipping it would
    hand the mirrored expert a first step the original never sees.
 
-**Verify alone: partly met.** `test_policies.py` 17 and `test_results.py` 43 pass, the two
-expert runs **diff empty** (determinism holds through the mirror), both shapes `[19]`, floor 0.0
-with `max_step` x5. **The ceiling reads 0.0 too** -- `crash_sidewalk` x5, all in the turn, an
-arc -- so "ceiling substantially above floor" is *not* met and will not be until Step 4a. The
-right-hand control run above is what says the runner is feeding actions. Step 5 depends on a
-ceiling that arrives, so it waits on 4a as well. Full suite 672 passed, ruff clean, `commands.md`
-regenerated.
+**Verify alone: met, once Step 4a was in.** Before it: `test_policies.py` 17 and
+`test_results.py` 43 passed, the two expert runs diffed empty, both shapes `[19]`, floor 0.0 with
+`max_step` x5 -- and the ceiling read 0.0 too, `crash_sidewalk` x5, all in the turn, an arc. The
+right-hand control run was what said the runner is feeding actions. After 4a, the same block:
+floor 0.0, **ceiling 1.0**, the five rows in 139, 138, 138, 137, 137 steps -- the right-hand
+control run's counts exactly -- diff empty, shapes `[19]`; the whole bank 9 of 9. Full suite 672
+passed, ruff clean, `commands.md` regenerated.
 
-### Step 4a — the mirror is exact for lateral coordinates too ⬜  ⟵ *blocks the ceiling; found 2026-09-08*
+### Step 4a — the mirror is exact for lateral coordinates too ✅  ⟵ *found and fixed 2026-09-08*
 
 **Handedness** says the mirror is exact "lane by lane", and its test samples every lane's
 centreline (`lane.position(s, 0)`) and length. Both hold. What does not hold is the in-lane
@@ -3119,20 +3119,48 @@ of them shows in a picture:
 3. **Out-of-road bounds** use the same two border distances; on a multi-lane arc the asymmetric
    range (`get_current_lateral_range`) is applied from the wrong edge.
 
-The physics is unaffected -- lane meshes and sidewalks are built from both edges symmetrically,
-which is why a mirrored drive tracks to the millimetre through 140 arc steps.
+The lane *surfaces* are unaffected -- a lane polygon samples both edges -- which is why a
+mirrored drive tracked to the millimetre through 140 arc steps while staying in lane. **The
+sidewalks are not.** A sidewalk is built off one edge of the outermost lane
+(`pg_block.py:303-323`), so on every arc it sits on the wrong side: measured before the fix,
+4 of 12 sidewalk polygons on `CC`, 4 of 14 on `X` and 2 of 11 on `T` were not mirrors of the
+original's. That is the `crash_sidewalk` the ceiling was reading in every turn, and it is a
+fourth consequence: the physical road was wrong on arcs, not only the numbers about it. Lane
+lines, built the same way, were on the wrong side of every arc too.
 
 **The fix belongs in `handedness.py`, not in any consumer:** make the mirrored `CircularLane`
-carry a true-mirror lateral axis (negate the lateral term in `position` and `local_coordinates`
-for the mirrored class, leaving `heading_theta_at` and the sweep as change 2 made them), then
-re-derive the two places that currently *compensate* for the inverted axis -- change 3's sibling
-radii and `_mirrored_create_bend_straight`'s centre placement `previous_lane.position(length,
-bend_direction * radius)` -- since a previous lane that is an arc will now answer `position`
-differently. Extend `test_the_mirror_is_an_exact_reflection_lane_by_lane` to sample
-`lane.position(s, +w/2)` and `(s, -w/2)` and a `local_coordinates` round trip at both, so the
-exactness claim covers the axis and not only the centreline. Route lengths, fingerprints and
-thumbnails are centreline facts and must not move; `test_handedness.py`, `test_categories.py`
-and the bank's stored `route_length_m` are the regression.
+carry a true-mirror lateral axis -- negate the lateral in `position` and `local_coordinates`
+for the mirrored class, leaving `heading_theta_at` and the sweep as change 2 made them. Extend
+`test_the_mirror_is_an_exact_reflection_lane_by_lane` to sample both lane edges, ask each lane
+for the coordinates of a reflected probe point, and compare every sidewalk polygon, so the
+exactness claim covers the whole map and not only the line down the middle of it. Route lengths
+and fingerprints are centreline facts and must not move; `test_handedness.py`,
+`test_categories.py` and the bank's stored `route_length_m` are the regression.
+
+**Built 2026-09-08** as ten lines in `_mirror_circular_lanes` (two wrappers), the Handedness
+docstring's change 2 rewritten, and the exactness test extended. What was learned:
+
+1. **Nothing else had to be re-derived.** The expectation was that change 3 and
+   `_mirrored_create_bend_straight` compensated for the inverted axis and would move with it.
+   Read, neither touches it: sibling and opposite arcs are built from explicit radii and
+   phases, never from `position(lon, lat != 0)`, and a bend's `previous_lane` is always the
+   straight that follows the last bend. The only construction that reads an arc's lateral is
+   the sidewalk, which was wrong and is now right.
+2. **Measured, whole map, before and after.** Before: every arc's `+w/2` edge was the mirror of
+   the original's `-w/2` edge (12 of 12 on `CC`, 24 of 24 on `X`, 12 of 12 on `T`), and 10 of
+   37 sidewalk polygons were not mirrors. After: every edge and every polygon is, and every
+   centreline and length is unchanged.
+3. **Measured from the driver's seat, after.** The same `banks/curve` row, both maps, mirrored
+   actions: 199 steps to 5 mm, 120 on arcs, and all nineteen state entries classify the same on
+   arcs as on straights. Both drives now end the same way at the same step.
+4. **Fingerprints and thumbnails are centreline facts** (`fingerprint.lane_geometry_digest`
+   and `figures.render_route` both sample `position(s, 0)`), so no bank id moved, no stored
+   picture is stale, and no bank needs rebuilding. What changed for an existing bank is the
+   road a run drives on: arc sidewalks and lane lines are now where the mirror puts them.
+
+**Verify alone: met.** `test_handedness.py` and `test_categories.py` 87 passed; `test_policies.py`
+live tests pass; Step 4's ceiling block reads 1.0 with the right-hand control's step counts;
+full suite 672 passed, ruff clean.
 
 **Verify alone:**
 
@@ -3146,8 +3174,8 @@ uv run scenariobank run --bank $B --categories intersection_left --policy scenar
 jq -c '[.summary.success_rate, .summary.by_failure_reason, [.results[].steps]]' ceiling/results.json
 ```
 **Expect:** the mirrored expert arrives on `intersection_left` the way the unmirrored one does
-(137-139 steps per row on the right-hand control run, to within a step or two of chaotic drift),
-and Step 4's "ceiling substantially above floor" is met without touching `policies.py`.
+(137-139 steps per row on the right-hand control run), and Step 4's "ceiling substantially above
+floor" is met without touching `policies.py`. *Measured: 139, 138, 138, 137, 137 -- identical.*
 
 ### Step 4b — the option managers: `obstacles.py` and `actors.py` ⬜
 
