@@ -112,11 +112,16 @@ class FakeEnv:
 
     built: list[FakeEnv] = []
 
-    def __init__(self, *, ends=None, raises=None, on_reset=None, on_step=None):
+    def __init__(
+        self, *, ends=None, raises=None, on_reset=None, on_step=None, widths=(19, 19)
+    ):
         self.ends = ends or {}
         self.raises = raises or {}
         self.on_reset = on_reset
         self.on_step = on_step
+        #: The observation's width at reset and after a step. Both 19 unless a test wants to
+        #: see what the batch does when the shape moves.
+        self.widths = widths
         self.action_space = FakeSpace()
         self.seed: int | None = None
         self.taken = 0
@@ -130,7 +135,7 @@ class FakeEnv:
         self.seeds_seen.append(seed)
         if self.on_reset is not None:
             self.on_reset(seed)
-        return np.zeros(19), {}
+        return np.zeros(self.widths[0]), {}
 
     def step(self, action):
         del action
@@ -140,9 +145,10 @@ class FakeEnv:
         if self.raises.get(self.seed) == self.taken:
             raise RuntimeError(f"scripted failure on seed {self.seed} at step {self.taken}")
         end, info = self.ends.get(self.seed, (None, {}))
+        observation = np.zeros(self.widths[1])
         if end is not None and self.taken >= end:
-            return np.zeros(19), 1.0, True, False, {"env_seed": self.seed, **info}
-        return np.zeros(19), 1.0, False, False, {"env_seed": self.seed}
+            return observation, 1.0, True, False, {"env_seed": self.seed, **info}
+        return observation, 1.0, False, False, {"env_seed": self.seed}
 
     def close(self):
         self.closed = True
@@ -350,6 +356,49 @@ def test_an_entry_whose_env_will_not_build_is_four_error_rows_and_the_next_entry
         ("t_junction_0000", "ok"), ("t_junction_0002", "ok"),
     ]
     assert "no such road" in report.results[0].traceback
+
+
+def test_a_policy_with_bind_is_handed_each_entrys_env_before_its_rows_run(tmp_path, monkeypatch):
+    """The optional half of the policy protocol: one `bind` per env, in the bank's order, and
+    before the first reset of that env -- which is when the expert first needs the agent."""
+    bound_at_reset: list[int] = []
+    use_fake_env(monkeypatch, on_reset=lambda seed: bound_at_reset.append(len(Bound.bound)))
+    bank = write_bank(tmp_path)
+
+    class Bound:
+        bound: list = []
+
+        def bind(self, env):
+            Bound.bound.append(env)
+
+        def __call__(self, observation):
+            del observation
+            return (0.0, 0.0)
+
+    module = types.ModuleType("fake_policies")
+    module.Bound = Bound
+    monkeypatch.setitem(sys.modules, "fake_policies", module)
+    report = run_bank(job_for(bank, policy="fake_policies:Bound"), tmp_path / "out")
+    assert Bound.bound == FakeEnv.built and len(FakeEnv.built) == 2, "one bind per entry's env"
+    assert bound_at_reset == [1, 1, 2, 2], "bound before the first reset of each env"
+    assert report.summary.by_status == {"ok": 4}
+
+
+def test_a_moved_observation_shape_fails_the_run_after_the_record_is_written(
+    tmp_path, monkeypatch
+):
+    """Step 4's expert-leak check. The record is on disk first, with both shapes, so the
+    failure is diagnosable; then the run fails, because every row after the leak was scored
+    against a different observation."""
+    use_fake_env(monkeypatch, widths=(19, 31))
+    bank = write_bank(tmp_path)
+    with pytest.raises(RunError, match=r"observation shape moved.*\[19\].*\[31\]"):
+        run_bank(job_for(bank), tmp_path / "out")
+    written = json.loads((tmp_path / "out" / "results.json").read_text())
+    assert (
+        written["env"]["observation_shape_before"], written["env"]["observation_shape_after"]
+    ) == ([19], [31])
+    assert len(written["results"]) == 4, "every row was scored and written first"
 
 
 def test_a_stop_ends_the_row_it_lands_in_writes_what_there_is_and_closes_the_env(

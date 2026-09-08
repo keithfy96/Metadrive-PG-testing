@@ -2993,7 +2993,7 @@ no traceback, `stopped: true`. What the step settled beyond the bullets:
 `test_runner.py` 11; full suite 663 passed, ruff clean, `commands.md` regenerated with `run` in
 a group of its own.
 
-### Step 4 — the reference policies: floor and ceiling ⬜
+### Step 4 — the reference policies: floor and ceiling ⬜  *(built 2026-09-08; the ceiling waits on Step 4a)*
 
 - **Diagnostic policies keep the old signature.** `load_policy("pkg.mod:Name")` still instantiates
   and checks callability, and `ConstantPolicy` / `ExpertPolicy` still take
@@ -3007,6 +3007,23 @@ a group of its own.
   `np.random.normal(mean, std)` from the **global** numpy RNG (`:75`) — nothing MetaDrive seeds.
   Left at the default, Step 5's reproducibility diff is non-empty by construction, and the error it
   produces there looks like a runner bug. So "two expert runs diff empty" is this step's own check.
+- **`ExpertPolicy` sees a left-side bank in a mirror.** *(added 2026-09-08)* The expert was trained
+  on MetaDrive's right-side roads; measured, as shipped it arrives on nine of nine unmirrored
+  roads of this bank and on none of the nine mirrored ones, leaving the road inside 24 steps. The
+  mirror is exact (**Handedness**), so a left-side road *is* the road it was trained on, seen in a
+  mirror: on a left-side process (`handedness.drive_side()`, read when the policy is bound) it
+  takes the expert's own 275-wide observation, reflects it with `mirror_expert_observation` --
+  every entry computed in the vehicle's frame reads `1 - x`, every entry read off a lane frame
+  stays, the 240 lidar points reverse about the first -- runs the same network on it, and
+  negates the steering. Which entries reflect was *measured*, not derived: the same row driven
+  on both maps with mirrored actions tracks to the millimetre, and each entry classifies as
+  equal or flipped. On straight lanes every one does. On arcs the lane frame's lateral axis comes
+  out inverted, which is Step 4a, and until it is fixed the mirrored expert loses the road in
+  the turns.
+- **The policy protocol gains one optional half: `bind(env)`.** A policy with that method is
+  handed each env the batch builds, before that env's rows run. It is how the expert reaches the
+  agent (`env.agent`, read at every call, since the agent is respawned at every reset) and how
+  Step 7's policy will reach the camera rig; the loop itself still passes only the observation.
 - The runner records the observation shape *after* the last expert episode and **fails the run if
   it moved**: `numpy_expert.py:49` admits its config restore is incomplete. The check is *"the
   shape did not move during this run"*, **not** a literal 19: measured (Phase 3 Step 6), the same
@@ -3017,24 +3034,120 @@ a group of its own.
 **Verify alone:** *(old tests 1, 2 and 2b, plus determinism)*
 
 ```bash
-uv run pytest tests/unit/test_policies.py -q      # load_policy resolves and refuses a non-callable; ConstantPolicy -> 2-vector
+uv run pytest tests/unit/test_policies.py tests/unit/test_results.py -q   # the protocol, the mirror's arithmetic, bind, the shape check; two live tests
 B=banks/t-junction-left-intersection
 # 1. Floor: a constant-action policy should mostly fail
-uv run scenariobank run --bank $B --categories intersection_left --policy scenariobank.policies:ConstantPolicy --out floor.json
+uv run scenariobank run --bank $B --categories intersection_left --policy scenariobank.policies:ConstantPolicy --out floor
 # 2. Ceiling: the bundled PPO expert should mostly pass -- twice
-uv run scenariobank run --bank $B --categories intersection_left --policy scenariobank.policies:ExpertPolicy --out ceiling.json
-uv run scenariobank run --bank $B --categories intersection_left --policy scenariobank.policies:ExpertPolicy --out ceiling2.json
-jq -s '[.[0].summary.success_rate, .[1].summary.success_rate]' floor.json ceiling.json
+uv run scenariobank run --bank $B --categories intersection_left --policy scenariobank.policies:ExpertPolicy --out ceiling
+uv run scenariobank run --bank $B --categories intersection_left --policy scenariobank.policies:ExpertPolicy --out ceiling2
+jq -s '[.[0].summary.success_rate, .[1].summary.success_rate]' floor/results.json ceiling/results.json
+jq -c '.summary.by_failure_reason' floor/results.json ceiling/results.json
 # 2b. The expert must not leak lidar back into the env config
-jq '[.env.observation_shape_before, .env.observation_shape_after]' ceiling.json
-diff <(jq 'del(.started_utc) | del(.results[].wall_time_s)' ceiling.json) \
-     <(jq 'del(.started_utc) | del(.results[].wall_time_s)' ceiling2.json)
+jq -c '[.env.observation_shape_before, .env.observation_shape_after]' ceiling/results.json
+diff <(jq 'del(.started_utc, .finished_utc) | del(.results[].wall_time_s)' ceiling/results.json) \
+     <(jq 'del(.started_utc, .finished_utc) | del(.results[].wall_time_s)' ceiling2/results.json)
 ```
 **Expect:** floor near 0 with `by_failure_reason` dominated by `out_of_road` / `max_step`; ceiling
 substantially above it — if floor is approximately ceiling, the runner is not actually feeding
 actions to the env, which is the bug this test exists to catch; both shapes `[19]` — a fact about
 `MetaDriveEnv` with our `agent_observation`, and the assertion is that it did not move; **the two
 expert runs diff empty**, or `ExpertPolicy` is not passing `deterministic=True`.
+
+**Built 2026-09-08** as `ExpertPolicy`, `bundled_expert`, `expert_weights`, `expert_forward` and
+`mirror_expert_observation` in `policies.py` (+180 lines), `bind_policy` and the shape check in
+`runner.py`, seven tests in `test_policies.py` (two live) and two in `test_results.py`. What
+was learned:
+
+1. **The numpy expert by name, not `metadrive.examples.ppo_expert.expert`.** That package picks
+   the torch expert whenever torch is importable, which the rig has and this machine does not,
+   and a ceiling that is one arithmetic here and another there is not one ceiling. Same weights
+   file either way; only the numpy path is the same everywhere. A live test pins it.
+2. **The expert as shipped scores 0 of 9 on this bank, and it is not the runner.** Floor and
+   ceiling both read 0.0 on `intersection_left`, which is the "not feeding actions" signature
+   this step exists to catch -- except the same expert, on the same rows with
+   `handedness.install` made a no-op, arrives on every one in 137-148 steps. The bank drives on
+   the left and the expert learned the right. Hence the mirror, above.
+3. **The mirror was derived, then measured, and the measurement won twice.** Derived: every
+   lateral number flips. Measured (the same row, both maps, mirrored scripted actions, 60 steps,
+   positions mirrored to 1.5e-4 m): the border distances and the in-lane offset are *equal*,
+   not flipped -- they are read off the lane frame, which `handedness` mirrors -- and only the
+   vehicle-frame entries flip. Corrected. Measured again through a curve (`banks/curve`, 200
+   steps mirrored to 5 mm, 140 of them on arcs): on arcs the in-lane offset *flips* and the
+   border distances match neither way. That is Step 4a; the wrapper does not paper over it.
+4. **The shape check is the batch's, after the write.** `run_bank` writes `results.json` with
+   both shapes and then raises `RunError` naming them, so the evidence is on disk and the exit
+   code says the run is not to be trusted. Measured `[19]` / `[19]` on every expert run here.
+5. **One placeholder in the observation is not a lateral.** Before the navigation has updated once,
+   its two checkpoint blocks are zeros, which the expert's own `obs_correction` turns into
+   `(0, 1, 0, 0, 0)`. The mirror leaves a block that reads exactly that alone; flipping it would
+   hand the mirrored expert a first step the original never sees.
+
+**Verify alone: partly met.** `test_policies.py` 17 and `test_results.py` 43 pass, the two
+expert runs **diff empty** (determinism holds through the mirror), both shapes `[19]`, floor 0.0
+with `max_step` x5. **The ceiling reads 0.0 too** -- `crash_sidewalk` x5, all in the turn, an
+arc -- so "ceiling substantially above floor" is *not* met and will not be until Step 4a. The
+right-hand control run above is what says the runner is feeding actions. Step 5 depends on a
+ceiling that arrives, so it waits on 4a as well. Full suite 672 passed, ruff clean, `commands.md`
+regenerated.
+
+### Step 4a — the mirror is exact for lateral coordinates too ⬜  ⟵ *blocks the ceiling; found 2026-09-08*
+
+**Handedness** says the mirror is exact "lane by lane", and its test samples every lane's
+centreline (`lane.position(s, 0)`) and length. Both hold. What does not hold is the in-lane
+lateral coordinate on arcs, and it was found by driving the same row on both maps with mirrored
+actions and comparing the expert's observation entry by entry (Step 4, note 3):
+
+- On a **straight** lane, `lane.local_coordinates(p)` on the mirrored map returns the same
+  lateral as on the original -- the true mirror, because change 1 negates `direction_lateral`.
+- On an **arc**, it returns the *negated* lateral. `CircularLane.position(lon, lat)` is
+  `center + (radius + lat * direction) * (cos phi, sin phi)` (`circular_lane.py:57-61`), and
+  change 2 inverts `clockwise`, hence `direction`, to sweep the other way -- which also inverts
+  the sign of the lateral term. The centreline mirrors exactly; the lane's lateral axis does not.
+
+Three things read that axis, so three things are wrong on every arc of a left-side map, and none
+of them shows in a picture:
+
+1. **The 19-wide observation** the bank is defined against: entries 0-1 (distance to the left
+   and right road border, `base_vehicle.py:527-536`) and 8 (offset in the lane) are sign-consistent
+   with a right-side road on straights and inverted on arcs. A submitted policy sees a road whose
+   lateral sense changes at every bend.
+2. **Navigation checkpoints** are placed at `ref_lane.position(length, later_middle)`
+   (`node_network_navigation.py:303-304`); on an arc `later_middle` lands on the wrong side of
+   the centreline, so the checkpoint the ego steers toward sits half a road off (measured: the
+   second checkpoint's projections differ by up to 0.07 normalised while the next lane is an arc).
+3. **Out-of-road bounds** use the same two border distances; on a multi-lane arc the asymmetric
+   range (`get_current_lateral_range`) is applied from the wrong edge.
+
+The physics is unaffected -- lane meshes and sidewalks are built from both edges symmetrically,
+which is why a mirrored drive tracks to the millimetre through 140 arc steps.
+
+**The fix belongs in `handedness.py`, not in any consumer:** make the mirrored `CircularLane`
+carry a true-mirror lateral axis (negate the lateral term in `position` and `local_coordinates`
+for the mirrored class, leaving `heading_theta_at` and the sweep as change 2 made them), then
+re-derive the two places that currently *compensate* for the inverted axis -- change 3's sibling
+radii and `_mirrored_create_bend_straight`'s centre placement `previous_lane.position(length,
+bend_direction * radius)` -- since a previous lane that is an arc will now answer `position`
+differently. Extend `test_the_mirror_is_an_exact_reflection_lane_by_lane` to sample
+`lane.position(s, +w/2)` and `(s, -w/2)` and a `local_coordinates` round trip at both, so the
+exactness claim covers the axis and not only the centreline. Route lengths, fingerprints and
+thumbnails are centreline facts and must not move; `test_handedness.py`, `test_categories.py`
+and the bank's stored `route_length_m` are the regression.
+
+**Verify alone:**
+
+```bash
+uv run pytest tests/unit/test_handedness.py tests/unit/test_categories.py -q
+# the observation probe from Step 4, note 3: every entry EQUAL or FLIP on arcs as on straights
+uv run pytest tests/unit/test_policies.py -q
+# then Step 4's ceiling block, unchanged
+B=banks/t-junction-left-intersection
+uv run scenariobank run --bank $B --categories intersection_left --policy scenariobank.policies:ExpertPolicy --out ceiling
+jq -c '[.summary.success_rate, .summary.by_failure_reason, [.results[].steps]]' ceiling/results.json
+```
+**Expect:** the mirrored expert arrives on `intersection_left` the way the unmirrored one does
+(137-139 steps per row on the right-hand control run, to within a step or two of chaotic drift),
+and Step 4's "ceiling substantially above floor" is met without touching `policies.py`.
 
 ### Step 4b — the option managers: `obstacles.py` and `actors.py` ⬜
 

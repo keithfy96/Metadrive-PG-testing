@@ -82,8 +82,9 @@ COLLISION_FLAGS: tuple[tuple[str, str], ...] = (
     ("crash_sidewalk", "sidewalk"),
 )
 
-#: What acts: the observation in, an action out. A policy, once Step 4 builds one; until then a
-#: closure over a constant action.
+#: What acts: the observation in, an action out. A policy from `policies.load_policy`, or, in
+#: `replay` and the tests, a closure over a constant action. One optional half, read by
+#: `run_bank` and not by the loop: a `bind(env)` method is handed each env the batch builds.
 Actor = Callable[[Any], Sequence[float]]
 
 
@@ -406,7 +407,11 @@ def run_bank(
     unless the caller hands one in, which is how a test stops a batch without a signal.
 
     Returns the `Results` it wrote to `<out>/results.json`. A stopped batch returns normally --
-    a cancelled run that still writes its results is a scored partial run.
+    a cancelled run that still writes its results is a scored partial run. A batch whose
+    observation shape moved between its first reset and its last step is failed *after* the
+    record is written, with the two shapes: something in the loop -- a policy that swaps the
+    vehicle's sensor config in and out, which the bundled expert does -- leaked into the env,
+    and every row after the leak was scored against a different observation.
     """
     bank_dir = Path(job.bank.path)
     manifest = read_manifest(bank_dir)
@@ -453,6 +458,7 @@ def run_bank(
                 built = time.perf_counter()
                 try:
                     env, prepare = build_env(bank_dir, entry, options)
+                    bind_policy(act, env)
                 except Exception:  # noqa: BLE001 -- every row of this entry is an error row
                     for row in rows:
                         result = _error_row(name, entry, row, seconds=time.perf_counter() - built)
@@ -519,7 +525,20 @@ def run_bank(
         summary=summarize(results),
     )
     write_json(out / "results.json", report)
+    if shape_before is not None and shape_after is not None and shape_before != shape_after:
+        raise RunError(
+            f"the observation shape moved during the run, from {list(shape_before)} at the "
+            f"first reset to {list(shape_after)} after the last step, so the policy or the env "
+            f"leaked into the env config; the record is at {out / 'results.json'}"
+        )
     return report
+
+
+def bind_policy(act: Actor, env: Any) -> None:
+    """Hand `env` to a policy with a `bind`, before its rows run. Nothing for one without."""
+    bind = getattr(act, "bind", None)
+    if callable(bind):
+        bind(env)
 
 
 def _progress_line(result: ScenarioResult) -> str:
@@ -536,6 +555,7 @@ __all__ = [
     "Drive",
     "RunError",
     "StopFlag",
+    "bind_policy",
     "count_rising_edges",
     "run_bank",
     "run_episode",

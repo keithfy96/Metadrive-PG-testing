@@ -125,6 +125,11 @@ EXAMPLES: dict[str, tuple[tuple[str, str], ...]] = {
             "hard everywhere except traffic",
         ),
         (
+            "uv run scenariobank run --bank ./banks/t-junction "
+            "--policy scenariobank.policies:ExpertPolicy --out ./runs/ceiling",
+            "the ceiling: the bundled expert, deterministic",
+        ),
+        (
             "uv run scenariobank run --bank ./banks/junction-1 --decision-hz 20 --out ./runs/j1",
             "a recording, deciding at 20 Hz",
         ),
@@ -357,8 +362,11 @@ def _value_notes() -> dict[str, str]:
         "--categories": "Category names from the bank's manifest, comma-separated or repeated.",
         "--scenarios": "Scenario ids from the bank's manifest, comma-separated or repeated.",
         "--policy": (
-            "`pkg.mod:Name`, instantiated once per run and called with each observation. "
-            "`scenariobank.policies:ConstantPolicy` is the floor."
+            "`pkg.mod:Name`, instantiated once per run and called with each observation; one "
+            "with a `bind(env)` method is handed each env first. "
+            "`scenariobank.policies:ConstantPolicy` is the floor and "
+            "`scenariobank.policies:ExpertPolicy` the ceiling: MetaDrive's bundled PPO expert, "
+            "deterministic, seeing a left-side bank in a mirror."
         ),
         "--traffic-density": f"A density, 0 for none or at least {TRAFFIC_FLOOR}.",
         **{

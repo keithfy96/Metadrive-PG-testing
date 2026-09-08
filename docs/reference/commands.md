@@ -567,7 +567,7 @@ about 11 s.
 | `--job <path>` | optional |  | A Job file to run instead of flags. The container's entrypoint and the queue hand the runner one of these; every flag but --out is then refused. A `Job` JSON file, the same record the queue carries. |
 | `--categories <str>` | optional | yes | Run only these categories. Comma-separated, or repeated. Category names from the bank's manifest, comma-separated or repeated. |
 | `--scenarios <str>` | optional | yes | Run only these scenario ids. Comma-separated, or repeated. Scenario ids from the bank's manifest, comma-separated or repeated. |
-| `--policy <str>` | default `scenariobank.policies:ConstantPolicy` |  | What drives, as `pkg.mod:Name`. `pkg.mod:Name`, instantiated once per run and called with each observation. `scenariobank.policies:ConstantPolicy` is the floor. |
+| `--policy <str>` | default `scenariobank.policies:ConstantPolicy` |  | What drives, as `pkg.mod:Name`. `pkg.mod:Name`, instantiated once per run and called with each observation; one with a `bind(env)` method is handed each env first. `scenariobank.policies:ConstantPolicy` is the floor and `scenariobank.policies:ExpertPolicy` the ceiling: MetaDrive's bundled PPO expert, deterministic, seeing a left-side bank in a mirror. |
 | `--checkpoint <path>` | optional |  | Handed to the policy as `checkpoint_path`. |
 | `--tier <str>` | optional |  | Expand a tier to its six levels first. One of: `easy`, `medium`, `hard`. Expanded to six levels first; an axis flag then overrides one. |
 | `--traffic <str>` | optional |  | Moving traffic level for this run, over the bank's pinned one. One of: `none`, `low`, `medium`, `high`. Applied when a run happens, not when the bank was built. |
@@ -587,6 +587,7 @@ about 11 s.
 ```bash
 uv run scenariobank run --bank ./banks/t-junction --out ./runs/floor                                                                    # the whole bank against the constant-action floor
 uv run scenariobank run --bank ./banks/curve --tier hard --traffic low --policy scenariobank.policies:ConstantPolicy --out ./runs/hard  # hard everywhere except traffic
+uv run scenariobank run --bank ./banks/t-junction --policy scenariobank.policies:ExpertPolicy --out ./runs/ceiling                      # the ceiling: the bundled expert, deterministic
 uv run scenariobank run --bank ./banks/junction-1 --decision-hz 20 --out ./runs/j1                                                      # a recording, deciding at 20 Hz
 uv run scenariobank run --job ./job.json --out ./runs/queued                                                                            # what the container runs
 uv run scenariobank run --bank ./banks/curve --scenarios curve_0000,curve_0003 --save-trajectories --out ./runs/two                     # two rows, with their per-decision actions
