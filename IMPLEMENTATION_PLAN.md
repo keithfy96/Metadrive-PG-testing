@@ -75,7 +75,7 @@ sentence in Phase 7 uses these four words in exactly this sense:
 
 | word | means |
 |---|---|
-| **queue** | `wfqueue` on the NAS. Not ours. `docs/queue-docs/`. |
+| **queue** | `wfqueue` on the NAS. Not ours. `docs/queue-docs/`. At `http://192.168.1.90:9090` today (the doc's own header says `localhost:8080` because it was rendered by a dev copy); read from `WFQUEUE_URL`, never hard-coded. |
 | **orchestrator** | our MetaDrive dispatcher on the NAS. Leases, plans, calls, saves. |
 | **runner** | our HTTP service on each rig. Owns that rig's locks and its containers. |
 | **container** | the image that actually simulates. Calls `run_bank()`. |
@@ -130,6 +130,25 @@ What the queue fixes is what a lock cannot express:
   and records the incompatibility as a question for Tyrone rather than assuming an answer.
 - **Where the frontend reads results from.** Ours are saved on the NAS by our orchestrator; whether
   the webapp reads them from us or the queue carries them is not decided.
+- ~~The topic name.~~ **`metadrive`**, one topic for our orchestrator; CARLA's is Tyrone's to
+  name. *(Pinned 2026-09-08; Phase 7's test block already assumed it.)*
+
+### Three things the served client does that the doc does not say
+
+*(Added 2026-09-08, re-reading `docs/queue-docs/queue-client-v0.py` after the queue's real
+address arrived. The file is byte-identical to the 2026-09-01 copy; only the doc's address
+changed, and the plan already knew the queue's semantics. These three are behaviours of the
+client rather than of the API, and each names the step that must handle it.)*
+
+- **`_request` retries a POST** on 5xx and transport errors (`retries=2`, backoff 0.5 s). A
+  retried `put` without `dedupe_key` can enqueue one run twice — so a producer mints the job id
+  *before* `put()` and passes it as `dedupe_key` (Phase 2c Step 12). A retried `ack` after the
+  first one landed returns `409` as a `QueueHTTPError`, which the orchestrator reads as "already
+  settled", not as failure (Phase 7 Step 5).
+- **`consume()` defaults to `poll_interval=60`.** Long-polling is `poll_interval=0, wait=N`; with
+  the default an empty long-poll is followed by a 60 s sleep (Phase 7 Step 5).
+- **There is no automatic lease extension.** `msg.extend()` is a call; the timer is ours (Phase 7
+  Step 5, property 2).
 
 ---
 
@@ -567,7 +586,10 @@ metadrive-PG/
                             #   rig's lock is the truth.
       results.py            #   our SQLite + results tree. Per-scenario rows; idempotent ingest.
       options.py            #   GET /options: the six axes as data, for the frontend's form
-      queue_client.py       #   vendored verbatim from docs/queue-docs/. Do not reimplement.
+      queue_client.py       #   vendored verbatim from the NAS (`curl -O $WFQUEUE_URL/source/client.py`,
+                            #   so its header carries the real address); a test pins its sha256
+                            #   against docs/queue-docs/ so a server-side change to the client is
+                            #   noticed rather than absorbed. Do not reimplement.
     rig/                    # Phase 7, rig side — the service the orchestrator calls
       service.py            #   POST/GET/DELETE /runs, GET /health. Idempotent on job_id.
       lock.py               #   flock per GPU, holder file kept separate, /proc/locks check
@@ -1945,8 +1967,11 @@ the wing-sim webapp.
 The form is rendered from Phase 7's `GET /options`, for the same reason every other form here is
 generated: a hand-written copy of the six axes is a second declaration of them.
 
-**Blocked on Phase 7** for the payload schema and the topic name. Recorded here rather than in
-Phase 7 because the screen is ours and the queue is not.
+**The payload is Phase 4 Step 3's `Job`, and the topic is `metadrive`** (pinned under **How this
+ships**, 2026-09-08). The studio mints `job_id` (uuid4) *before* `put()` and passes it as
+`dedupe_key`, so the client's own POST retry cannot enqueue a run twice. **Still blocked on Phase
+7 Step 8's `GET /options`** for the form. Recorded here rather than in Phase 7 because the screen
+is ours and the queue is not.
 
 **Test in the page:** submit a run and see it appear in the queue's own `/admin` console, with the
 bank, the model and the options in the payload.
@@ -2596,7 +2621,7 @@ Above that line the run loop, the result record and the reproducibility diff nev
 kind they are driving. **The loop already exists**: `replay.drive` (Phase 3 Step 6) is the only
 `env.step` in the repo, and it refused procedural banks precisely so it would not become a second
 runner. Step 2 moves that loop into `runner.py` and turns `replay` into a caller of it; from then
-on `grep -n "env.step(" src/` returns one site, and that is a **Done when** condition below.
+on `grep -n "= env.step(" src/` returns one site, and that is a **Done when** condition below.
 
 ### Step 1 — `resolve_options()`: names in, numerics out ✅
 
@@ -2672,7 +2697,7 @@ resolver's `tier=`, `levels=` and `raw=` arguments. What the step settled beyond
 **Verify alone:** met — `uv run pytest tests/unit/test_options.py -q` → 39 passed, including the
 on-disk read of `banks/curve` (skips by name where that bank is not checked out); full suite 585.
 
-### Step 2 — env construction from a bank, and the one loop ⬜
+### Step 2 — env construction from a bank, and the one loop ✅
 
 Build the env the manifest describes, behind the seam in the table above, and prove the three
 config keys that silently do nothing when they are wrong. **A bank is a recipe, not a saved
@@ -2762,7 +2787,7 @@ uv run scenariobank replay --bank banks/curve                                   
 uv run scenariobank replay --bank banks/t-junction --scenario t_junction_0000     # ends at 320, not 1000
 uv run scenariobank replay --bank banks/t-junction --scenario CCS_only_0000       # ends at 1320
 uv run scenariobank replay --bank banks/t-junction-left-intersection --scenario t_junction_0001 --json \
-  | jq '{seed, destination, steps, ended_by, observation_shape}'                # seed 28 -> 1T2_1_
+  | jq '{seed, destination, steps, ended_by, observation_shape}'                # seed 28 -> 1T0_1_; _0002 is seed 2 -> 1T2_1_
 cp -r banks/t-junction /tmp/scratch-tj && uv run scenariobank budget --bank /tmp/scratch-tj \
   --scenario t_junction_0000 --max-steps 100 && uv run scenariobank replay --bank /tmp/scratch-tj \
   --scenario t_junction_0000                                                     # ends at 100
@@ -2778,6 +2803,48 @@ Phase 3 Step 6 tests pass unchanged. `test_env.py` pins offline that a PG entry'
 `horizon == entry.max_steps`, `num_scenarios == num_scenarios_for(seeds)` and `start_seed ==
 min(seeds)`, and that a recorded entry's config is `replay_config`'s dict.
 
+**Built 2026-09-08** as `env.py` (the seam, ~230 lines), `runner.py` (the loop, ~150 lines),
+`replay.py` cut to a caller of both, and `tests/unit/test_env.py` (16 tests) plus
+`tests/unit/test_runner.py` (9 tests, a fake env, no simulator). Every command in the block above
+was run against the real banks and gave the expected number: `curve` seed 30 resets and runs 1200;
+`t_junction_0000` ends at 320 and `CCS_only_0000` at 1320, both by `max_step`; the scratch row at
+100 with its siblings still at 320; `junction-1` unchanged at 3782 and `[31]`; every PG drive
+`[19]` at both ends. What the step settled beyond the bullets:
+
+1. **The bank's `t_junction_0001` is seed 28 → `1T0_1_`, not `1T2_1_`** as the comment above
+   said; `_0002` (seed 2) is the `1T2_1_` row. Both are driven and both read back off
+   `navigation.final_road.end_node` equal to the manifest. Comment corrected.
+2. **A row budget below its entry's `horizon` is a third ending.** `horizon` is the entry's
+   320 and the scratch row's cap is 100, so the env never says `max_step` and the loop stops
+   first. That is `replay.BUDGETED` ("hit its own budget"), distinct from `CAPPED` (`--steps`)
+   and `STILL_DRIVING` — the belt-and-braces bullet, visible in the report rather than read as
+   "still driving".
+3. **The step rate is per kind and known off the manifest.** `env.step_hz_for` is the
+   recording's `step_hz` or 10 Hz on a road (`base_env.py:190-191`, the two keys `base_config`
+   does not touch — pinned by a test so the number cannot drift from the env). So
+   `--decision-hz 20` on a PG bank is refused before anything is built, naming "the env's 10 Hz";
+   Step 7's 20 Hz AV3 decisions on a road need `physics_world_step_size` set there, which is
+   Step 7's to do and now has a number to refuse against.
+4. **Only `traffic` reaches the config.** `build_config` maps the resolved traffic value onto
+   `traffic_density`; the four count axes have no config key until Step 4b's managers exist.
+   `banks/curve` pins traffic=low, so its drive is the first with cars in it — zero rising-edge
+   collisions under a zero action, which is the counter's first live reading.
+5. **`replay_config` moved to `env.py`** and is re-exported from `replay` so Phase 3 Step 6's
+   tests import it unchanged; `build_config` on a recorded entry is the same dict sized for the
+   whole entry (`num_scenarios_for` over the indices, `horizon = entry.max_steps`), equal to
+   `replay_config`'s on the one-row entries every bank here holds.
+6. **Two Step 6 tests could not pass unchanged**: the ones that asserted the procedural refusal
+   (`recorded()` and the command's "procedural bank" sentence). The refusal is lifted, so they
+   now assert the lift and the road's decision-rate ceiling; the hand-built `Episode` gained
+   `kind="recorded"`. The other 30 pass as they were.
+7. **The one-loop check matches the call, not the word.** `grep "env.step("` also finds
+   `categories.py:175`'s comment, so the test (`test_runner.py`) and the Done-when below match
+   `= env.step(`.
+
+**Verify alone:** met — every command above, plus `test_env.py` 16, `test_runner.py` 9,
+`test_replay.py` 35 (33 unchanged); full suite 609 passed, ruff clean, `commands.md`
+regenerated with `replay` describing both kinds.
+
 ### Step 3 — the result record, and a batch that never aborts ⬜
 
 The schema everything downstream reads. Built before any policy worth scoring, so the record is
@@ -2785,7 +2852,11 @@ designed once rather than grown around whatever the first run happened to emit. 
 named here**, because Steps 4-5, Phase 5 Step 4 and Phase 7 all `jq` them and this plan had been
 inventing them at each site:
 
-- **top level:** `schema_version`, `started_utc`, `bank` (`path`, `id`, `source`, `schema`, and
+- **top level:** `schema_version`, `started_utc`, `job_id` (`str | None`: the queue message's
+  id or the studio-minted one; `null` from the CLI), `attempt` (`int | None`: the lease's
+  `attempts`, so a redelivered job's second result says it is one — these two are the only
+  queue facts a result carries, and the queue is otherwise invisible below the orchestrator),
+  `bank` (`path`, `id`, `source`, `schema`, and
   for a recorded bank `provenance` and `attribution` — the entry already carries both),
   `policy`, `options` (Step 1's record, names and numerics, with its `kind`), `env`
   (`observation_shape_before`, `observation_shape_after`, `step_hz`, `decision_hz`, `stride`,
@@ -2803,6 +2874,29 @@ inventing them at each site:
   written and were not in the list. `replay.ENDINGS` is already the measured list; promote it.
 - `--save-trajectories` optional (off by default; the only large artifact).
 - **Never abort the batch**: catch per-episode, record `status: "error"` + traceback, continue.
+  And **never wait for the end to write**: each scenario's result is written to
+  `<out>/results/<scenario_id>.json` the moment it ends, and `results.json` is assembled from
+  those files last. That per-scenario file is the progress signal Phase 7 Step 1 reads (its
+  "record directory and exit-code file"), and it is why a run killed at 30 of 35 is a scored
+  partial run rather than a lost one. *(Added 2026-09-08, for the queue: a lease is a clock and
+  the orchestrator extends it off progress it can see.)*
+- **Stoppable.** `run_bank` installs a SIGTERM/SIGINT handler that sets a flag; the loop reads it
+  through `run_episode(stop=...)` once per step (an additive parameter on Step 2's loop, with a
+  `stopped: bool` on `Drive` so a stopped episode is not misreported as capped or budgeted); the
+  episode ends with `failure_reason: "stopped"`, the batch writes what it has, exits 0, and
+  `env.close()` runs on the normal path. **Never let `KeyboardInterrupt` raise into
+  `env.close()`.** It unwinds panda3d's GL context and bullet's world; that segfaulted and wedged
+  the GPU until a reboot. `tools/drive.py` is the precedent — it keeps its exit handler armed
+  until teardown returns. This belongs here, with the loop, not in the container entrypoint
+  (Phase 7 Step 1 is a caller). A cancelled run that still writes its results is a scored partial
+  run; one that does not is a lost one, so the container's stop timeout is budgeted rather than
+  left at Docker's 10 s default. A wedged GPU blocks CARLA too. `replay` never passes `stop`.
+- **The job is a model too.** `results.py` defines `Job` beside `Results`: `{schema_version,
+  job_id, bank: {id, path}, scenarios: [scenario_id] | null, options: {tier, levels, raw},
+  policy, checkpoint_path | null, decision_hz | null, save_trajectories}`, `extra="forbid"`.
+  `run_bank(job, out)` is the one entry point; the CLI's `run` flags build a `Job`, the
+  container's entrypoint reads one from a file, and **the queue message payload is a `Job`** —
+  which is what unblocks Phase 2c Step 12 and gives Phase 6 its second schema.
 - **`horizon` and the loop cap are the same belt and braces on both kinds.** *(Corrected
   2026-09-07 — this bullet used to say a stored scenario's `horizon` is `None` and the loop cap is
   the only thing that ends it. Phase 3 Step 6 measured otherwise: `ScenarioEnv.done_function`
@@ -2816,19 +2910,28 @@ inventing them at each site:
 
 ```bash
 uv run scenariobank run --bank banks/t-junction-left-intersection --categories t_junction \
-  --policy scenariobank.policies:RaisingPolicy --out raising.json; echo "exit=$?"
-jq '.summary.by_status, (.results[0] | {scenario_id, status, traceback})' raising.json
+  --policy scenariobank.policies:RaisingPolicy --out raising; echo "exit=$?"
+ls raising/results | wc -l                                                      # 4, one file per row
+jq '.summary.by_status, (.results[0] | {scenario_id, status, traceback})' raising/results.json
 uv run scenariobank run --bank banks/junction-1 \
-  --policy scenariobank.policies:ConstantPolicy --out stored.json
-jq '.results[] | {scenario_id, steps, failure_reason, status}, .env.observation_shape_after, .bank.attribution' stored.json
+  --policy scenariobank.policies:ConstantPolicy --out stored
+jq '.results[] | {scenario_id, steps, failure_reason, status}, .env.observation_shape_after, .bank.attribution' stored/results.json
+uv run scenariobank run --bank banks/curve --policy scenariobank.policies:ConstantPolicy --out stopped & \
+  sleep 4; kill -TERM %1; wait %1; echo "exit=$?"                               # stopped mid-episode
+jq '.results[] | {scenario_id, failure_reason, steps}' stopped/results.json
 uv run pytest tests/unit/test_results.py tests/unit/test_runner.py -q
 ```
-**Expect:** exit 0 both times and both files written; `by_status` is `{"error": 4}` and each
-traceback names `RaisingPolicy`; the recorded run has one result at `steps: 3782`,
-`failure_reason: "max_step"`, `status: "ok"`, shape `[31]`, and `attribution` copied from the
-entry. Offline: the record round-trips through pydantic with `extra="forbid"`; `failure_reason`
+**Expect:** exit 0 every time, `results.json` present every time, and `job_id`/`attempt` `null` in
+all of them (the CLI is not the queue); `by_status` is `{"error": 4}` and each traceback names
+`RaisingPolicy`; the recorded run has one result at `steps: 3782`, `failure_reason: "max_step"`,
+`status: "ok"`, shape `[31]`, and `attribution` copied from the entry; the killed run has its
+interrupted row at `failure_reason: "stopped"` with `steps` below 1200, every row before it
+scored, no row after it, and no traceback from `env.close()`. Offline: `Results` and `Job` both
+round-trip through pydantic with `extra="forbid"` and refuse an unknown field; `failure_reason`
 precedence is pinned against a hand-built `info` carrying `crash` and `env_seed`; a collision flag
-held high for thirty steps counts once.
+held high for thirty steps counts once; `run_episode(stop=...)` against `FakeEnv` returns
+`steps == 7, stopped=True` when the flag goes up at 7, and the nine existing `test_runner.py`
+tests pass untouched.
 
 ### Step 4 — the reference policies: floor and ceiling ⬜
 
@@ -3096,8 +3199,8 @@ copied to Phase 7 Step 8.
 - `uv run pytest -q` green with the new files, `uv run ruff check src tests` clean.
 - `uv run scenariobank commands` regenerates `docs/reference/commands.md` with `run` grouped —
   `docs.GROUPS` refuses to render until it is.
-- `replay` and `run` are two callers of one loop: `grep -n "env.step(" src/` returns one site, in
-  `runner.py`.
+- `replay` and `run` are two callers of one loop: `grep -n "= env.step(" src/` returns one site,
+  in `runner.py` (`test_runner.py` pins it).
 - Phase 3 Step 6 and Phase 4 Step 3 say the same thing about `horizon`.
 
 ---
@@ -3322,7 +3425,8 @@ a page that can launch a job.
 **Goal:** your colleague can build the frontend without reading any of your Python.
 
 **Build**
-- `CONTRACT.md`: both JSON schemas field-by-field, with the rules that matter to him:
+- `CONTRACT.md`: both JSON schemas field-by-field — `Job` (what a producer puts on the topic)
+  and `Results` (what comes back), both Phase 4 Step 3's — with the rules that matter to him:
   - **The camera-only statement, at the top of the options section.** A state-vector policy cannot
     perceive traffic, cones, barriers, pedestrians, cyclists or lights. Nobody should read a
     state-vector model's collision result as a model defect.
@@ -3360,7 +3464,7 @@ a page that can launch a job.
   - `status: "error"` is distinct from `success: false`; an error means we learned nothing.
   - Exit codes: 0 = ran, 2 = integrity refusal, 1 = internal.
 - Machine-readable schemas emitted from the pydantic models:
-  `scenariobank schema --manifest > schemas/manifest.v1.json` and `--results`.
+  `scenariobank schema --manifest > schemas/manifest.v1.json`, `--results` and `--job`.
 - `scenariobank validate --results results.json` so he can self-check.
 - Committed example `manifest.json` and `results.json` in `examples/`.
 
@@ -3467,12 +3571,43 @@ having and all three come from the same choice — **the runner holds no state o
 ## Steps
 
 Each is buildable and verifiable on its own, and the order is deliberate: **the rig half first**,
-because it can be driven by hand with `curl` long before a queue is involved.
+because it can be driven by hand with `curl` long before a queue is involved. Step 0 is the one
+exception, because nothing on this side of the queue can be tested on a laptop without it.
+
+### Step 0 — a queue on the bench ⬜  *(added 2026-09-08)*
+
+The NAS is not routable from the development machine (`No route to host` on
+`192.168.1.90:9090`, measured 2026-09-08), `wfqueue` is not installed here, and the colleague
+shared the client, not the server. So before the orchestrator can be tested at all:
+
+1. **Ask the colleague for the server** — the `wfqueue` package (the client's own docstring says
+   `from wfqueue import QueueClient  # or from the installed package`, so one exists), its single
+   file, or a compose service. That is the preferred bench: the real code, on localhost,
+   `WFQUEUE_URL=http://localhost:9090`.
+2. **Until it arrives, `tests/support/fake_wfqueue.py`**: a stdlib `http.server` + `threading`
+   double of the *documented* contract only — `put` (with `dedupe_key`), `lease` (visibility
+   timeout, `wait`), `ack`, `nack` (backoff, `retry_after`, `dead`, `max_attempts`), `extend`,
+   `stats`, `list`, `requeue`, and `409` on a stale `lease_id`. ~200 lines, test-only, never
+   imported by `src/`. It exists to exercise *our* orchestrator, not to stand in for the queue in
+   any claim.
+3. **One contract test file, two backends.** `tests/unit/test_queue_contract.py` runs the same
+   assertions against the fake by default and against `$WFQUEUE_URL` when it is set (a
+   `needs_queue` marker in the house per-file style, no `conftest.py`). The assertions are the
+   four Phase 7 properties in miniature: an expired lease is redelivered with `attempts == 2`;
+   `ack` with a stale `lease_id` is `409`; `nack(dead=True)` lands in `dead` and `requeue`
+   returns it; a second `put` with the same `dedupe_key` returns `duplicate: true` and one
+   message. **When the real server disagrees with the fake, the fake is wrong** and is corrected;
+   that is the whole discipline, and it is why the file is under `tests/` and not `src/`.
+
+**Verify alone:** `uv run pytest tests/unit/test_queue_contract.py -q` green offline; the same
+with `WFQUEUE_URL` pointing at the colleague's server (or at the NAS, from a machine that can
+route to it) green with the marker taking effect. Step 7's round trip stays the gate and stays
+on the real NAS.
 
 ### Step 1 — the container image and entrypoint ⬜
 
-Extends Phase 5. The container reads an options file plus a scenario list, calls `run_bank()`,
-writes `results.json`, exits 0. Four additions, all so a supervisor never has to parse prose:
+Extends Phase 5. The container reads a `Job` file (Phase 4 Step 3's model: the same JSON the
+queue carries), calls `run_bank()`, writes `results.json`, exits 0. Four additions, all so a supervisor never has to parse prose:
 
 **And one question this step inherits, deliberately unanswered until here.** Phase 5 reuses
 `metadrive-wingfin-sim`, an image built by the converter repo and published to no registry. That
@@ -3488,13 +3623,12 @@ it when there is a rig to decide it on; do not pre-empt it in Phase 5.
   ends. These two files are the progress signal, so a bar moves without anything reading the log.
 - **Teardown inside the launched script**, not the supervisor — a dead runner must still bring the
   stack down and still record exit codes.
-- **Never let `KeyboardInterrupt` raise into `env.close()`.** It unwinds panda3d's GL context and
-  bullet's world; that segfaulted and wedged the GPU until a reboot. `tools/drive.py` is the
-  precedent — it keeps its exit handler armed until teardown returns. A cancelled run that still
-  writes its results is a scored partial run; one that does not is a lost one, so budget the stop
-  timeout rather than taking a 10 s default. A wedged GPU blocks CARLA too.
+- **The stop is `run_bank`'s, not the entrypoint's.** SIGTERM from `docker stop` reaches the
+  flag Phase 4 Step 3 installs; the run ends `stopped`, writes what it scored, and closes the env
+  on the normal path. The `KeyboardInterrupt`-into-`env.close()` wedge and the stop-timeout
+  budget are described there *(moved 2026-09-08)*. The entrypoint adds nothing but the file read.
 
-**Verify alone:** `docker run` it by hand with a one-scenario options file; get a `results.json`.
+**Verify alone:** `docker run` it by hand with a one-scenario `Job` file; get a `results.json`.
 
 ### Step 2 — the lock helper (R1: our own, same paths) ⬜
 
@@ -3535,7 +3669,7 @@ is a sibling rather than a reuse.
 The thing the orchestrator calls. Small, and stateless by construction.
 
 ```
-POST   /runs                    {job_id, gpu, bank, scenarios[], options, checkpoint_path}
+POST   /runs                    {job: <Job>, gpu}   -- Phase 4 Step 3's model, plus the card
 GET    /runs/{job_id}           state, per-scenario progress, exit code
 GET    /runs/{job_id}/results   results.json once it exists
 DELETE /runs/{job_id}           cancel: stop the container, keep what was scored
@@ -3560,15 +3694,25 @@ confirm the next `GET` describes the same run.** That last one is the whole desi
 
 ### Step 5 — the orchestrator: the lease loop ⬜
 
-On the NAS. `QueueClient` from `docs/queue-docs/`, one topic, long-polled.
+On the NAS. `QueueClient` from `docs/queue-docs/`, one topic (`metadrive`), long-polled.
+`WFQUEUE_URL` and, if the server is ever started with one, `WFQUEUE_TOKEN` come from the
+environment: `QueueClient(url, token=token)`. Nothing here knows an address.
 
 1. **Before leasing anything, ask every rig what it is running.** That is the recovery path, and it
    is the same code path as a normal poll — no special case, no reconciliation table.
-2. `consume(topic, wait=...)`, one message at a time.
-3. Read the options; choose a rig and a GPU from the plan; `POST /runs`.
+2. `consume("metadrive", poll_interval=0, wait=20, consumer=<hostname>)`, one message at a time.
+   `poll_interval=0` matters: the client's default is a 60 s sleep after every empty poll.
+3. The payload is a `Job` (Phase 4 Step 3); validate it first — a payload that does not parse is
+   a job that can never run, and goes to step 7 without touching a rig. Choose a rig and a GPU
+   from the plan; `POST /runs`.
 4. `409 busy` → `nack(retry_after=...)` and move on. **Not a failure.**
 5. Extend the lease on a timer while polling `GET /runs/{job_id}`; stop extending the moment it ends.
+   The client has no timer of its own.
 6. Fetch results, save them (Step 6), `ack`.
+6b. `ack` raising `QueueHTTPError` with `409` after a run completed → `GET /messages/{id}`;
+   `state == "done"` means the first ack landed and the client's own retry is noise. Anything
+   else is a real lease loss: the job was redelivered, and property 1 on the rig is what kept it
+   from running twice.
 7. A run that failed *for a reason that will recur* → `nack(dead=True)`. Everything else retries.
 
 **Verify alone:** `put()` a job by hand and watch it land on a rig, with both rigs' runners up.
@@ -3625,14 +3769,14 @@ Four failures that are all **silent**, which is why each gets an explicit test r
 **A double-lease must not double-run** — property 1, and the one that costs a GPU:
 ```bash
 # lease with a short visibility_timeout and then do nothing; let it expire mid-run
-python3 -c "from client import QueueClient; QueueClient(NAS).lease('metadrive', visibility_timeout=5)"
+python3 -c "import os; from client import QueueClient; QueueClient(os.environ['WFQUEUE_URL']).lease('metadrive', visibility_timeout=5)"
 curl -s rig-a:9000/runs | jq 'length'      # expect 1, still 1 after redelivery
 ```
 
 **A busy rig must not fail a job** — hold the card from outside both queues:
 ```bash
 bash wing-sim/deployment/with_rig_lock.sh sleep 120 &      # on rig A, not a queued job
-curl -s nas:8080/topics/metadrive/stats | jq '.dead'       # expect 0 throughout
+curl -s $WFQUEUE_URL/topics/metadrive/stats | jq '.dead'   # expect 0 throughout
 curl -s rig-b:9000/runs | jq '.[].job_id'                  # it went to the other rig
 ```
 

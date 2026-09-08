@@ -138,7 +138,7 @@ TIERS: dict[str, dict[str, Level]] = {
 PHASE_8_LIGHTS: dict[str, Level] = {"medium": "low", "hard": "medium"}
 
 #: What a recorded bank runs with instead of the six axes: `ScenarioEnv`'s three replay switches,
-#: all off, so the recording plays back as recorded. `replay.replay_config` spreads this into the
+#: all off, so the recording plays back as recorded. `env.replay_config` spreads this into the
 #: env config and the resolver copies it into the record, so the two cannot drift apart.
 REPLAY_FLAGS: dict[str, bool] = {"no_traffic": False, "no_light": False, "reactive_traffic": False}
 

@@ -8,9 +8,10 @@ single batch self-consistent, and that is the whole guarantee. So there is no `m
 that explains a result months later, not something anything refuses on.
 
 What the manifest is for is the runner. It carries the destination node and the spawn lane, so
-the runner can pin `vehicle_config["destination"]` and never let `auto_assign_task` draw a
-random one, and the rotation along the route, so the bank itself says which way a scenario
-turns.
+the runner can `set_route` to that node after every reset (`env.py`) and never let
+`auto_assign_task` draw a random one -- **not** `vehicle_config["destination"]`, which is read at
+construction and cannot differ per row of one env -- and the rotation along the route, so the
+bank itself says which way a scenario turns.
 
 **A thumbnail shows the route, not just the map** (`figures.render_route`): the road in grey,
 the driven route in red, a blue arrow at the spawn and a green star at the destination. A

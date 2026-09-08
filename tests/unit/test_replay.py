@@ -5,11 +5,12 @@ it; `sockets`, `destinations` and `figures` reset one to measure a road. Nothing
 is why Phase 3 could import a recording, review it and still not know whether it drives.
 
 Split the way the rest of the suite is. The **offline** half is every refusal and every piece of
-arithmetic -- which bank is wrong, which scenario id does not exist, what stride a decision rate
-means -- and it runs on a machine with no MetaDrive. The **`needs_sim`** half drives
-`banks/junction-1` for real and pins the three numbers that were claims until Step 6 measured
-them: the episode is 3782 steps, the observation is 31 wide at both ends, and the stride moves the
-action count without moving the episode length.
+arithmetic -- which scenario id does not exist, what stride a decision rate means -- and it runs
+on a machine with no MetaDrive. The procedural refusal that used to head it was lifted by Phase 4
+Step 2, which moved the loop into `runner.py`; the PG drives are `test_env.py`'s. The
+**`needs_sim`** half drives `banks/junction-1` for real and pins the three numbers that were
+claims until Step 6 measured them: the episode is 3782 steps, the observation is 31 wide at both
+ends, and the stride moves the action count without moving the episode length.
 
 The live half is expensive on purpose -- a full replay is about 10 s -- so it runs the whole
 recording exactly twice, once at every step and once at 20 Hz, and checks the slower rates against
@@ -23,6 +24,7 @@ from pathlib import Path
 
 import pytest
 
+import scenariobank.replay as replay_module
 from scenariobank.bank import (
     BankError,
     CategoryEntry,
@@ -40,7 +42,6 @@ from scenariobank.replay import (
     IDLE_ACTION,
     drive,
     format_episode,
-    recorded,
     replay_config,
     select,
     stride_for,
@@ -128,7 +129,7 @@ def imported(rows: list[RealWorldRow] | None = None) -> Manifest:
 
 
 def procedural() -> Manifest:
-    """A PG bank, which `replay` refuses."""
+    """A PG bank, which `replay` drives since Phase 4 Step 2 and refused before it."""
     return Manifest(
         schema_version="1.4",
         bank_id="curve",
@@ -164,32 +165,29 @@ def procedural() -> Manifest:
 # --- offline: the refusals ---------------------------------------------------------------
 
 
-def test_a_procedural_bank_is_refused_by_name_and_not_half_driven():
-    """The mirror of `review`'s old refusal, and there for the same reason.
-
-    A PG scenario needs `MetaDriveEnv` and a route set per row -- a different env with a different
-    setup. A `replay` that quietly did half of it would be the second step loop Phase 4 is written
-    to avoid.
-    """
-    with pytest.raises(BankError, match="procedural bank"):
-        recorded(procedural())
-
-
-def test_an_imported_bank_is_not_refused():
-    recorded(imported())
+def test_a_procedural_bank_is_selected_like_a_recorded_one_and_no_longer_refused():
+    """Phase 4 Step 2 lifted the refusal: the loop is `runner.run_episode`'s and the env is
+    `env.build_env`'s, so `replay` driving a road is one more caller of one loop rather than the
+    second runner the refusal existed to prevent. The drive itself is `test_env.py`'s."""
+    name, entry, chosen = select(procedural())
+    assert (name, chosen.scenario_id) == ("curve", "curve_0000")
+    assert isinstance(entry, CategoryEntry)
+    assert not hasattr(replay_module, "recorded")
 
 
 def test_refusing_needs_no_simulator():
-    """`drive` guards before it imports MetaDrive, so a wrong bank is answered off the manifest.
+    """`drive` refuses before it builds, so a wrong bank is answered off the manifest.
 
-    Worth a test rather than a comment: the natural way to write the function puts the import
-    first, and the cost of that is a refusal that only works on a machine that did not need one.
+    Worth a test rather than a comment: the natural way to write the function builds first, and
+    the cost of that is a refusal that only works on a machine that did not need one. MetaDrive
+    is imported inside `env.build_env`, and every refusal `drive` makes comes before that call.
     """
-    import scenariobank.replay as replay
-
-    source = Path(replay.__file__).read_text()
+    source = Path(replay_module.__file__).read_text()
     body = source[source.index("def drive("):]
-    assert body.index("recorded(manifest)") < body.index("from metadrive")
+    built = body.index("build_env(")
+    for guard in ("resolve_options(manifest)", "select(manifest", "stride_for("):
+        assert body.index(guard) < built, guard
+    assert "from metadrive" not in source
 
 
 # --- offline: choosing a row -------------------------------------------------------------
@@ -419,6 +417,7 @@ def test_a_changed_observation_width_is_called_out_rather_than_left_to_be_notice
     from scenariobank.replay import Episode
 
     episode = Episode(
+        kind="recorded",
         bank_id="junction-x",
         category="junction-x",
         scenario_id="junction-x_0000",
@@ -463,13 +462,14 @@ def run_cli(*argv):
     return CliRunner().invoke(app, ["replay", *argv])
 
 
-def test_the_command_refuses_a_procedural_bank_with_the_sentence(tmp_path):
+def test_the_command_refuses_a_rate_a_road_cannot_step_at_before_building_anything(tmp_path):
+    """A road steps at 10 Hz (`env.step_hz_for`), and the ceiling is named for what it is."""
     from scenariobank.bank import write_manifest
 
     write_manifest(tmp_path, procedural())
-    result = run_cli("--bank", str(tmp_path))
+    result = run_cli("--bank", str(tmp_path), "--decision-hz", "20")
     assert result.exit_code == 1
-    assert "procedural bank" in result.output
+    assert "faster than the env's 10 Hz" in result.output
 
 
 def test_the_command_refuses_an_impossible_decision_rate_before_building_anything(tmp_path):

@@ -203,42 +203,45 @@ uv run scenariobank review --bank ./banks/b --json | jq '.categories[].duplicate
 
 ### `replay`
 
-Drive one imported recording end to end and report what the drive measured.
+Drive one scenario of a bank end to end and report what the drive measured.
 
 A **diagnostic**, and the companion to `review`: that one says what a bank claims about
 itself off the manifest, this one opens the simulator and checks the claim holds. It writes
 no result file and loads no policy -- the action is zero throttle and zero steering, which is
 enough to measure how long the episode is, how wide the observation is and what ends it.
-Running a bank for results is the runner's job, which Phase 4 builds.
+Running a bank for results is `run`'s job, which Phase 4 builds on the same loop.
+
+Drives both kinds of bank through one loop (`runner.py`) and one env builder (`env.py`). On a
+procedural road it resets onto the row's seed, pins the route to the row's destination, and
+runs to the entry's own `max_steps` rather than MetaDrive's 1000; a row's own budget caps it
+shorter. The options are the bank's pinned block. On a recording it opens the dataset at the
+rate the tracks were sampled at and runs to the recording's own length.
 
 Three things it settles that nothing else can. **A stored episode does not end by itself:**
 the env replays past the last recorded frame indefinitely unless `horizon` is set to the
-recording's own length, which this does. **The observation is 31 wide, not the 19 a PG bank
-produces** -- same sensors, different navigation -- so a policy trained against one bank kind
-cannot be handed the other. **`--decision-hz` is a stride in this loop**, not a MetaDrive
-setting: replay advances one recorded frame per step, so deciding at 20 Hz on a 100 Hz
-recording holds each action for five steps and changes how many actions were issued, never
-how long the episode was.
+recording's own length, which this does. **The observation is 31 wide on a recording and 19
+on a road** -- same sensors, different navigation -- so a policy trained against one bank kind
+cannot be handed the other. **`--decision-hz` is a stride in the loop**, not a MetaDrive
+setting: deciding at 20 Hz on a 100 Hz recording holds each action for five steps and changes
+how many actions were issued, never how long the episode was. A road steps at 10 Hz, so a
+faster decision rate than that is refused there.
 
-Needs the simulator, and it costs a full replay -- about 11 s for `banks/junction-1`. Use
-`--steps` to check the round trip without paying for the whole recording.
-
-**Refuses a procedural bank by name.** Driving one needs `MetaDriveEnv` plus a per-row route,
-which is a different env and a different setup, and a `replay` that quietly did half of it
-would be a second runner.
+Needs the simulator. A full replay of `banks/junction-1` costs about 11 s; a road is well
+under a second. Use `--steps` to check the round trip without paying for the whole episode.
 
 | flag | | repeats | meaning |
 |---|---|---|---|
-| `--bank <path>` | **required** |  | Bank directory holding the recording to drive. |
-| `--scenario <str>` | optional |  | Which recording, by its id. Defaults to the first. A `scenario_id` from the bank's manifest, e.g. `curve_0004`. |
+| `--bank <path>` | **required** |  | Bank directory holding the scenario to drive. |
+| `--scenario <str>` | optional |  | Which scenario, by its id. Defaults to the first. A `scenario_id` from the bank's manifest, e.g. `curve_0004`. |
 | `--decision-hz <float>` | optional |  | Hold each action for this decision rate. Defaults to every step. |
 | `--steps <int>` | optional |  | Stop after this many steps, for a quick check. |
 | `--json` | default `false` |  | Emit the report as JSON instead of aligned text. |
 
 ```bash
 uv run scenariobank replay --bank ./banks/junction-1
-uv run scenariobank replay --bank ./banks/junction-1 --steps 50               # check the round trip without paying for the whole recording
-uv run scenariobank replay --bank ./banks/junction-1 --decision-hz 20 --json  # what a 20 Hz policy would have been asked for
+uv run scenariobank replay --bank ./banks/t-junction --scenario t_junction_0000  # a procedural road: seed, route and the entry's own step cap
+uv run scenariobank replay --bank ./banks/junction-1 --steps 50                  # check the round trip without paying for the whole recording
+uv run scenariobank replay --bank ./banks/junction-1 --decision-hz 20 --json     # what a 20 Hz policy would have been asked for
 ```
 
 ### `destinations`

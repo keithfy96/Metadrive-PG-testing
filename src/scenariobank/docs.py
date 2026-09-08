@@ -111,6 +111,10 @@ EXAMPLES: dict[str, tuple[tuple[str, str], ...]] = {
     "replay": (
         ("uv run scenariobank replay --bank ./banks/junction-1", ""),
         (
+            "uv run scenariobank replay --bank ./banks/t-junction --scenario t_junction_0000",
+            "a procedural road: seed, route and the entry's own step cap",
+        ),
+        (
             "uv run scenariobank replay --bank ./banks/junction-1 --steps 50",
             "check the round trip without paying for the whole recording",
         ),

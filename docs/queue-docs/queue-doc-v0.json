@@ -1,13 +1,13 @@
 {
   "service": "wfqueue",
   "version": "1.0",
-  "base_url": "http://localhost:8080",
+  "base_url": "http://192.168.1.90:9090",
   "client": {
     "language": "python",
-    "url": "http://localhost:8080/source/client.py",
-    "download": "curl -O http://localhost:8080/source/client.py",
+    "url": "http://192.168.1.90:9090/source/client.py",
+    "download": "curl -O http://192.168.1.90:9090/source/client.py",
     "requirements": "Python 3.10+. One file, standard library only, no install step.",
-    "usage": "from client import QueueClient\n\nq = QueueClient(\"http://localhost:8080\")\nq.put(\"my-topic\", {\"any\": \"json\"})          # produce\nfor msg in q.consume(\"my-topic\"):            # consume; polls once a minute\n    with msg:                                # acks on success, nacks on error\n        handle(msg.payload)",
+    "usage": "from client import QueueClient\n\nq = QueueClient(\"http://192.168.1.90:9090\")\nq.put(\"my-topic\", {\"any\": \"json\"})          # produce\nfor msg in q.consume(\"my-topic\"):            # consume; polls once a minute\n    with msg:                                # acks on success, nacks on error\n        handle(msg.payload)",
     "note": "This is the recommended way to talk to this queue. It handles leasing, ack/nack, retries and polling for you. Download it and import it -- do not reimplement the HTTP calls unless you must."
   },
   "overview": "A multi-topic job queue backed by SQLite. Producers POST messages to a topic; consumers LEASE messages (which hides them from other consumers for a visibility timeout), do the work, then ACK on success or NACK on failure. A NACKed message is retried with exponential backoff until max_attempts is reached, after which it moves to the 'dead' state where it can be inspected and requeued. Nothing is ever silently lost: if a consumer crashes without acking, its lease expires and the message returns to 'ready' automatically.",
@@ -65,7 +65,7 @@
       "method": "GET",
       "path": "/source/client.py",
       "summary": "The Python client for this server, as source. One self-contained stdlib-only file: save it and import it, nothing to install.",
-      "example": "curl -O http://localhost:8080/source/client.py"
+      "example": "curl -O http://192.168.1.90:9090/source/client.py"
     },
     {
       "method": "GET",

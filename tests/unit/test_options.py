@@ -248,12 +248,12 @@ def test_a_recorded_bank_refuses_any_axis_because_a_recording_has_no_knobs(kwarg
 
 
 def test_replay_config_and_the_record_read_the_same_replay_switches():
-    # One dict in `options.py`; `replay_config` spreads it and the resolver copies it. A test on
-    # the source rather than on a built env, so it holds on a machine without the simulator.
-    from scenariobank import replay
+    # One dict in `options.py`; `env.replay_config` spreads it and the resolver copies it. A test
+    # on the source rather than on a built env, so it holds on a machine without the simulator.
+    from scenariobank import env
 
-    assert replay.REPLAY_FLAGS is REPLAY_FLAGS
-    assert "**REPLAY_FLAGS" in Path(replay.__file__).read_text()
+    assert env.REPLAY_FLAGS is REPLAY_FLAGS
+    assert "**REPLAY_FLAGS" in Path(env.__file__).read_text()
 
 
 # --- the record and the seam --------------------------------------------------------------------
