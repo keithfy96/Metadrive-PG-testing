@@ -199,6 +199,7 @@ section rather than in a phase because the temptation recurs — someone will re
 | Read a turn direction off a map picture | A map alone does not say which end the ego starts at, and read from the wrong end every turn in it reverses. The ego always spawns heading **due east** — rightward in any figure — but where that lands in the frame moves with the seed: `curve` seeds 2 and 3 start at the *top* and bend down, 0, 1 and 4 start at the bottom and bend up. A map-only thumbnail was shipped and immediately misread as "no right turns in the bank", when seed 2 turns right twice. *Enforced in:* thumbnails draw the route, a spawn arrow and a destination star (`figures.render_route`); `net_rotation_deg` and `turn_pairs` are recorded per scenario; `test_bank.py` asserts two categories on one road cannot produce the same picture. |
 | Defend seed identity by hashing config keys, or by fingerprinting the built map | Both rejected, for different reasons. The config-key audit cannot be proven complete — `curriculum_level`, which silently rewrites the seed you asked for, was missing from the first draft. Fingerprinting the output *would* have worked, but **cross-batch identity is not a goal**: a bank is regenerated per batch and a road that comes out different is simply a different batch. `map_id` and `config_hash` are both cut (2026-08-31); the container's pinned commit is the whole guarantee. |
 | Trust two runs of one seeded job to agree because every manager draws from a seeded stream | They did not, on `curve` at `hard`, and neither draw nor seed was the cause (Phase 4 Step 5, measured 2026-09-09). `Lidar.get_surrounding_objects` (`lidar.py:170`) returns a **`set` of objects**, iterated by address, and the IDM policy keeps the nearest object per lane off it with a strict comparison (`idm_policy.py:83`) — so with cones tied on longitude, which cone a traffic car sees is the heap layout, and the same row ended at 339 steps or 348 depending on the size of the process's environment block. And an episode run after another in one env is not the episode run alone (339 alone, 218 after one row), through something `reset` does not clear and `force_destroy` does not touch. `env.pinned_lidar_class()` sorts the sets and `run_bank` builds one env per row; `test_reproducibility.py` holds both. |
+| Trust the mirror because the geometry test passes and the expert arrives | The map was exact and two controllers were not (Phase 4 Step 5c, found by looking at a film). `IDMPolicy` read the mirrored lateral and drove unmirrored steering, so every lane change drifted to the kerb; and its `act` swallows any exception into "no front object", so an object without a `lane` attribute in a car's lidar radius -- our pedestrians and cyclists -- made that car drive blind. A check behind an *idle* ego showed neither. Measure traffic with the expert driving, against stock MetaDrive in a subprocess, and give every object the traffic can see a `lane`. |
 
 One more that is not a trap but is easy to over-build: **`crash_human` termination is already wired
 and free** — `TerminationState.CRASH_HUMAN` (`constants.py:28`), `crash_human_done=True` by default
@@ -688,7 +689,7 @@ and eyeball 35 of them to check the heuristic. All of that is gone. `vehicle.con
 into a stored fact and makes the same five seeds reusable across every category.
 
 **Build**
-- `handedness.py` — **mirror the PG geometry layer about the x-axis, before any map is built.** MetaDrive drives on the right and offers no way not to (see **Traps**), so this is where the market is decided. Three sign changes and no others: negate `StraightLane.direction_lateral` (positive lateral becomes the vehicle's left, which walks the whole map — opposing carriageway, lane lines, sidewalks — to the other side, because all of it is placed off lane frames); invert `clockwise` on every `CircularLane` (this is what makes roundabouts circulate clockwise); and invert the **three** `is_clockwise()` sites in `create_pg_block_utils` that use it for *lateral* arithmetic rather than for arc direction (`:130`, `:271`, `:339`), which flip a second time so the two cancel. Installed from `base_config()`; idempotent. Rewrites those three lines from the module's own source and raises `HandednessError` if they are not found verbatim — the commit pin exists so MetaDrive's internals cannot move under us, and a patch that silently stopped applying would leave a working bank that is simply the wrong market.
+- `handedness.py` — **mirror the PG geometry layer about the x-axis, before any map is built.** MetaDrive drives on the right and offers no way not to (see **Traps**), so this is where the market is decided. Four sign changes and no others *(the fourth found 2026-09-09, Phase 4 Step 5c)*: negate `StraightLane.direction_lateral` (positive lateral becomes the vehicle's left, which walks the whole map — opposing carriageway, lane lines, sidewalks — to the other side, because all of it is placed off lane frames); invert `clockwise` on every `CircularLane` (this is what makes roundabouts circulate clockwise); and invert the **three** `is_clockwise()` sites in `create_pg_block_utils` that use it for *lateral* arithmetic rather than for arc direction (`:130`, `:271`, `:339`), which flip a second time so the two cancel; and negate the lateral term back inside `IDMPolicy.steering_control`, because the traffic reads the mirrored lateral and drives unmirrored steering, so without it every car that changed lanes drifted to the kerb (Phase 4 Step 5c). Installed from `base_config()`; idempotent. Rewrites those three lines from the module's own source and raises `HandednessError` if they are not found verbatim — the commit pin exists so MetaDrive's internals cannot move under us, and a patch that silently stopped applying would leave a working bank that is simply the wrong market.
   - **Test it by exactness, not by plausibility.** A reflection is an isometry, so the mirrored map must be the *same road*: same node names, same lane count, same lane lengths, same radii. Build each block sequence twice — once here, once in a **subprocess that never imports `scenariobank`** so MetaDrive is unmodified there — and assert they agree lane by lane once one is reflected. That is the only honest way to check a monkey-patch of a global layer: it cannot be uninstalled, so the reference has to come from somewhere the patch never reached. It is also the check that earns its keep — an earlier version inverted the arcs but not the sibling-lane lateral arithmetic, and every node name, every lane count and every picture still looked right. The only symptom was that curved lanes came out the wrong length.
   - Consequence for this phase's table: mirroring swaps which physical exit an angle rule selects. `intersection_left` is now the **near** turn and `intersection_right` is the one that crosses oncoming; `roundabout` takes `RIGHT` to keep the long way round.
 - `CATEGORIES` — one dict, one entry per category:
@@ -2594,7 +2595,7 @@ bite; and every step now has a **Verify alone** command block with an expectatio
 
 ## Steps — the runner first, the cameras on top of it
 
-Ten checkpoints, each one testable alone. **They deliberately do not run in the order the
+Eleven checkpoints, each one testable alone. **They deliberately do not run in the order the
 build notes were written in.** The notes lead with the AV3 port because that is the interesting
 part; the work leads with `resolve_options` and env construction because a runner that is
 reproducible against a two-line `ConstantPolicy` is the thing every later step is debugged
@@ -3246,7 +3247,9 @@ than a footnote.
    MetaDrive's five substeps, and **nothing at all at `decision_repeat = 1`**. Writing the body's
    linear velocity directly costs nothing. So `actors._push` does that and rewrites the heading
    only when it has turned by more than 0.1 rad. Pedestrians then walk 0.120 m per step exactly;
-   a cyclist on an arc rides 0.394 of its 0.400, the rewrite every fourteen steps.
+   a cyclist on an arc rides 0.394 of its 0.400, the rewrite every fourteen steps. *(Since
+   Step 5c the push is skipped while a vehicle touches the actor, and every actor carries the
+   lane it is on; see there for why.)*
 3. **Cyclists drawn onto one lane get disjoint stretches of it.** Four cyclists on `curve`, three
    of them on one 106 m arc, rode head-on into each other and spent the episode stalled (0.14 to
    0.32 m per step of 0.40, with steps of zero). `actors._stretches` splits a shared lane's run
@@ -3375,7 +3378,8 @@ failed twice over. Everything below was measured; the block above is the block a
 `curve` at both tiers, `curve` at `hard` under another environment block); the one-row job's
 `curve_0003` identical to the bank run's; rates `[1.0, 1.0]` on the `X` bank with the step
 counts apart, `[0.8, 0.0]` on `curve`; `placed` as in note 4. The four gate tests green in 37 s;
-full suite 695 passed, ruff clean, `commands` regenerates without a change.
+full suite 695 passed, ruff clean, `commands` regenerates without a change. *(Step 5c changed
+the traffic and the actors and re-ran this block; its numbers are the current ones.)*
 
 ### Step 5b — a top-down film of a run, for the eye ✅  ⟵ *added and built 2026-09-09*
 
@@ -3454,6 +3458,66 @@ behind. `commands` regenerated with the two new flags.
 
 **Verify alone: met.** Five films, 474/197/104/340/96 frames at 10 fps; the diff empty; the
 replay film 51 frames; six tests green; full suite green, ruff clean.
+
+### Step 5c — the traffic drives properly on the mirrored map ✅  ⟵ *found by the film, 2026-09-09*
+
+*(Added 2026-09-09. Keith looked at `curve_0000.mp4` and asked why the other vehicles were
+"just driving randomly and not following the lanes". They were: cars sitting inside the bend,
+off the road, at odd headings. Not normal, and three causes, found one under the other. Each
+was measured on `curve_0000` at `traffic=high` with the expert driving, against stock MetaDrive
+on its own unmirrored map in a subprocess as the definition of normal: there, no car leaves the
+road, none mounts the sidewalk, 4.0 % of vehicle-steps are more than a metre off the lane
+centre, and eleven cars of forty collide in 200 steps -- IDM has no give-way rule.)*
+
+1. **The mirror inverted the traffic's lane-keeping loop.** `IDMPolicy.steering_control`
+   (`policy/idm_policy.py:294-302`) feeds `-lat` to its lateral PID; after the mirror a
+   positive lateral means the vehicle's left, and the steering is not mirrored, so an offset
+   from the centreline was amplified. The heading loop is far stronger, so a car holding its
+   heading looked fine -- 0.02 m off centre for 300 steps behind an *idle* ego, which is why
+   the first check of exactly this hypothesis came back clean and was wrong to -- and every car
+   that changed lanes or was nudged drifted to the kerb: eight of thirty-five mounted the
+   sidewalk in 146 steps, 13 % of vehicle-steps more than a metre off centre. **Fix: change 4
+   in `handedness.py`**, `lat` negated back by rewriting the method from its own source the way
+   change 3 is, with the same loud `HandednessError` if MetaDrive moves. After: no sidewalk,
+   2.4 % off centre. `TrajectoryIDMPolicy` keeps its own copy and is not touched.
+2. **The traffic drove blind whenever it could see one of our actors.** `IDMPolicy.act`
+   (`:236-260`) reads `obj.lane` off every object its lidar sees, inside a bare `except` whose
+   fallback is *no front object*. MetaDrive's participants have no `lane` attribute. So with
+   actors alone on the row, thirty-one of forty cars carried `crash_vehicle`; with obstacles
+   alone, none. **Fix: `VRUManager` sets `actor.lane`** to the lane of its road nearest the
+   actor, at spawn and every step -- and the traffic then brakes for a person in its lane and
+   changes lane around a cyclist, which is the behaviour the axis wanted anyway.
+3. **A walking actor was an unstoppable object.** `_push` wrote the actor's velocity every step
+   regardless of contact, so a 70 kg body against a car shoved it with an impulse it never had
+   to earn; every car that left its lane with the actors alone carried `crash_human`. **Fix:
+   the push is skipped while a vehicle touches the actor** (`contactTest` on its body; a
+   vehicle's chassis node is named `MetaDriveType.VEHICLE`), and the names are kept in
+   `struck`. Left struck for good instead, an actor lay in the lane and the expert sat behind
+   it to the step cap, so it walks on once the car has passed.
+
+With all three: on `curve_0000` at `hard`, no car off the road, no traffic crash, 0.5 % off
+centre; with actors alone, eleven crashes in 222 steps -- stock's own number. Three tests hold
+it: `test_handedness.py::test_idm_traffic_keeps_its_lane_on_the_mirrored_map` (no sidewalk,
+under 7 % off centre, with the expert driving), and in `test_actors.py` the lane every actor
+carries with no car off the road and at most two traffic crashes at `hard`, and the touched
+actor not driven with no car more than half a lane off centre behind an idle ego.
+
+**Verify alone:**
+
+```bash
+uv run pytest tests/unit/test_handedness.py tests/unit/test_actors.py -q
+P=scenariobank.policies:ExpertPolicy
+uv run scenariobank run --bank banks/curve --tier hard --policy $P --out fixed --record-video
+xdg-open fixed/videos/curve_0000.mp4          # traffic in its lanes through both bends
+# then Step 5's block again, into fresh directories
+```
+**Expect:** both files green; the film shows the traffic queued in lane through the arcs; every
+Step 5 diff still empty.
+
+**Verify alone: met.** 36 tests green; every Step 5 diff empty, the one-row job identical, no
+error row; rates `[1.0, 1.0]` on the `X` bank with steps 133-160 at easy against 169-222 at
+hard, `[0.8, 0.0]` on `curve`; `curve_0004` at `hard` now runs to the 1200-step cap behind
+traffic that brakes for people, which is what hard is. Full suite 703 passed, ruff clean.
 
 ### Step 6 — the camera rig: six cameras alive on `DefaultVehicle` ⬜
 

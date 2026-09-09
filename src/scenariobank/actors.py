@@ -41,6 +41,38 @@ linear velocity directly costs nothing. So `_push` does that, and rewrites the h
 when it has turned by more than `HEADING_TOLERANCE`: at a turnaround, and every few steps on
 an arc.
 
+**An actor is not driven while a vehicle is touching it.** Found 2026-09-09 in the first film
+(Phase 4 Step 5b): traffic vehicles sitting inside a bend, off the road. Not the mirror --
+traffic alone holds its centreline to 0.02 m over 300 steps -- and not the obstacles, which
+move nothing. Every vehicle that left its lane carried `crash_human`: it had hit a pedestrian or
+a cyclist, and `_push` kept writing the actor's velocity every step regardless, so a 70 kg body
+pinned against a car shoved it with an impulse the body never had to earn -- an unstoppable
+object, knocking two to four of forty cars per row off the road. So `after_step` asks the
+physics world, before every push, whether a vehicle is in contact with the actor
+(`contactTest` on its body, the way the lidar finds its neighbours; a vehicle's chassis node is
+named `MetaDriveType.VEHICLE`), and skips the push while one is: for those steps the actor is
+a 70 kg body and the car moves it, not the other way round. Once the car has passed, the actor
+walks or rides on. Left struck for good it lay in the lane, and the expert -- which does brake
+for what its lidar sees -- sat behind it to the step cap. Measured with the gate: no vehicle
+leaves its lane on any row. The names of the actors ever touched are in `struck`, in the order
+it first happened. Traffic does not brake for a person -- IDM keeps its distance only from
+objects with a `lane`, and a participant has none -- which is stock behaviour and is not
+changed here.
+
+**Every actor carries the lane it is on, because the traffic reads it.** `IDMPolicy.act`
+(`policy/idm_policy.py:236-260`) hands every object its lidar sees to
+`FrontBackObjects.get_find_front_back_objs`, which reads `obj.lane` -- and wraps the whole
+thing in a bare `except` whose fallback is *no front object*. MetaDrive's participants have no
+`lane` attribute, so a traffic car with a pedestrian or a cyclist anywhere in its 50 m radius
+raised, fell back, and drove blind into the car ahead: with actors alone on `curve` at
+`traffic=high`, thirty-one of forty cars carried `crash_vehicle` by the time the expert
+crashed, and none with obstacles alone. So `reset` and `after_step` set `actor.lane` to the
+lane of its road nearest to it -- the one under a crossing pedestrian, the outer lane under a
+cyclist -- and the traffic then treats an actor as it treats a car on its lane: it brakes for
+it, and changes lane around it. Measured after: no traffic crash and no car off the road on
+that row at `hard`; with actors alone, eleven crashes in 222 steps, which is what stock
+MetaDrive produces on its own map at this density with no actor at all.
+
 **The result carries the layout as a digest**, `layout_digest()`: `fingerprint.sha256_hex` over
 the sorted `layout()` lines -- kind, lane, spawn point, both endpoints, to the millimetre. A
 sibling of `lane_geometry_digest`, measured on the run rather than stored in the bank, so
@@ -58,6 +90,7 @@ import numpy as np
 from metadrive.component.traffic_participants.cyclist import Cyclist
 from metadrive.component.traffic_participants.pedestrian import Pedestrian
 from metadrive.manager.base_manager import BaseManager
+from metadrive.type import MetaDriveType
 from panda3d.core import LVector3
 
 from scenariobank.fingerprint import sha256_hex
@@ -141,6 +174,8 @@ class VRUManager(BaseManager):
         self.cyclists = 0
         self.patrols: dict[str, Patrol] = {}
         self._toward_end: dict[str, bool] = {}
+        #: Actors a vehicle has touched, in the order it first happened. For the record.
+        self.struck: list[str] = []
 
     def before_reset(self) -> None:
         super().before_reset()
@@ -149,6 +184,7 @@ class VRUManager(BaseManager):
         self.cyclists = int(config["cyclists"])
         self.patrols = {}
         self._toward_end = {}
+        self.struck = []
 
     def reset(self) -> None:
         """Every draw of the episode: pedestrians first, then cyclists, on the candidate roads."""
@@ -172,15 +208,36 @@ class VRUManager(BaseManager):
             self._spawn_rider(lanes, stretch, at, forward)
 
     def after_step(self, *args, **kwargs) -> dict:
-        """Aim and push every actor. Position comparisons only; nothing random."""
+        """Aim and push every actor no vehicle is touching. Nothing random."""
         del args, kwargs
         for name, patrol in self.patrols.items():
             actor = self.spawned_objects[name]
+            self._place_on_lane(actor, patrol)
+            if self._touched_by_a_vehicle(actor):
+                if name not in self.struck:
+                    self.struck.append(name)
+                continue
             if patrol.kind == "pedestrian":
                 self._walk(name, actor, patrol)
             else:
                 self._ride(name, actor, patrol)
         return {}
+
+    def _place_on_lane(self, actor, patrol: Patrol) -> None:
+        """`actor.lane`: the lane of its road it is nearest to, which the traffic reads."""
+        start, end, _ = patrol.lane_index
+        lanes = self.engine.current_map.road_network.graph[start][end]
+        position = actor.position[:2]
+        actor.lane = min(lanes, key=lambda lane: abs(lane.local_coordinates(position)[1]))
+
+    def _touched_by_a_vehicle(self, actor) -> bool:
+        """Is a vehicle in contact with `actor` right now? Asked of the physics world."""
+        world = self.engine.physics_world.dynamic_world
+        for contact in world.contactTest(actor.body, True).getContacts():
+            for node in (contact.getNode0(), contact.getNode1()):
+                if node is not actor.body and node.getName() == MetaDriveType.VEHICLE:
+                    return True
+        return False
 
     def layout(self) -> list[str]:
         """Every patrol as a line, sorted. Empty when nothing was placed."""
@@ -227,6 +284,7 @@ class VRUManager(BaseManager):
     def _keep(self, actor, patrol: Patrol) -> None:
         self.patrols[actor.name] = patrol
         self._toward_end[actor.name] = patrol.forward
+        self._place_on_lane(actor, patrol)
 
     # --- motion --------------------------------------------------------------------------
 

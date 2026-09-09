@@ -14,7 +14,7 @@ exact would mean the mirror is deforming roads rather than reflecting them, and 
 length, step budget and difficulty claim in the bank would be measuring a different road than
 the one MetaDrive validated.
 
-Three sign changes produce it, and no others:
+Four sign changes produce it, and no others:
 
 1. **`StraightLane.direction_lateral` is negated.** MetaDrive defines it as `[dy, -dx]`, a -90
    degree rotation, so positive lateral is the vehicle's *right*. Negating it makes positive
@@ -46,7 +46,23 @@ Three sign changes produce it, and no others:
    and only the lane lengths give it away. That failure was found by the exactness test, not by
    looking at a picture, which is why the test asserts geometry rather than plausibility.
 
-Change 3 is applied by rewriting the two functions from their own source text rather than by
+4. **The IDM policy's lateral term is negated back.** *(Found 2026-09-09, from the first film,
+   Phase 4 Step 5b.)* Changes 1 and 2 make a positive lateral coordinate mean *the vehicle's
+   left* on every lane, where stock MetaDrive means its right. The expert is fine with that,
+   because its observation is mirrored back before the network sees it (Phase 4 Step 4a). The
+   traffic is not: `IDMPolicy.steering_control` (`policy/idm_policy.py:294-302`) feeds
+   `-lat` to its lateral PID and drives unmirrored steering, so on the mirrored map an offset
+   from the centreline was pushed *outward*. The heading loop (gains 1.7 / 3.5) is far stronger
+   than the lateral one (0.3 / 0.05), so a car holding its lane heading looked fine -- 0.02 m
+   off centre over 300 steps behind an idle ego -- and every car that changed lanes or was
+   nudged drifted to the kerb: eight of thirty-five mounted the sidewalk in 146 steps with the
+   expert driving, none in the same run on stock MetaDrive. With `lat` negated back, none do,
+   and the lane deviation matches stock (2.4 % of vehicle-steps more than a metre off centre,
+   against 4.0 % stock and 13 % before). `TrajectoryIDMPolicy` keeps its own copy of the
+   method and is not touched: it drives `reactive_traffic` on a `ScenarioEnv`, whose lanes this
+   mirror never sees.
+
+Changes 3 and 4 are applied by rewriting the functions from their own source text rather than by
 keeping a forked copy of them here. `_mirror_block_utils` asserts on the exact lines it expects
 to find and raises `HandednessError` if they are not there. That is deliberate: this package
 pins MetaDrive by commit precisely so that its internals cannot move under us, and a patch that
@@ -102,6 +118,12 @@ _BLOCK_MODULES: tuple[str, ...] = (
 
 _PATCHED_NAMES = ("create_bend_straight", "CreateRoadFrom", "CreateAdverseRoad")
 
+#: Change 4's one line, in `IDMPolicy.steering_control`, and what it becomes.
+_IDM_LATERAL_SITE = (
+    "steering += self.lateral_pid.get_result(-lat)",
+    "steering += self.lateral_pid.get_result(lat)",
+)
+
 _installed = False
 
 
@@ -130,11 +152,13 @@ def install() -> None:
     from metadrive.component.lane.circular_lane import CircularLane
     from metadrive.component.lane.straight_lane import StraightLane
     from metadrive.component.pgblock import create_pg_block_utils as utils
+    from metadrive.policy import idm_policy
 
     _mirror_straight_lanes(StraightLane)
     _mirror_circular_lanes(CircularLane)
     patched = _mirror_block_utils(utils)
     _rebind(patched)
+    _mirror_idm_lateral(idm_policy)
     _installed = True
 
 
@@ -222,6 +246,33 @@ def _mirror_block_utils(utils: Any) -> dict[str, Any]:
     for name, function in patched.items():
         setattr(utils, name, function)
     return patched
+
+
+def _mirror_idm_lateral(idm_policy: Any) -> None:
+    """Change 4: `IDMPolicy.steering_control` reads the mirrored lateral with the other sign.
+
+    Rewritten from its own source text, the way change 3 is, so a MetaDrive whose controller
+    has moved is an error at import rather than traffic that drifts to the kerb.
+    """
+    import textwrap
+
+    policy = idm_policy.IDMPolicy
+    source = textwrap.dedent(inspect.getsource(policy.steering_control))
+    original, mirrored = _IDM_LATERAL_SITE
+    found = source.count(original)
+    if found != 1:
+        raise HandednessError(
+            f"cannot mirror MetaDrive: expected 1 occurrence of\n  {original}\n"
+            f"in IDMPolicy.steering_control ({idm_policy.__file__}), found {found}. The pinned "
+            "simulator has moved; re-derive the mirror against it before trusting any bank built "
+            "here."
+        )
+    namespace = dict(idm_policy.__dict__)
+    exec(  # noqa: S102
+        compile(source.replace(original, mirrored), f"{idm_policy.__file__} [mirrored]", "exec"),
+        namespace,
+    )
+    policy.steering_control = namespace["steering_control"]
 
 
 def _mirrored_create_bend_straight(namespace: dict[str, Any]) -> Any:

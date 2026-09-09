@@ -24,6 +24,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -211,6 +212,55 @@ def test_oncoming_traffic_is_on_the_egos_right(block_seq):
     try:
         env.reset(seed=0)
         assert measure_drive_side(env) == DRIVE_SIDE_LEFT
+    finally:
+        env.close()
+
+
+@needs_sim
+@pytest.mark.skipif(
+    not Path("banks/curve/manifest.json").exists(), reason="needs the bank at banks/curve"
+)
+def test_idm_traffic_keeps_its_lane_on_the_mirrored_map():
+    """Change 4, from the driver's seat of every traffic car: the expert drives `curve_0000`
+    through `traffic=high` and no car mounts the sidewalk. Before the change eight of
+    thirty-five did in 146 steps, and 13 % of vehicle-steps were more than a metre off centre;
+    stock MetaDrive on its own map gives none and 4 %."""
+    from scenariobank.bank import read_manifest
+    from scenariobank.env import build_env, seed_for
+    from scenariobank.options import resolve_options
+    from scenariobank.policies import load_policy
+    from scenariobank.runner import bind_policy
+
+    bank = Path("banks/curve")
+    manifest = read_manifest(bank)
+    entry = manifest.categories["curve"]
+    row = entry.scenarios[0]
+    levels = {
+        "traffic": "high", "cones": "none", "barriers": "none",
+        "pedestrians": "none", "cyclists": "none",
+    }
+    env, prepare = build_env(bank, entry, resolve_options(manifest, levels=levels))
+    act = load_policy("scenariobank.policies:ExpertPolicy")
+    bind_policy(act, env)
+    try:
+        observation, _ = env.reset(seed=seed_for(row))
+        prepare(env, row)
+        network = env.engine.current_map.road_network
+        traffic = env.engine.traffic_manager.spawned_objects
+        assert len(traffic) > 20, "dense enough that lane changes happen"
+        off_centre = total = 0
+        for _ in range(300):
+            for vehicle in traffic.values():
+                assert not vehicle.crash_sidewalk, "a traffic car mounted the sidewalk"
+                index = network.get_closest_lane_index(vehicle.position)
+                index = index[0] if not isinstance(index[0], str) else index
+                lateral = abs(network.get_lane(index).local_coordinates(vehicle.position)[1])
+                off_centre += lateral > 1.0
+                total += 1
+            observation, _, terminated, truncated, _ = env.step(act(observation))
+            if terminated or truncated:
+                break
+        assert off_centre / total < 0.07, f"{off_centre / total:.3f} of vehicle-steps off centre"
     finally:
         env.close()
 

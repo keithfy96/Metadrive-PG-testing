@@ -1,6 +1,6 @@
 {
-  "actions": 339,
-  "actions_digest": "becc4b44598224014592e3eb4db22770db5f994e2573e17ffb8d80494df5932c",
+  "actions": 146,
+  "actions_digest": "444d7bb5c1782a49581b29dc906990cab0f3d2101f68b90bfc87d0f883527db5",
   "actor_layout_digest": "50e2da3dcfbf021c01a772f009a77b259d7433b43f3d733bb13e5bb3586ecdad",
   "category": "curve",
   "collisions": {
@@ -24,14 +24,14 @@
     "TrafficCone": 36,
     "XLVehicle": 5
   },
-  "reward": 152.131095,
-  "route_completion": 0.476389,
+  "reward": 65.095321,
+  "route_completion": 0.21507,
   "scenario_id": "curve_0003",
   "scenario_index": null,
   "seed": 3,
   "status": "ok",
-  "steps": 339,
+  "steps": 146,
   "success": false,
   "traceback": null,
-  "wall_time_s": 11.288
+  "wall_time_s": 4.974
 }
