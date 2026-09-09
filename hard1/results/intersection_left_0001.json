@@ -1,0 +1,35 @@
+{
+  "actions": 177,
+  "actions_digest": "c062d77d720e05634ddd988aee438bb60e94c2082e28d9e1d996c34855e13721",
+  "actor_layout_digest": "522bee636629c6b12fbc1c8d0f464ecd83f534dd6498999c8b9188ee80bafb61",
+  "category": "intersection_left",
+  "collisions": {
+    "building": 0,
+    "human": 0,
+    "object": 0,
+    "sidewalk": 0,
+    "vehicle": 0
+  },
+  "cost": 0.0,
+  "destination": "1X0_1_",
+  "failure_reason": null,
+  "placed": {
+    "Cyclist": 1,
+    "DefaultVehicle": 1,
+    "LVehicle": 3,
+    "MVehicle": 1,
+    "Pedestrian": 3,
+    "SVehicle": 2,
+    "XLVehicle": 4
+  },
+  "reward": 110.273285,
+  "route_completion": 0.964571,
+  "scenario_id": "intersection_left_0001",
+  "scenario_index": null,
+  "seed": 1,
+  "status": "ok",
+  "steps": 177,
+  "success": true,
+  "traceback": null,
+  "wall_time_s": 1.574
+}

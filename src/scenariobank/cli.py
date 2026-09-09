@@ -1068,6 +1068,14 @@ def replay(
     as_json: Annotated[
         bool, typer.Option("--json", help="Emit the report as JSON instead of aligned text.")
     ] = False,
+    record_video: Annotated[
+        Path | None,
+        typer.Option(
+            "--record-video",
+            help="Write a top-down film of the drive to this .mp4, for looking at it. "
+            "Changes nothing the report measures.",
+        ),
+    ] = None,
 ) -> None:
     """Drive one scenario of a bank end to end and report what the drive measured.
 
@@ -1105,6 +1113,7 @@ def replay(
             scenario=scenario,
             decision_hz=decision_hz,
             steps=steps,
+            record_video=record_video,
         )
     except (BankError, ValueError) as error:
         typer.echo(f"replay failed: {error}", err=True)
@@ -1199,6 +1208,14 @@ def run(
         typer.Option(
             "--save-trajectories",
             help="Also write each scenario's per-decision actions under trajectories/.",
+        ),
+    ] = False,
+    record_video: Annotated[
+        bool,
+        typer.Option(
+            "--record-video",
+            help="Write a top-down film of every row to <out>/videos/<scenario_id>.mp4, for "
+            "looking at a run. Off by default; changes nothing the result records.",
         ),
     ] = False,
 ) -> None:
@@ -1315,7 +1332,12 @@ def run(
                 decision_hz=decision_hz,
                 save_trajectories=save_trajectories,
             )
-        report = run_bank(what, out, progress=lambda line: typer.echo(line, err=True))
+        report = run_bank(
+            what,
+            out,
+            progress=lambda line: typer.echo(line, err=True),
+            record_video=record_video,
+        )
     except (BankError, OptionError, PolicyError, RunError, ValidationError, ValueError) as error:
         typer.echo(f"run failed: {error}", err=True)
         raise typer.Exit(code=1) from error

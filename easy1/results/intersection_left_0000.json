@@ -1,0 +1,30 @@
+{
+  "actions": 142,
+  "actions_digest": "aaaf94e5c6751f05980be9d6a822fb353ad657c88bbfd8418889147c52e1cb58",
+  "actor_layout_digest": null,
+  "category": "intersection_left",
+  "collisions": {
+    "building": 0,
+    "human": 0,
+    "object": 0,
+    "sidewalk": 0,
+    "vehicle": 0
+  },
+  "cost": 0.0,
+  "destination": "1X0_1_",
+  "failure_reason": null,
+  "placed": {
+    "DefaultVehicle": 1,
+    "XLVehicle": 1
+  },
+  "reward": 115.9537,
+  "route_completion": 0.960027,
+  "scenario_id": "intersection_left_0000",
+  "scenario_index": null,
+  "seed": 0,
+  "status": "ok",
+  "steps": 142,
+  "success": true,
+  "traceback": null,
+  "wall_time_s": 0.687
+}

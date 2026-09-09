@@ -202,6 +202,7 @@ def drive(
     decision_hz: float | None = None,
     steps: int | None = None,
     action: tuple[float, float] = IDLE_ACTION,
+    record_video: Path | None = None,
 ) -> Episode:
     """Drive one scenario and report the drive. Builds an env, so it needs the simulator.
 
@@ -209,6 +210,7 @@ def drive(
     takes no option flags because it measures a bank, not a run of it. `steps` caps the run short,
     for a quick check that the round trip works without paying for the whole episode; the episode
     it reports then ends `capped short` rather than pretending the cap was the env's.
+    `record_video` films the drive into that one file, top-down, at the step rate (`video.py`).
     """
     # Every refusal first, and before the simulator is touched: a bank that pins an axis this
     # phase cannot run, an unknown scenario id and an impossible decision rate are all answerable
@@ -224,6 +226,11 @@ def drive(
     budget = entry.budget_for(row)
     cap = budget if steps is None else min(budget, steps)
 
+    recorder = None
+    if record_video is not None:
+        from scenariobank.video import Recorder
+
+        recorder = Recorder().open(record_video, fps=step_hz)
     env, prepare = build_env(bank_dir, entry, options)
     try:
         run = run_episode(
@@ -233,8 +240,11 @@ def drive(
             cap=cap,
             stride=stride,
             act=lambda _observation: action,
+            observe=None if recorder is None else recorder.add,
         )
     finally:
+        if recorder is not None:
+            recorder.close()
         env.close()
 
     flags = {key: bool(run.info.get(key)) for key, _ in ENDINGS if key in run.info}

@@ -161,7 +161,7 @@ def prepare(env, row_):
 
 
 def use_fake_env(monkeypatch, **script):
-    """Swap `runner.build_env` for one that builds a scripted `FakeEnv` per entry."""
+    """Swap `runner.build_env` for one that builds a scripted `FakeEnv` per row."""
     FakeEnv.built = []
 
     def build_env(bank_dir, entry, options):
@@ -312,8 +312,8 @@ def test_the_cap_is_the_rows_own_budget_and_the_seed_selects_the_row(tmp_path, m
     assert by_id["curve_0001"].seed == 1 and by_id["curve_0001"].scenario_index is None
     assert by_id["curve_0001"].destination == "dest-1"
     assert set(by_id["curve_0001"].collisions) == {name for _, name in COLLISION_FLAGS}
-    # One env per entry, each closed, and each saw only its own rows.
-    assert [env.seeds_seen for env in FakeEnv.built] == [[0, 1], [0, 2]]
+    # One env per row, each closed, and each saw only its own row.
+    assert [env.seeds_seen for env in FakeEnv.built] == [[0], [1], [0], [2]]
     assert all(env.closed for env in FakeEnv.built)
 
 
@@ -358,9 +358,9 @@ def test_an_entry_whose_env_will_not_build_is_four_error_rows_and_the_next_entry
     assert "no such road" in report.results[0].traceback
 
 
-def test_a_policy_with_bind_is_handed_each_entrys_env_before_its_rows_run(tmp_path, monkeypatch):
+def test_a_policy_with_bind_is_handed_each_rows_env_before_the_row_runs(tmp_path, monkeypatch):
     """The optional half of the policy protocol: one `bind` per env, in the bank's order, and
-    before the first reset of that env -- which is when the expert first needs the agent."""
+    before the reset of that env -- which is when the expert first needs the agent."""
     bound_at_reset: list[int] = []
     use_fake_env(monkeypatch, on_reset=lambda seed: bound_at_reset.append(len(Bound.bound)))
     bank = write_bank(tmp_path)
@@ -379,8 +379,8 @@ def test_a_policy_with_bind_is_handed_each_entrys_env_before_its_rows_run(tmp_pa
     module.Bound = Bound
     monkeypatch.setitem(sys.modules, "fake_policies", module)
     report = run_bank(job_for(bank, policy="fake_policies:Bound"), tmp_path / "out")
-    assert Bound.bound == FakeEnv.built and len(FakeEnv.built) == 2, "one bind per entry's env"
-    assert bound_at_reset == [1, 1, 2, 2], "bound before the first reset of each env"
+    assert Bound.bound == FakeEnv.built and len(FakeEnv.built) == 4, "one bind per row's env"
+    assert bound_at_reset == [1, 2, 3, 4], "bound before the reset of each env"
     assert report.summary.by_status == {"ok": 4}
 
 
@@ -432,8 +432,8 @@ def test_a_stop_ends_the_row_it_lands_in_writes_what_there_is_and_closes_the_env
     assert report.results[1].status == "ok", "scored as far as it went"
     assert report.summary.by_failure_reason == {"max_step": 1, STOPPED: 1}
     assert (tmp_path / "out" / "results.json").exists()
-    assert len(FakeEnv.built) == 1, "the second entry was never built"
-    assert FakeEnv.built[0].closed
+    assert len(FakeEnv.built) == 2, "one env per row, and the t_junction rows were never built"
+    assert all(env.closed for env in FakeEnv.built)
 
 
 def test_sigterm_sets_the_flag_and_the_old_handler_is_put_back(tmp_path, monkeypatch):

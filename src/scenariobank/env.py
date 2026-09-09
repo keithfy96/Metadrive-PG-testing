@@ -18,11 +18,29 @@ a cap" and never learn which kind they are driving. Written out, the seam is:
 Both columns bound an **index** with `num_scenarios`, so `num_scenarios_for` sizes both:
 `base_env.py:926` asserts `start <= seed < start + num_scenarios` whichever env it is.
 
-**One env per entry, because one env carries one `horizon`.** `base_config` pins `horizon: 1000`
-and until this module nothing mapped an entry onto it, which mattered: `t_junction` is 320 and
-`CCS_only` is 1320. `horizon` is the config key (`metadrive_env.py:58`); `max_step` is a
-`TerminationState` field and setting it does nothing. The loop enforces `entry.budget_for(row)`
-on top, because that is *per row* and one env cannot carry two horizons -- see `runner.py`.
+**One env carries one `horizon`, and the runner builds one env per row.** `base_config` pins
+`horizon: 1000` and until this module nothing mapped an entry onto it, which mattered:
+`t_junction` is 320 and `CCS_only` is 1320. `horizon` is the config key (`metadrive_env.py:58`);
+`max_step` is a `TerminationState` field and setting it does nothing. The loop enforces
+`entry.budget_for(row)` on top, because that is *per row* and one env cannot carry two horizons
+-- see `runner.py`, which also says why an env is built and closed around every row rather than
+shared across an entry: an episode run after another one in the same env is not the episode run
+alone.
+
+**The lidar reports its objects in a pinned order.** MetaDrive's `Lidar.get_surrounding_objects`
+returns a `set` of the objects near a vehicle, and a set of objects iterates in the order of
+their addresses. The IDM policy every traffic vehicle drives with hands that set to
+`FrontBackObjects.get_find_front_back_objs` (`idm_policy.py:83`), which keeps the nearest object
+ahead and behind on each lane with a strict comparison -- so when two objects sit at one
+longitude, which one wins is which one the set yields first. A cone corridor puts cones at equal
+longitudes by construction. Measured on `banks/curve` at `hard`: one row, alone, in a fresh
+process, ended at 339 steps or at 348 depending on nothing but the size of the process's
+environment block (`PYTHONHASHSEED=8` in the environment was enough to move it, and so was any
+other one-digit value; `0`, `100` and unset agreed with each other), and the drift began at step
+two of the expert's actions. `pinned_lidar_class()` is the stock lidar with both object sets
+returned as lists sorted by `object_order` -- class name, then position, then heading -- and
+`build_env` registers it through the `sensors` config on both kinds of env, so every consumer
+of the set, the IDM policy and the expert's own observation alike, sees one order everywhere.
 
 **The destination is pinned after the reset**, with `navigation.set_route`, the way `bank._measure`
 and `variety.scan` already do -- not through `vehicle_config["destination"]`, which is read at
@@ -46,8 +64,8 @@ terminates on but never scores (`metadrive_env.py:74-83` has the vehicle and obj
 no human one). The class is made inside a function because its base is the simulator's.
 
 Nothing here imports MetaDrive at module scope, so every refusal a caller makes off the manifest
-still works on a machine without the simulator; the env classes are imported inside `build_env`
-and `procedural_env_class`.
+still works on a machine without the simulator; the env classes are imported inside `build_env`,
+`procedural_env_class` and `pinned_lidar_class`.
 """
 
 from __future__ import annotations
@@ -267,6 +285,41 @@ def procedural_env_class() -> type:
     return ScenarioBankEnv
 
 
+def object_order(obj: Any) -> tuple[str, float, float, float]:
+    """The order the pinned lidar reports objects in: class, then position, then heading.
+
+    Two objects of one class at one position and heading would tie, and physically cannot: a
+    cone and a barrier are distinct classes, and nothing else is spawned into another object.
+    """
+    return (
+        type(obj).__name__,
+        float(obj.position[0]),
+        float(obj.position[1]),
+        float(obj.heading_theta),
+    )
+
+
+@functools.cache
+def pinned_lidar_class() -> type:
+    """MetaDrive's `Lidar`, with both of its object sets returned as lists in `object_order`.
+
+    Cached, so the class is one object and the `sensors` config compares equal across builds.
+    """
+    from metadrive.component.sensors.lidar import Lidar
+
+    class PinnedLidar(Lidar):
+        """The stock lidar, reporting objects in one order whatever the heap looks like."""
+
+        def get_surrounding_objects(self, vehicle: Any, radius: float = 50) -> list[Any]:
+            return sorted(super().get_surrounding_objects(vehicle, radius), key=object_order)
+
+        @staticmethod
+        def get_surrounding_vehicles(detected_objects: Any) -> list[Any]:
+            return sorted(Lidar.get_surrounding_vehicles(detected_objects), key=object_order)
+
+    return PinnedLidar
+
+
 def build_env(
     bank_dir: Path, entry: Entry, options: ResolvedOptions
 ) -> tuple[Any, Callable[[Any, Row], str | None]]:
@@ -280,6 +333,8 @@ def build_env(
     The caller owns `env.close()`.
     """
     config = build_config(bank_dir, entry, options)
+    # The stock `sensors` entry is `(Lidar,)`; the pinned one keeps the other two sensors.
+    config["sensors"] = {"lidar": (pinned_lidar_class(),)}
     if isinstance(entry, RealWorldEntry):
         from metadrive.envs.scenario_env import ScenarioEnv
 
@@ -312,6 +367,8 @@ __all__ = [
     "build_config",
     "build_env",
     "expected_shape",
+    "object_order",
+    "pinned_lidar_class",
     "procedural_env_class",
     "replay_config",
     "seed_for",

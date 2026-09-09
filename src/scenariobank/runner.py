@@ -33,17 +33,33 @@ and asks the actor manager for its layout digest when one is registered. A manag
 registered and places nothing (the obstacle axes on an `X`, `T` or `O` road) then shows as
 nothing placed, in the row, rather than as a success rate that did not move.
 
+**A film is read off the scene between two steps, and the gate says it changed nothing.**
+`run_episode` takes an `observe` hook, handed the env after the reset and after every step;
+`run_bank(record_video=True)` points it at `video.Recorder`, one mp4 per row at the step rate,
+under `<out>/videos/`. It is a switch on the run rather than a field of the job, so a queue job
+cannot ask for it, and `test_reproducibility.py` holds the row filmed to the row unfilmed,
+`actions_digest` included. What it is for is looking: cones, barriers, people and traffic on
+the road the numbers describe.
+
 **The decision rate is a stride in this loop**, never a MetaDrive key: the same action is handed
 to `env.step` until the next decision is due, so a slower rate changes how many actions are
 issued and never how long the episode is.
 
-**The batch is `run_bank(job, out)`, and it never aborts.** One env per entry, every row of the
-job through the loop above, each row's result written to `<out>/results/<scenario_id>.json` the
-moment it ends and `<out>/results.json` assembled from those last. A row that raises -- in the
-policy, in `reset`, anywhere -- is a `status: "error"` row with a traceback, and the next row
-runs. A batch told to stop (SIGTERM, SIGINT) ends the row it is in as `stopped`, writes what it
-has, and closes the env on the normal path: the handlers are ours and set a flag, so nothing is
-ever raised into `env.close()` -- the panda3d/bullet teardown wedge that once needed a reboot.
+**The batch is `run_bank(job, out)`, and it never aborts.** One env per row, built and closed
+around it, every row of the job through the loop above, each row's result written to
+`<out>/results/<scenario_id>.json` the moment it ends and `<out>/results.json` assembled from
+those last. One env per *row* and not per entry because an episode run after another one in the
+same env is not the episode run alone -- measured on `banks/curve` at `hard`: the same row ended
+at 339 steps by itself, 218 after one other row and 300 after three, with the actor layout
+identical every time and the expert's actions parting at step two. The object pool is not the
+carrier (`force_destroy=True` moves the numbers and keeps the dependence), and what is was not
+found; a fresh env costs a quarter of a second per row and makes a job that names a subset of
+the rows score them exactly as the whole bank does, which Phase 7's queue relies on. A row
+that raises -- in the policy, in `reset`, anywhere -- is a `status: "error"` row with a
+traceback, and the next row runs. A batch told to stop (SIGTERM, SIGINT) ends the row it is in
+as `stopped`, writes what it has, and closes the env on the normal path: the handlers are ours
+and set a flag, so nothing is ever raised into `env.close()` -- the panda3d/bullet teardown
+wedge that once needed a reboot.
 The per-row file is the progress signal Phase 7's orchestrator extends a lease off, and the
 reason a run killed at 30 of 35 is a scored partial run rather than a lost one.
 """
@@ -182,18 +198,24 @@ def run_episode(
     stride: int,
     act: Actor,
     stop: Callable[[], bool] | None = None,
+    observe: Callable[[Any], None] | None = None,
 ) -> Drive:
     """Reset onto `seed`, `prepare`, then step until the env ends the episode or `cap` is hit.
 
     `prepare` is `env.py`'s per-row step with the row already bound; it is called after the reset
     and its return is the drive's `destination`. `act` is asked once per `stride` steps and its
     answer held between. `stop`, when given, is asked once per step before the step is taken; a
-    true answer ends the episode there, `stopped`. The caller owns the env, including `close()`.
+    true answer ends the episode there, `stopped`. `observe`, when given, is handed the env once
+    after the reset and prepare -- the placed scene, before anything moves -- and once after
+    every step, the ending step included, so a film has `steps + 1` frames; it may read the env
+    and must not write it. The caller owns the env, including `close()`.
     """
     observation, _ = env.reset(seed=seed)
     destination = prepare(env)
     placed = placed_counts(env)
     layout = actor_layout_digest(env)
+    if observe is not None:
+        observe(env)
     at_reset = shape_of(observation)
     action_shape = shape_of(env.action_space)
     counts: dict[str, int] = {name: 0 for _, name in COLLISION_FLAGS}
@@ -223,6 +245,8 @@ def run_episode(
         reward += float(step_reward)
         cost += float(info.get("cost") or 0.0)
         count_rising_edges(counts, previous, info)
+        if observe is not None:
+            observe(env)
         if terminated or truncated:
             break
     seconds = time.perf_counter() - started
@@ -384,6 +408,7 @@ def _score(
     act: Actor,
     stride: int,
     stop: Callable[[], bool],
+    observe: Callable[[Any], None] | None = None,
 ) -> tuple[ScenarioResult, Drive | None]:
     """One row through the loop, as a result. Raises nothing: an exception is an error row."""
     recorded = isinstance(entry, RealWorldEntry)
@@ -398,6 +423,7 @@ def _score(
             stride=stride,
             act=act,
             stop=stop,
+            observe=observe,
         )
     except Exception:  # noqa: BLE001 -- the batch's promise: one row's failure is that row's
         return _error_row(name, entry, row, seconds=time.perf_counter() - started), None
@@ -436,14 +462,17 @@ def run_bank(
     *,
     stop: Callable[[], bool] | None = None,
     progress: Callable[[str], None] | None = None,
+    record_video: bool = False,
 ) -> Results:
     """Run every scenario a job names and write the results under `out`. The one entry point.
 
     Every refusal comes first and needs no simulator: the bank must be the one the job names,
     the options must resolve, the policy must load, every scenario id must exist and one
-    decision rate must fit the bank's step rate. Then one env per entry, each row through
+    decision rate must fit the bank's step rate. Then one env per row, built and closed around
     `run_episode`, each result written as it ends. `stop` is the batch's own SIGTERM/SIGINT flag
     unless the caller hands one in, which is how a test stops a batch without a signal.
+    `record_video` films every row into `<out>/videos/<scenario_id>.mp4` at the step rate; it is
+    a switch on the run and not a field of the job, so nothing a queue job says can turn it on.
 
     Returns the `Results` it wrote to `<out>/results.json`. A stopped batch returns normally --
     a cancelled run that still writes its results is a scored partial run. A batch whose
@@ -478,6 +507,8 @@ def run_bank(
     )
     out = Path(out)
     (out / "results").mkdir(parents=True, exist_ok=True)
+    if record_video:
+        (out / "videos").mkdir(parents=True, exist_ok=True)
     say = progress or (lambda _line: None)
 
     started_utc = _utc_now()
@@ -485,49 +516,53 @@ def run_bank(
     shape_before: tuple[int, ...] | None = None
     shape_after: tuple[int, ...] | None = None
     with nullcontext(stop) if stop is not None else stop_on_signals() as flag:
-        # One env per entry: rows are contiguous by entry in the manifest, and `select_rows`
-        # keeps that order, so a change of entry is a change of env.
-        index = 0
-        while index < len(chosen) and not flag():
-            name, entry, _ = chosen[index]
-            rows = [row for group, _, row in chosen[index:] if group == name]
-            index += len(rows)
+        # One env per row, closed before the next is built: a row scores the same alone, in
+        # any company and in any order. See the module docstring for the measurement.
+        for name, entry, row in chosen:
+            if flag():
+                break
             env = None
+            recorder = None
             try:
                 built = time.perf_counter()
                 try:
                     env, prepare = build_env(bank_dir, entry, options)
                     bind_policy(act, env)
-                except Exception:  # noqa: BLE001 -- every row of this entry is an error row
-                    for row in rows:
-                        result = _error_row(name, entry, row, seconds=time.perf_counter() - built)
-                        results.append(result)
-                        write_json(out / "results" / f"{row.scenario_id}.json", result)
-                        say(f"{row.scenario_id}: error building the env")
-                    continue
-                for row in rows:
-                    if flag():
-                        break
-                    result, drive = _score(
-                        env, prepare, name=name, entry=entry, row=row, act=act,
-                        stride=stride, stop=flag,
-                    )
+                except Exception:  # noqa: BLE001 -- the batch's promise: this row is an error row
+                    result = _error_row(name, entry, row, seconds=time.perf_counter() - built)
                     results.append(result)
                     write_json(out / "results" / f"{row.scenario_id}.json", result)
-                    if drive is not None:
-                        shape_before = shape_before or drive.observation_shape
-                        shape_after = drive.observation_shape_end
-                        if job.save_trajectories:
-                            write_json(
-                                out / "trajectories" / f"{row.scenario_id}.json",
-                                Trajectory(
-                                    scenario_id=row.scenario_id,
-                                    stride=stride,
-                                    actions=drive.issued_actions,
-                                ),
-                            )
-                    say(_progress_line(result))
+                    say(f"{row.scenario_id}: error building the env")
+                    continue
+                if record_video:
+                    from scenariobank.video import Recorder
+
+                    recorder = Recorder().open(
+                        out / "videos" / f"{row.scenario_id}.mp4", fps=step_hz
+                    )
+                result, drive = _score(
+                    env, prepare, name=name, entry=entry, row=row, act=act,
+                    stride=stride, stop=flag,
+                    observe=None if recorder is None else recorder.add,
+                )
+                results.append(result)
+                write_json(out / "results" / f"{row.scenario_id}.json", result)
+                if drive is not None:
+                    shape_before = shape_before or drive.observation_shape
+                    shape_after = drive.observation_shape_end
+                    if job.save_trajectories:
+                        write_json(
+                            out / "trajectories" / f"{row.scenario_id}.json",
+                            Trajectory(
+                                scenario_id=row.scenario_id,
+                                stride=stride,
+                                actions=drive.issued_actions,
+                            ),
+                        )
+                say(_progress_line(result))
             finally:
+                if recorder is not None:
+                    recorder.close()
                 if env is not None:
                     env.close()
         stopped = bool(flag())

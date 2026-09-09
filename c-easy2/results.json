@@ -1,0 +1,228 @@
+{
+  "attempt": null,
+  "bank": {
+    "attribution": null,
+    "id": "curve",
+    "path": "banks/curve",
+    "provenance": null,
+    "schema_version": "1.2",
+    "source": "pg"
+  },
+  "env": {
+    "decision_hz": null,
+    "metadrive_commit": "85e5dadc6c7436d324348f6e3d8f8e680c06b4db",
+    "observation_shape_after": [
+      19
+    ],
+    "observation_shape_before": [
+      19
+    ],
+    "step_hz": 10.0,
+    "stride": 1
+  },
+  "finished_utc": "2026-09-09T07:49:53Z",
+  "job_id": null,
+  "options": {
+    "kind": "pg",
+    "levels": {
+      "barriers": "none",
+      "cones": "none",
+      "cyclists": "none",
+      "lights": "none",
+      "pedestrians": "none",
+      "traffic": "low"
+    },
+    "origin": {
+      "barriers": "tier",
+      "cones": "tier",
+      "cyclists": "tier",
+      "lights": "tier",
+      "pedestrians": "tier",
+      "traffic": "tier"
+    },
+    "raw": {},
+    "replay": {},
+    "tier": "easy",
+    "values": {
+      "barriers": 0,
+      "cones": 0,
+      "cyclists": 0,
+      "lights": null,
+      "pedestrians": 0,
+      "traffic": 0.05
+    }
+  },
+  "policy": "scenariobank.policies:ExpertPolicy",
+  "results": [
+    {
+      "actions": 281,
+      "actions_digest": "d094599f81a629d9fbef87ceea378b9a4632587747d11e3255a9c1329534bf3e",
+      "actor_layout_digest": null,
+      "category": "curve",
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 1
+      },
+      "cost": 1.0,
+      "destination": "2C0_1_",
+      "failure_reason": "crash_vehicle",
+      "placed": {
+        "DefaultVehicle": 1,
+        "LVehicle": 2,
+        "MVehicle": 2,
+        "SVehicle": 1
+      },
+      "reward": 243.679389,
+      "route_completion": 0.570813,
+      "scenario_id": "curve_0000",
+      "scenario_index": null,
+      "seed": 30,
+      "status": "ok",
+      "steps": 281,
+      "success": false,
+      "traceback": null,
+      "wall_time_s": 2.215
+    },
+    {
+      "actions": 344,
+      "actions_digest": "1be97fe5564abadbb83f1e9ad0243df9428ca307b0b61a14f7c9a34595c8e722",
+      "actor_layout_digest": null,
+      "category": "curve",
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "cost": 0.0,
+      "destination": "2C0_1_",
+      "failure_reason": null,
+      "placed": {
+        "DefaultVehicle": 1,
+        "LVehicle": 1,
+        "MVehicle": 2
+      },
+      "reward": 349.413863,
+      "route_completion": 0.986472,
+      "scenario_id": "curve_0001",
+      "scenario_index": null,
+      "seed": 1,
+      "status": "ok",
+      "steps": 344,
+      "success": true,
+      "traceback": null,
+      "wall_time_s": 2.07
+    },
+    {
+      "actions": 278,
+      "actions_digest": "b66cd1762db96cf697cf5dd3e0b44a429b4dd54bbf93c162fb273b9399fbca93",
+      "actor_layout_digest": null,
+      "category": "curve",
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "cost": 0.0,
+      "destination": "2C0_1_",
+      "failure_reason": null,
+      "placed": {
+        "DefaultVehicle": 1,
+        "LVehicle": 1,
+        "XLVehicle": 1
+      },
+      "reward": 230.248809,
+      "route_completion": 0.978562,
+      "scenario_id": "curve_0002",
+      "scenario_index": null,
+      "seed": 2,
+      "status": "ok",
+      "steps": 278,
+      "success": true,
+      "traceback": null,
+      "wall_time_s": 1.371
+    },
+    {
+      "actions": 298,
+      "actions_digest": "6411d55bb7dea33efb4a42ab751807446709713534e230dbb205ccd4eae6e830",
+      "actor_layout_digest": null,
+      "category": "curve",
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "cost": 0.0,
+      "destination": "2C0_1_",
+      "failure_reason": null,
+      "placed": {
+        "DefaultVehicle": 1,
+        "LVehicle": 2,
+        "MVehicle": 1,
+        "SVehicle": 1
+      },
+      "reward": 332.494009,
+      "route_completion": 0.985438,
+      "scenario_id": "curve_0003",
+      "scenario_index": null,
+      "seed": 3,
+      "status": "ok",
+      "steps": 298,
+      "success": true,
+      "traceback": null,
+      "wall_time_s": 1.503
+    },
+    {
+      "actions": 345,
+      "actions_digest": "ba4a8e6328a646d17d4692c438b627934634ec5cd52d220b1f0d9d3ede07038b",
+      "actor_layout_digest": null,
+      "category": "curve",
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "cost": 0.0,
+      "destination": "2C0_1_",
+      "failure_reason": null,
+      "placed": {
+        "DefaultVehicle": 1,
+        "LVehicle": 2,
+        "MVehicle": 1
+      },
+      "reward": 325.357555,
+      "route_completion": 0.984126,
+      "scenario_id": "curve_0004",
+      "scenario_index": null,
+      "seed": 22,
+      "status": "ok",
+      "steps": 345,
+      "success": true,
+      "traceback": null,
+      "wall_time_s": 1.861
+    }
+  ],
+  "schema_version": 1,
+  "started_utc": "2026-09-09T07:49:43Z",
+  "stopped": false,
+  "summary": {
+    "by_failure_reason": {
+      "crash_vehicle": 1
+    },
+    "by_status": {
+      "ok": 5
+    },
+    "n": 5,
+    "success_rate": 0.8
+  }
+}

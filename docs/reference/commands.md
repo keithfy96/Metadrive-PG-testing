@@ -237,6 +237,7 @@ under a second. Use `--steps` to check the round trip without paying for the who
 | `--decision-hz <float>` | optional |  | Hold each action for this decision rate. Defaults to every step. A rate no faster than the env steps: 10 on a road, the recording's own rate on an import. |
 | `--steps <int>` | optional |  | Stop after this many steps, for a quick check. |
 | `--json` | default `false` |  | Emit the report as JSON instead of aligned text. |
+| `--record-video <path>` | optional |  | Write a top-down film of the drive to this .mp4, for looking at it. Changes nothing the report measures. |
 
 ```bash
 uv run scenariobank replay --bank ./banks/junction-1
@@ -583,6 +584,7 @@ about 11 s.
 | `--cyclists-count <float>` | optional |  | How many cyclists as a number, instead of a level name for cyclists. A whole number, 0 or more. |
 | `--decision-hz <float>` | optional |  | Hold each action for this decision rate. Defaults to every step. A rate no faster than the env steps: 10 on a road, the recording's own rate on an import. |
 | `--save-trajectories` | default `false` |  | Also write each scenario's per-decision actions under trajectories/. |
+| `--record-video` | default `false` |  | Write a top-down film of every row to <out>/videos/<scenario_id>.mp4, for looking at a run. Off by default; changes nothing the result records. |
 
 ```bash
 uv run scenariobank run --bank ./banks/t-junction --out ./runs/floor                                                                    # the whole bank against the constant-action floor

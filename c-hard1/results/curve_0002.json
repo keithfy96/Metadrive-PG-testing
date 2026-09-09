@@ -1,0 +1,37 @@
+{
+  "actions": 103,
+  "actions_digest": "bbba9f9f4272a9f0a9c5ce768da11339e5e17eccfa53acd9ed1c4f4c26a6cd1a",
+  "actor_layout_digest": "299935b5a575bd3728ba83c5d3fb295a4c379215ae887f42443581deded37681",
+  "category": "curve",
+  "collisions": {
+    "building": 0,
+    "human": 1,
+    "object": 0,
+    "sidewalk": 0,
+    "vehicle": 0
+  },
+  "cost": 1.0,
+  "destination": "2C0_1_",
+  "failure_reason": "crash_human",
+  "placed": {
+    "Cyclist": 1,
+    "DefaultVehicle": 1,
+    "LVehicle": 5,
+    "MVehicle": 2,
+    "Pedestrian": 3,
+    "SVehicle": 5,
+    "TrafficBarrier": 2,
+    "TrafficCone": 36,
+    "XLVehicle": 6
+  },
+  "reward": 62.562645,
+  "route_completion": 0.316714,
+  "scenario_id": "curve_0002",
+  "scenario_index": null,
+  "seed": 2,
+  "status": "ok",
+  "steps": 103,
+  "success": false,
+  "traceback": null,
+  "wall_time_s": 1.104
+}

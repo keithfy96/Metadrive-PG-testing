@@ -1,0 +1,243 @@
+{
+  "attempt": null,
+  "bank": {
+    "attribution": null,
+    "id": "t-junction-left-intersection",
+    "path": "banks/t-junction-left-intersection",
+    "provenance": null,
+    "schema_version": "1.1",
+    "source": "pg"
+  },
+  "env": {
+    "decision_hz": null,
+    "metadrive_commit": "85e5dadc6c7436d324348f6e3d8f8e680c06b4db",
+    "observation_shape_after": [
+      19
+    ],
+    "observation_shape_before": [
+      19
+    ],
+    "step_hz": 10.0,
+    "stride": 1
+  },
+  "finished_utc": "2026-09-09T07:49:21Z",
+  "job_id": null,
+  "options": {
+    "kind": "pg",
+    "levels": {
+      "barriers": "medium",
+      "cones": "medium",
+      "cyclists": "low",
+      "lights": "none",
+      "pedestrians": "medium",
+      "traffic": "high"
+    },
+    "origin": {
+      "barriers": "tier",
+      "cones": "tier",
+      "cyclists": "tier",
+      "lights": "tier",
+      "pedestrians": "tier",
+      "traffic": "tier"
+    },
+    "raw": {},
+    "replay": {},
+    "tier": "hard",
+    "values": {
+      "barriers": 2,
+      "cones": 3,
+      "cyclists": 1,
+      "lights": null,
+      "pedestrians": 3,
+      "traffic": 0.35
+    }
+  },
+  "policy": "scenariobank.policies:ExpertPolicy",
+  "results": [
+    {
+      "actions": 247,
+      "actions_digest": "6712bba30436cfea1344162242c2f961b154dc99d6d9422be76f4ce094c2d384",
+      "actor_layout_digest": "32653dcc2efd099009c2d02882ddb4b8c2c489baffa1a5bc0bedabe7f5e3cb59",
+      "category": "intersection_left",
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "cost": 0.0,
+      "destination": "1X0_1_",
+      "failure_reason": null,
+      "placed": {
+        "Cyclist": 1,
+        "DefaultVehicle": 1,
+        "LVehicle": 1,
+        "MVehicle": 3,
+        "Pedestrian": 3,
+        "SVehicle": 3,
+        "XLVehicle": 3
+      },
+      "reward": 116.221523,
+      "route_completion": 0.96122,
+      "scenario_id": "intersection_left_0000",
+      "scenario_index": null,
+      "seed": 0,
+      "status": "ok",
+      "steps": 247,
+      "success": true,
+      "traceback": null,
+      "wall_time_s": 1.986
+    },
+    {
+      "actions": 177,
+      "actions_digest": "c062d77d720e05634ddd988aee438bb60e94c2082e28d9e1d996c34855e13721",
+      "actor_layout_digest": "522bee636629c6b12fbc1c8d0f464ecd83f534dd6498999c8b9188ee80bafb61",
+      "category": "intersection_left",
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "cost": 0.0,
+      "destination": "1X0_1_",
+      "failure_reason": null,
+      "placed": {
+        "Cyclist": 1,
+        "DefaultVehicle": 1,
+        "LVehicle": 3,
+        "MVehicle": 1,
+        "Pedestrian": 3,
+        "SVehicle": 2,
+        "XLVehicle": 4
+      },
+      "reward": 110.273285,
+      "route_completion": 0.964571,
+      "scenario_id": "intersection_left_0001",
+      "scenario_index": null,
+      "seed": 1,
+      "status": "ok",
+      "steps": 177,
+      "success": true,
+      "traceback": null,
+      "wall_time_s": 1.574
+    },
+    {
+      "actions": 191,
+      "actions_digest": "35088ba870a6e9c47b3dd02c57b9b50090fe457f3c31dc4fd762207146e278ab",
+      "actor_layout_digest": "eff061e7eee46dd6badc0ab44bdbfdf4c5d744fec12f154ecc7ed73cc1ff6a38",
+      "category": "intersection_left",
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "cost": 0.0,
+      "destination": "1X0_1_",
+      "failure_reason": null,
+      "placed": {
+        "Cyclist": 1,
+        "DefaultVehicle": 1,
+        "LVehicle": 3,
+        "MVehicle": 4,
+        "Pedestrian": 3,
+        "SVehicle": 1,
+        "XLVehicle": 2
+      },
+      "reward": 115.820964,
+      "route_completion": 0.958717,
+      "scenario_id": "intersection_left_0002",
+      "scenario_index": null,
+      "seed": 2,
+      "status": "ok",
+      "steps": 191,
+      "success": true,
+      "traceback": null,
+      "wall_time_s": 1.565
+    },
+    {
+      "actions": 168,
+      "actions_digest": "b2716a19dce8bfe1ccf6b97792a8e7a4d16932f5856c4c42b3a05ec5aa5a1d3d",
+      "actor_layout_digest": "87235d93170b0dd7ef09b497f1cf8545e1eefd1e94e48962d4e6a217795a3d4e",
+      "category": "intersection_left",
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "cost": 0.0,
+      "destination": "1X0_1_",
+      "failure_reason": null,
+      "placed": {
+        "Cyclist": 1,
+        "DefaultVehicle": 1,
+        "LVehicle": 3,
+        "MVehicle": 2,
+        "Pedestrian": 3,
+        "SVehicle": 3,
+        "XLVehicle": 2
+      },
+      "reward": 109.852044,
+      "route_completion": 0.960453,
+      "scenario_id": "intersection_left_0003",
+      "scenario_index": null,
+      "seed": 3,
+      "status": "ok",
+      "steps": 168,
+      "success": true,
+      "traceback": null,
+      "wall_time_s": 1.408
+    },
+    {
+      "actions": 185,
+      "actions_digest": "19f245f79737f5f40ccdb7673116918d000ea50b20cdfa8ed341215c514b5300",
+      "actor_layout_digest": "0f4f256b172b6ee76adb5fe52c2b4eea1c5877d92e49263a7c7f5ed15600337a",
+      "category": "intersection_left",
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "cost": 0.0,
+      "destination": "1X0_1_",
+      "failure_reason": null,
+      "placed": {
+        "Cyclist": 1,
+        "DefaultVehicle": 1,
+        "LVehicle": 3,
+        "MVehicle": 2,
+        "Pedestrian": 3,
+        "SVehicle": 5
+      },
+      "reward": 109.896533,
+      "route_completion": 0.961086,
+      "scenario_id": "intersection_left_0004",
+      "scenario_index": null,
+      "seed": 4,
+      "status": "ok",
+      "steps": 185,
+      "success": true,
+      "traceback": null,
+      "wall_time_s": 1.506
+    }
+  ],
+  "schema_version": 1,
+  "started_utc": "2026-09-09T07:49:12Z",
+  "stopped": false,
+  "summary": {
+    "by_failure_reason": {},
+    "by_status": {
+      "ok": 5
+    },
+    "n": 5,
+    "success_rate": 1.0
+  }
+}

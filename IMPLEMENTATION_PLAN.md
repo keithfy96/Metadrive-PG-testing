@@ -198,6 +198,7 @@ section rather than in a phase because the temptation recurs — someone will re
 | Read a `C` block as a pure arc | A MetaDrive `Curve` block is an arc **and a trailing straight**. `create_bend_straight` returns `(curve, straight)` and `pgblock/curve.py` builds both — part 1 the arc, part 2 a straight of `Parameter.length`. So `CC` is a road of straight → arc → straight → arc → straight, and the straights are not extra blocks. `turn_pairs` reports one letter per *arc*, which is the useful reading but not a whole block. *Enforced in:* `categories.py`'s `curve` description and the generated `destinations.md` both say so. |
 | Read a turn direction off a map picture | A map alone does not say which end the ego starts at, and read from the wrong end every turn in it reverses. The ego always spawns heading **due east** — rightward in any figure — but where that lands in the frame moves with the seed: `curve` seeds 2 and 3 start at the *top* and bend down, 0, 1 and 4 start at the bottom and bend up. A map-only thumbnail was shipped and immediately misread as "no right turns in the bank", when seed 2 turns right twice. *Enforced in:* thumbnails draw the route, a spawn arrow and a destination star (`figures.render_route`); `net_rotation_deg` and `turn_pairs` are recorded per scenario; `test_bank.py` asserts two categories on one road cannot produce the same picture. |
 | Defend seed identity by hashing config keys, or by fingerprinting the built map | Both rejected, for different reasons. The config-key audit cannot be proven complete — `curriculum_level`, which silently rewrites the seed you asked for, was missing from the first draft. Fingerprinting the output *would* have worked, but **cross-batch identity is not a goal**: a bank is regenerated per batch and a road that comes out different is simply a different batch. `map_id` and `config_hash` are both cut (2026-08-31); the container's pinned commit is the whole guarantee. |
+| Trust two runs of one seeded job to agree because every manager draws from a seeded stream | They did not, on `curve` at `hard`, and neither draw nor seed was the cause (Phase 4 Step 5, measured 2026-09-09). `Lidar.get_surrounding_objects` (`lidar.py:170`) returns a **`set` of objects**, iterated by address, and the IDM policy keeps the nearest object per lane off it with a strict comparison (`idm_policy.py:83`) — so with cones tied on longitude, which cone a traffic car sees is the heap layout, and the same row ended at 339 steps or 348 depending on the size of the process's environment block. And an episode run after another in one env is not the episode run alone (339 alone, 218 after one row), through something `reset` does not clear and `force_destroy` does not touch. `env.pinned_lidar_class()` sorts the sets and `run_bank` builds one env per row; `test_reproducibility.py` holds both. |
 
 One more that is not a trap but is easy to over-build: **`crash_human` termination is already wired
 and free** — `TerminationState.CRASH_HUMAN` (`constants.py:28`), `crash_human_done=True` by default
@@ -566,6 +567,7 @@ metadrive-PG/
     actors.py               # VRUManager       — pedestrians, cyclists
     lights.py               # PGTrafficLightManager  (Phase 8)
     runner.py               # run_bank(...) -> Results   (importable, no CLI deps)
+    video.py                # a top-down film of a run, for the eye (Phase 4 Step 5b)
     results.py              # pydantic models: Results, ScenarioResult, Summary
     policies.py             # ConstantPolicy, ExpertPolicy wrapper, load_policy("pkg.mod:Name")
     env.py                  # build_env(base_config, seeds, options) + start_seed/num_scenarios math
@@ -2592,7 +2594,7 @@ bite; and every step now has a **Verify alone** command block with an expectatio
 
 ## Steps — the runner first, the cameras on top of it
 
-Nine checkpoints, each one testable alone. **They deliberately do not run in the order the
+Ten checkpoints, each one testable alone. **They deliberately do not run in the order the
 build notes were written in.** The notes lead with the AV3 port because that is the interesting
 part; the work leads with `resolve_options` and env construction because a runner that is
 reproducible against a two-line `ConstantPolicy` is the thing every later step is debugged
@@ -2745,7 +2747,8 @@ new work already exist, with the reasoning in their own docstrings:
   `vehicle_config["destination"]`, which is read at construction. Destinations vary *inside* a
   category: `banks/t-junction`'s `t_junction` is `1T0_1_` at seeds 0 and 4 and `1T2_1_` at 2 and 3,
   because `StdTInterSection` exposes a different arm per seed. One env per entry and a
-  construction-time destination cannot both hold. `set_route` is reproducibility-safe for the
+  construction-time destination cannot both hold. *(Step 5 made it one env per row, for a
+  reason of its own; the argument here only strengthens.)* `set_route` is reproducibility-safe for the
   reason Phase 2 recorded — `auto_assign_task` draws its throwaway destination from
   `get_np_random(random_seed)`, a *fresh* generator rather than a manager's stream — and it raises
   on an unreachable node (`bank.py:1271`), which is the failure you want.
@@ -2977,7 +2980,8 @@ no traceback, `stopped: true`. What the step settled beyond the bullets:
    the mechanism is the offline one, not the timing.
 4. **An entry whose env will not build is one error row per scenario, and the next entry runs.**
    "Never abort" as written was per episode; a `build_env` failure is per entry and would have
-   been an abort, so it is caught at that level too, with the traceback in every row.
+   been an abort, so it is caught at that level too, with the traceback in every row. *(Since
+   Step 5 the env is built per row, and a build that fails is that row's error row.)*
 5. **Every refusal comes before the simulator**: the wrong bank at the path (by id), an unknown
    scenario id (by name, all of them), a policy that will not load (which part of the spec), a
    level or raw value the resolver refuses, a decision rate the env cannot step at, and a bank
@@ -3275,7 +3279,7 @@ checkpoints identical on both banks while `placed` moves; `random_traffic=True` 
 different traffic layouts at one seed where `False` gives one, on both banks. Full suite 691
 passed, ruff clean.
 
-### Step 5 — reproducibility, and options that do something ⬜  ⟵ *gate*
+### Step 5 — reproducibility, and options that do something ✅  ⟵ *gate, met 2026-09-09*
 
 Nothing after this step is worth debugging until this step passes, which is why the AV3 port
 starts on the other side of it.
@@ -3294,18 +3298,162 @@ for t in easy hard; do for i in 1 2; do
 done; done
 diff <(jq 'del(.started_utc, .finished_utc) | del(.results[].wall_time_s)' hard1/results.json) \
      <(jq 'del(.started_utc, .finished_utc) | del(.results[].wall_time_s)' hard2/results.json)
+# 3b. The same, on the bank where cones and barriers are placed -- the one that failed first
+for t in easy hard; do for i in 1 2; do
+  uv run scenariobank run --bank banks/curve --tier $t --policy $P --out c-$t$i
+done; done
+diff <(jq 'del(.started_utc, .finished_utc) | del(.results[].wall_time_s)' c-hard1/results.json) \
+     <(jq 'del(.started_utc, .finished_utc) | del(.results[].wall_time_s)' c-hard2/results.json)
+# 3c. Another process with another environment block, and a job naming one row
+PYTHONHASHSEED=8 uv run scenariobank run --bank banks/curve --tier hard --policy $P --out c-hard-h8
+diff <(jq 'del(.started_utc, .finished_utc) | del(.results[].wall_time_s)' c-hard1/results.json) \
+     <(jq 'del(.started_utc, .finished_utc) | del(.results[].wall_time_s)' c-hard-h8/results.json)
+uv run scenariobank run --bank banks/curve --tier hard --policy $P --scenarios curve_0003 --out c-0003
+jq -c '.results[] | select(.scenario_id=="curve_0003") | [.steps,.reward,.actions_digest]' \
+  c-0003/results.json c-hard1/results.json
 # 6. Options actually do something
 jq -s '[.[0].summary.success_rate, .[1].summary.success_rate]' easy1/results.json hard1/results.json
-uv run scenariobank run --bank banks/curve --tier easy --policy $P --out c-easy
-uv run scenariobank run --bank banks/curve --tier hard --policy $P --out c-hard
-jq -s '[.[0].summary.success_rate, .[1].summary.success_rate]' c-easy/results.json c-hard/results.json
-jq '.results[0].placed' c-hard/results.json hard1/results.json
+jq -s '[.[0].summary.success_rate, .[1].summary.success_rate]' c-easy1/results.json c-hard1/results.json
+jq -c '[.results[].steps]' easy1/results.json hard1/results.json
+jq '.results[0].placed' c-hard1/results.json hard1/results.json
 ```
-**Expect: the diff empty** — identical steps, reward, cost, `failure_reason` and `actions_digest`
-for every scenario, with the option managers on. Hard below easy on both banks. `placed` on
-`curve`'s hard run shows cones and barriers; on `intersection_left`'s it shows only actors. If the
-rates match, a manager is registered but placing nothing — the same class of bug as floor equals
-ceiling, and `placed` says which one.
+**Expect: every diff empty** — identical steps, reward, cost, `failure_reason` and `actions_digest`
+for every scenario, with the option managers on, in one process or two, and the one-row job's
+row identical to the same row of the whole bank. Hard below easy on `curve`; on
+`intersection_left` the expert arrives at both tiers and hard is slower. `placed` on `curve`'s
+hard run shows cones and barriers; on `intersection_left`'s it shows only actors. If the rates
+match on `curve`, a manager is registered but placing nothing — the same class of bug as floor
+equals ceiling, and `placed` says which one.
+
+**Built 2026-09-09.** The gate failed the first time it was run, on `curve` at `hard`, and it
+failed twice over. Everything below was measured; the block above is the block as amended by it
+(the original diffed `intersection_left` only, which never failed).
+
+1. **Two runs of one job disagreed, on two of five rows.** `intersection_left` was identical at
+   both tiers. `curve` at `hard`: rows 0-2 identical, row 3 at 300 steps in one process and 296
+   in another, row 4 at a reward of 73.474806 against 73.546124 — and the same process gave the
+   same answer every time. Two carriers, found separately.
+2. **A row's score depended on which rows ran before it in the same env.** `curve_0003` alone:
+   339 steps. After `curve_0002`: 218. After rows 0-2: 300 or 296. The actor layout digest was
+   the same every time and the expert's actions parted at step two (steering 0.06035200 against
+   0.06035198), so this is physics state carried across `reset`, not a layout or a draw. The
+   object pool is not it: `force_destroy=True` moved every number (row 3 to 470 after row 2, 389
+   in the sequence) and kept the dependence. What carries it was not found. **The fix is one env
+   per row**, built and closed around `run_episode`: every row then scores its alone value in
+   any company, in any order, in any process, and a job naming a subset of the rows scores them
+   exactly as the whole bank does — which Phase 7's "a job may name a subset of rows" requires.
+   Cost: five `curve` rows at `hard` take 22.9 s against 19.8 s, under a second per row.
+3. **A row alone, in a fresh process, still came out two ways: 339 steps or 348.** Sweeping
+   `PYTHONHASHSEED` said what it was not: every value from 1 to 17 gave 348; `0`, `100`, `999999`
+   and unset gave 339. Hash randomisation flips per seed; this flipped with the *length of the
+   variable*, i.e. with the size of the process's environment block, i.e. with where the heap
+   starts. Bisected across the axes: the effect needs the expert *and* traffic *and* cones or
+   actors together; traffic alone, cones alone, actors alone and the constant policy were all
+   identical. The cause is `Lidar.get_surrounding_objects` (`lidar.py:170`), which returns a
+   `set` of objects — iterated by address — that `IDMPolicy.act` hands to
+   `FrontBackObjects.get_find_front_back_objs` (`idm_policy.py:83`), where the nearest object
+   ahead and behind per lane is kept with a strict comparison. A cone corridor puts cones at one
+   longitude by construction, so which cone a traffic car "sees" is the heap layout. **The fix
+   is `env.pinned_lidar_class()`**: the stock lidar with both object sets returned as lists in
+   `env.object_order` (class, position, heading), registered through the `sensors` config in
+   `build_env` on both env kinds, so the IDM policy and the expert's own observation see one
+   order. With it, `PYTHONHASHSEED=8` and unset agree on every row.
+4. **"Hard below easy on both banks" is false for the expert on the `X` bank, and the block
+   said so before it was run.** `intersection_left`: 5/5 arrived at both tiers, steps 133-160
+   at easy against 168-247 at hard, `placed` showing three pedestrians, one cyclist and the
+   traffic and no cone. `curve`: 0.8 at easy, 0.0 at hard, with 36 cones, 2 barriers, 3
+   pedestrians, 1 cyclist and 25-40 traffic vehicles per row, four rows ending in
+   `crash_vehicle` and one in `crash_human`. The options do something; on an `X` what they do
+   is slow the expert down.
+5. **`tests/unit/test_reproducibility.py`** keeps the two measurements as tests: the sort key
+   offline; the lidar every env gets is the pinned one and returns sorted lists; `curve_0003`
+   scores the same alone, after `curve_0002`, and in a subprocess with `PYTHONHASHSEED=8`; and
+   `hard` below `easy` on `curve_0004` with cones in `placed`, slower on `intersection_left_0000`
+   with none. `test_results.py`'s two per-entry assertions became per-row ones.
+
+**Verify alone: met.** All five diffs in the block empty (`intersection_left` at both tiers,
+`curve` at both tiers, `curve` at `hard` under another environment block); the one-row job's
+`curve_0003` identical to the bank run's; rates `[1.0, 1.0]` on the `X` bank with the step
+counts apart, `[0.8, 0.0]` on `curve`; `placed` as in note 4. The four gate tests green in 37 s;
+full suite 695 passed, ruff clean, `commands` regenerates without a change.
+
+### Step 5b — a top-down film of a run, for the eye ✅  ⟵ *added and built 2026-09-09*
+
+*(Added 2026-09-09, at Keith's ask: "mainly just for a visual test". Step 5 proved two runs
+of one job agree to the digest; nothing in the plan let a person look at one. Step 6's cameras
+feed the AV3 model on a GPU inside the sim container and write nothing to disk; the studio
+authors banks and never runs one; Phase 2c Step 12 will only enqueue. This is the missing
+thing, and it is small: a switch that films a run, off by default, invisible to the score.)*
+
+**What it is.** `scenariobank run --record-video` writes `<out>/videos/<scenario_id>.mp4` per
+row; `scenariobank replay --record-video PATH` writes one file for one drive. The film is
+MetaDrive's own top-down view, 800x800 at 5 px/m — a 160 m window that follows the ego, north
+up — at the step rate, so a 10 Hz road plays in real time. It runs **locally, under `uv run`,
+with no GPU, no display and no container**: the renderer is pygame on the CPU, the same one the
+thumbnails already use. Five facts it rests on, all read:
+
+- **The live top-down renderer draws every non-map object** — `TopDownRenderer.render`
+  (`engine/top_down_renderer.py:343`) collects `engine.get_objects()` minus the map every frame
+  and draws each with its own `top_down_width/length/color`: vehicles, `TrafficCone`,
+  `TrafficBarrier`, `Pedestrian`, `Cyclist`. The "map only" note under **No lidar** is about
+  `draw_top_down_map`, the thumbnail path; it does not apply here.
+- **`window=False` is headless** (`top_down_renderer.py:265`); the only `pygame.init()` sits
+  behind `show_agent_name`.
+- **`env.render(mode="topdown", **kwargs)`** builds the renderer lazily with those kwargs and
+  hands back an RGB array (`to_cv2_image` swaps nothing), so `video.frame` swaps to BGR once.
+  `env.reset` clears the renderer (`base_env.py:536-538`); one env per row means one renderer
+  per row anyway.
+- **The camera follows the ego** when `camera_position` is unset (`top_down_renderer.py:537`).
+- **OpenCV is already here**: `metadrive-simulator` requires `opencv-python`, and
+  `doctor.COMPANION_PACKAGES` lists it. `cv2.VideoWriter` with `mp4v`. Nothing new in
+  `pyproject.toml`; `cv2` is imported inside `Recorder`, so `video.py` imports without it.
+
+**Design.** `runner.run_episode` gains an `observe(env)` hook, asked once after the reset and
+prepare (the placed scene, before anything moves) and once after every step, the ending step
+included, so a film has `steps + 1` frames and ends on the crash. `run_bank(record_video=True)`
+points it at `video.Recorder`, opened before the row and closed in the row's `finally` beside
+`env.close()`. **A switch on the run, not a field of the `Job`**: the schema stays, a queue
+job cannot ask for it, and the CLI flag is per run — the same shape as `stop` and `progress`.
+`replay.drive(record_video=PATH)` does the same for its one drive.
+
+**What it is not.** Not the studio — listing a run's films on the page would be a Phase 2c
+step of its own. Not the AV3 cameras — this is a bird's-eye diagram, the right view for
+checking that the managers placed what they should and that the actors move. Not a 3D window —
+`use_render=True` needs a display and was not asked for. No resolution or decimation flags: one
+fixed view until someone needs another.
+
+**Verify alone:**
+
+```bash
+P=scenariobank.policies:ExpertPolicy
+uv run scenariobank run --bank banks/curve --tier hard --policy $P --out film --record-video
+ls -la film/videos/                                   # five mp4s, one per row
+uv run python -c "import cv2; c=cv2.VideoCapture('film/videos/curve_0003.mp4'); \
+  print(int(c.get(cv2.CAP_PROP_FRAME_COUNT)), c.get(cv2.CAP_PROP_FPS), int(c.get(3)), int(c.get(4)))"
+uv run scenariobank run --bank banks/curve --tier hard --policy $P --out no-film
+diff <(jq 'del(.started_utc, .finished_utc) | del(.results[].wall_time_s)' film/results.json) \
+     <(jq 'del(.started_utc, .finished_utc) | del(.results[].wall_time_s)' no-film/results.json)
+uv run scenariobank replay --bank banks/t-junction --scenario t_junction_0000 --steps 50 --record-video t.mp4
+xdg-open film/videos/curve_0003.mp4
+uv run pytest tests/unit/test_video.py -q && uv run ruff check src tests && uv run scenariobank commands
+```
+**Expect:** five files; `curve_0003` has 340 frames at 10 fps, 800x800; **the diff empty** —
+the film changed nothing; `t.mp4` has 51 frames; the film shows the corridor of cones, both
+barriers, the three pedestrians crossing, the cyclist on the outer lane, the traffic, and ends
+on the `crash_vehicle` frame.
+
+**Built 2026-09-09.** Measured on `banks/curve` at `hard`, five rows, 1,211 frames: the run
+took 46.8 s filmed against 21.8 s not, so about 20 ms a frame (15 ms to draw, the rest to
+encode) — 2 s on the 95-step row, 10 s on the 473-step one. The first frame of a row costs
+0.14 s more, the 4000x4000 film of the map drawn once. Files: 0.7 MB for 96 frames to 3.8 MB
+for 474. The diff between the filmed and the unfilmed run is empty, and `test_video.py` holds
+it as a test on `curve_0004`, `actions_digest` included, beside `steps + 1` frames at the step
+rate. One frame, read back off `curve_0003`'s film: the ego centred with its trail, the cone
+corridor as a dotted line on the outer lane, a pedestrian beside it, the traffic ahead and
+behind. `commands` regenerated with the two new flags.
+
+**Verify alone: met.** Five films, 474/197/104/340/96 frames at 10 fps; the diff empty; the
+replay film 51 frames; six tests green; full suite green, ruff clean.
 
 ### Step 6 — the camera rig: six cameras alive on `DefaultVehicle` ⬜
 

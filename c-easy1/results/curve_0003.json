@@ -1,0 +1,32 @@
+{
+  "actions": 298,
+  "actions_digest": "6411d55bb7dea33efb4a42ab751807446709713534e230dbb205ccd4eae6e830",
+  "actor_layout_digest": null,
+  "category": "curve",
+  "collisions": {
+    "building": 0,
+    "human": 0,
+    "object": 0,
+    "sidewalk": 0,
+    "vehicle": 0
+  },
+  "cost": 0.0,
+  "destination": "2C0_1_",
+  "failure_reason": null,
+  "placed": {
+    "DefaultVehicle": 1,
+    "LVehicle": 2,
+    "MVehicle": 1,
+    "SVehicle": 1
+  },
+  "reward": 332.494009,
+  "route_completion": 0.985438,
+  "scenario_id": "curve_0003",
+  "scenario_index": null,
+  "seed": 3,
+  "status": "ok",
+  "steps": 298,
+  "success": true,
+  "traceback": null,
+  "wall_time_s": 1.687
+}
