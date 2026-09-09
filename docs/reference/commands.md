@@ -558,12 +558,19 @@ and nothing is ever raised into teardown. Every refusal -- the wrong bank at a p
 the axis does not have, an unknown scenario id, a policy that will not load, a decision rate
 the env cannot step at -- comes before the simulator is opened.
 
+**A relative `--out` lands under `out/`, and a tier names a subdirectory.** `out/` is the
+directory the container writes and the one git ignores, so `--out easy1` from a terminal
+and `--out /out/easy1` from `docker compose` are the same place, and a run never lands in
+the repository root. An absolute path goes where it says. `--out film --tier hard` writes
+`out/film/hard/`, so the three tiers of one bank sit side by side instead of overwriting
+each other; a run without a tier writes to the directory itself.
+
 Needs the simulator. A `T` road is well under a second per scenario; `banks/junction-1` is
 about 11 s.
 
 | flag | | repeats | meaning |
 |---|---|---|---|
-| `--out <path>` | **required** |  | Directory to write results.json and results/<id>.json into. A directory. Created if absent; `results.json` and `results/` are written into it. |
+| `--out <path>` | **required** |  | Directory to write results.json and results/<id>.json into. A relative path lands under out/, and a run with a tier goes into a subdirectory named after it: `--out film --tier hard` writes out/film/hard/. A directory. Created if absent; `results.json` and `results/` are written into it. |
 | `--bank <path>` | optional |  | Bank directory holding the scenarios to run. |
 | `--job <path>` | optional |  | A Job file to run instead of flags. The container's entrypoint and the queue hand the runner one of these; every flag but --out is then refused. A `Job` JSON file, the same record the queue carries. |
 | `--categories <str>` | optional | yes | Run only these categories. Comma-separated, or repeated. Category names from the bank's manifest, comma-separated or repeated. |

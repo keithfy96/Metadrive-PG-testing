@@ -142,7 +142,10 @@ def test_a_row_scores_the_same_alone_in_company_and_in_another_process(tmp_path)
         check=True,
         capture_output=True,
     )
-    other = Results.model_validate_json((tmp_path / "other" / "results.json").read_text())
+    # `--tier hard` on the command line is a subdirectory of `--out`.
+    other = Results.model_validate_json(
+        (tmp_path / "other" / "hard" / "results.json").read_text()
+    )
     assert rows(other) == rows(pair)
     volatile = {"started_utc", "finished_utc", "results"}
     assert other.model_dump(exclude=volatile) == pair.model_dump(exclude=volatile)

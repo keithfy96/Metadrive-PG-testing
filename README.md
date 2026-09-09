@@ -427,6 +427,7 @@ enforced, since a bank is regenerated per batch and there is nothing to check it
 | `docs/reference/figures/*.png` | `inspect` | yes — one per category at seed 0 |
 | `banks/<bank-name>/` | `generate` | **no** — regenerate it; it is a per-batch artifact |
 | `banks/<bank-name>/` | `import` | **no** — re-import it; the dataset is copied in, 50 MB at 100 Hz |
+| `out/<name>/[<tier>/]` | `run` | **no** — a run's record; a relative `--out` lands here, a `--tier` is a subdirectory, and the container writes here |
 | `.venv/`, `.ruff_cache/`, `.pytest_cache/` | tooling | no |
 
 Nothing writes outside the repo, and no command writes to `$HOME`.

@@ -600,12 +600,58 @@ def test_the_command_builds_a_job_from_its_flags_and_prints_where_the_results_ar
         "--tier", "easy", "--traffic", "low", "--out", str(out),
     )
     assert result.exit_code == 0, result.output
-    assert f"results written: {out / 'results.json'}" in result.stdout
-    report = Results.model_validate_json((out / "results.json").read_text())
+    written = out / "easy"  # the tier is a subdirectory of `--out`
+    assert f"results written: {written / 'results.json'}" in result.stdout
+    report = Results.model_validate_json((written / "results.json").read_text())
     # `--categories` and `--scenarios` intersect: one row is in both, the other is not.
     assert [r.scenario_id for r in report.results] == ["curve_0001"]
     assert report.options.tier == "easy" and report.options.levels["traffic"] == "low"
     assert report.policy == "scenariobank.policies:ConstantPolicy"
+
+
+def test_a_relative_out_lands_under_out_and_a_tier_names_a_subdirectory(tmp_path, monkeypatch):
+    """Fourteen verify-run directories had accumulated in the repository root, and been
+    committed, before `run` learnt this (2026-09-10). `out/` is the path the container writes
+    and the one git ignores; `--out out/x` is not doubled, and an absolute path is untouched.
+    The same day, three tiers run into one `--out` had overwritten each other: a tier is now a
+    subdirectory, on relative and absolute paths alike, and a job file's tier counts too."""
+    from scenariobank.cli import under_out
+
+    use_fake_env(monkeypatch)
+    bank = write_bank(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    assert under_out(Path("easy1")) == Path("out/easy1")
+    assert under_out(Path("out/easy1")) == Path("out/easy1")
+    assert under_out(tmp_path / "easy1") == tmp_path / "easy1"
+    assert under_out(Path("film"), "hard") == Path("out/film/hard")
+    assert under_out(tmp_path / "film", "easy") == tmp_path / "film" / "easy"
+
+    for tier in ("easy", "medium", "hard"):
+        result = _run("--bank", str(bank), "--scenarios", "curve_0000", "--out", "film",
+                      "--tier", tier)
+        assert result.exit_code == 0, result.output
+        assert f"results written: out/film/{tier}/results.json" in result.stdout
+    assert sorted(p.name for p in (tmp_path / "out" / "film").iterdir()) == [
+        "easy", "hard", "medium"
+    ]
+    job_file = tmp_path / "job.json"
+    job_file.write_text(
+        dump_json(job_for(bank, scenarios=["curve_0000"], options=JobOptions(tier="hard")))
+    )
+    result = _run("--job", str(job_file), "--out", "from-job")
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "out" / "from-job" / "hard" / "results.json").exists()
+
+    result = _run("--bank", str(bank), "--scenarios", "curve_0000", "--out", "easy1")
+    assert result.exit_code == 0, result.output
+    assert "results written: out/easy1/results.json" in result.stdout
+    assert (tmp_path / "out" / "easy1" / "results.json").exists()
+    assert not (tmp_path / "easy1").exists()
+
+    result = _run("--bank", str(bank), "--scenarios", "curve_0000", "--out", "out/easy2")
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "out" / "easy2" / "results.json").exists()
+    assert not (tmp_path / "out" / "out").exists()
 
 
 def test_a_job_file_is_the_same_run_and_takes_no_other_flags(tmp_path, monkeypatch):

@@ -1139,6 +1139,26 @@ def _run_raw(flag: str, axis: str, label: str) -> Any:
     ]
 
 
+#: Where a relative `--out` on `run` lands. `out/` is the one path the container can write
+#: (`compose.yaml` mounts it at `/out`) and the one `.gitignore` covers, so a run named by hand
+#: from the terminal lands in the same place as a run from the container -- and not in the repo
+#: root, where fourteen verify-run directories had accumulated and been committed by 2026-09-10.
+OUT_ROOT = Path("out")
+
+
+def under_out(path: Path, tier: str | None = None) -> Path:
+    """`easy1` -> `out/easy1`, and with `--tier hard`, `out/easy1/hard`.
+
+    An absolute path, or one already under `out/`, is left where it is. The tier becomes a
+    subdirectory so that the same `--out` run at `easy`, `medium` and `hard` gives three
+    records side by side rather than the last one standing (2026-09-10; they had been
+    overwriting each other). A run with no tier writes to the directory itself.
+    """
+    if not (path.is_absolute() or path.parts[:1] == (OUT_ROOT.name,)):
+        path = OUT_ROOT / path
+    return path if tier is None else path / tier
+
+
 def _parse_ids(raw: list[str] | None) -> list[str] | None:
     """`--scenarios a,b --scenarios c` -> `[a, b, c]`; nothing given -> `None`."""
     if not raw:
@@ -1150,7 +1170,12 @@ def _parse_ids(raw: list[str] | None) -> list[str] | None:
 def run(
     out: Annotated[
         Path,
-        typer.Option("--out", help="Directory to write results.json and results/<id>.json into."),
+        typer.Option(
+            "--out",
+            help="Directory to write results.json and results/<id>.json into. A relative path "
+            "lands under out/, and a run with a tier goes into a subdirectory named after it: "
+            "`--out film --tier hard` writes out/film/hard/.",
+        ),
     ],
     bank: Annotated[
         Path | None, typer.Option("--bank", help="Bank directory holding the scenarios to run.")
@@ -1240,6 +1265,13 @@ def run(
     and nothing is ever raised into teardown. Every refusal -- the wrong bank at a path, a level
     the axis does not have, an unknown scenario id, a policy that will not load, a decision rate
     the env cannot step at -- comes before the simulator is opened.
+
+    **A relative `--out` lands under `out/`, and a tier names a subdirectory.** `out/` is the
+    directory the container writes and the one git ignores, so `--out easy1` from a terminal
+    and `--out /out/easy1` from `docker compose` are the same place, and a run never lands in
+    the repository root. An absolute path goes where it says. `--out film --tier hard` writes
+    `out/film/hard/`, so the three tiers of one bank sit side by side instead of overwriting
+    each other; a run without a tier writes to the directory itself.
 
     Needs the simulator. A `T` road is well under a second per scenario; `banks/junction-1` is
     about 11 s.
@@ -1332,6 +1364,7 @@ def run(
                 decision_hz=decision_hz,
                 save_trajectories=save_trajectories,
             )
+        out = under_out(out, what.options.tier)
         report = run_bank(
             what,
             out,

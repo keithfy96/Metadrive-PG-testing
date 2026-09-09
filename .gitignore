@@ -13,8 +13,10 @@ banks/
 # happened; a job is re-runnable, so none of this is worth keeping.
 .studio/
 
-# Results written by `docker compose run --rm run ... --out /out/...`. The directory itself is
-# tracked (out/.gitkeep) because the Docker daemon creates a missing bind source as root; what
-# lands in it is a run's output and belongs with the run, not in git.
+# Results written by `docker compose run --rm run ... --out /out/...`, and by `scenariobank run`
+# from a terminal: a relative `--out` lands under out/ (since 2026-09-10, after fourteen run
+# directories had been committed from the repo root). The directory itself is tracked
+# (out/.gitkeep) because the Docker daemon creates a missing bind source as root; what lands in
+# it is a run's output and belongs with the run, not in git.
 out/*
 !out/.gitkeep

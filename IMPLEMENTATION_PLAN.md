@@ -2921,19 +2921,29 @@ inventing them at each site:
   `replay.ENDINGS` is built from it, so the diagnostic and the record cannot rank an ending
   differently, and a test pins the two lists equal.*
 
+*(Amended 2026-09-10 — **a relative `--out` lands under `out/`.** By then fourteen verify-run
+directories from Steps 3-5c sat in the repository root and had been committed with it. `out/` is
+the path `compose.yaml` mounts writable at `/out` and the one `.gitignore` covers, so `--out easy1`
+from a terminal and `--out /out/easy1` from the container are now the same place; `--out out/easy1`
+is not doubled and an absolute path goes where it says. **And a tier is a subdirectory**: the
+same day, `--out film` run at `easy`, `medium` and `hard` had overwritten itself three times, so
+`--out film --tier hard` now writes `out/film/hard/` and a run without a tier writes the directory
+itself. `cli.under_out`; pinned in `test_results.py`. The verify blocks below still name
+`--out hard1`, and read back `out/hard1/hard/results.json` -- the name predates the rule.)*
+
 **Verify alone:** *(old test 4, plus the recorded kind)*
 
 ```bash
 uv run scenariobank run --bank banks/t-junction-left-intersection --categories t_junction \
   --policy scenariobank.policies:RaisingPolicy --out raising; echo "exit=$?"
-ls raising/results | wc -l                                                      # 4, one file per row
-jq '.summary.by_status, (.results[0] | {scenario_id, status, traceback})' raising/results.json
+ls out/raising/results | wc -l                                                      # 4, one file per row
+jq '.summary.by_status, (.results[0] | {scenario_id, status, traceback})' out/raising/results.json
 uv run scenariobank run --bank banks/junction-1 \
   --policy scenariobank.policies:ConstantPolicy --out stored
-jq '(.results[] | {scenario_id, steps, failure_reason, status}), .env.observation_shape_after, .bank.attribution' stored/results.json
+jq '(.results[] | {scenario_id, steps, failure_reason, status}), .env.observation_shape_after, .bank.attribution' out/stored/results.json
 uv run scenariobank run --bank banks/curve --policy scenariobank.policies:ConstantPolicy --out stopped & \
   PID=$!; sleep 5; kill -TERM $PID; wait $PID; echo "exit=$?"                    # stopped mid-episode
-jq '.stopped, (.results[] | {scenario_id, failure_reason, steps})' stopped/results.json
+jq '.stopped, (.results[] | {scenario_id, failure_reason, steps})' out/stopped/results.json
 uv run pytest tests/unit/test_results.py tests/unit/test_policies.py tests/unit/test_runner.py -q
 ```
 **Expect:** exit 0 every time, `results.json` present every time, and `job_id`/`attempt` `null` in
@@ -3219,7 +3229,7 @@ uv run pytest tests/unit/test_invariance.py tests/unit/test_obstacles.py tests/u
 uv run scenariobank run --bank banks/curve --cones high --policy scenariobank.policies:ConstantPolicy --out cones
 uv run scenariobank run --bank banks/t-junction-left-intersection --categories intersection_left \
   --cones high --policy scenariobank.policies:ConstantPolicy --out cones-x
-jq -c '.results[0].placed' cones/results.json cones-x/results.json
+jq -c '.results[0].placed' out/cones/results.json out/cones-x/results.json
 ```
 **Expect:** the invariance test green — `lane_geometry_digest` and `navigation.checkpoints`
 identical across levels, `assert_array_equal` not `allclose`; `test_random_traffic_breaks_
@@ -3299,26 +3309,26 @@ B=banks/t-junction-left-intersection; P=scenariobank.policies:ExpertPolicy
 for t in easy hard; do for i in 1 2; do
   uv run scenariobank run --bank $B --categories intersection_left --tier $t --policy $P --out $t$i
 done; done
-diff <(jq 'del(.started_utc, .finished_utc) | del(.results[].wall_time_s)' hard1/results.json) \
-     <(jq 'del(.started_utc, .finished_utc) | del(.results[].wall_time_s)' hard2/results.json)
+diff <(jq 'del(.started_utc, .finished_utc) | del(.results[].wall_time_s)' out/hard1/hard/results.json) \
+     <(jq 'del(.started_utc, .finished_utc) | del(.results[].wall_time_s)' out/hard2/hard/results.json)
 # 3b. The same, on the bank where cones and barriers are placed -- the one that failed first
 for t in easy hard; do for i in 1 2; do
   uv run scenariobank run --bank banks/curve --tier $t --policy $P --out c-$t$i
 done; done
-diff <(jq 'del(.started_utc, .finished_utc) | del(.results[].wall_time_s)' c-hard1/results.json) \
-     <(jq 'del(.started_utc, .finished_utc) | del(.results[].wall_time_s)' c-hard2/results.json)
+diff <(jq 'del(.started_utc, .finished_utc) | del(.results[].wall_time_s)' out/c-hard1/hard/results.json) \
+     <(jq 'del(.started_utc, .finished_utc) | del(.results[].wall_time_s)' out/c-hard2/hard/results.json)
 # 3c. Another process with another environment block, and a job naming one row
 PYTHONHASHSEED=8 uv run scenariobank run --bank banks/curve --tier hard --policy $P --out c-hard-h8
-diff <(jq 'del(.started_utc, .finished_utc) | del(.results[].wall_time_s)' c-hard1/results.json) \
-     <(jq 'del(.started_utc, .finished_utc) | del(.results[].wall_time_s)' c-hard-h8/results.json)
+diff <(jq 'del(.started_utc, .finished_utc) | del(.results[].wall_time_s)' out/c-hard1/hard/results.json) \
+     <(jq 'del(.started_utc, .finished_utc) | del(.results[].wall_time_s)' out/c-hard-h8/hard/results.json)
 uv run scenariobank run --bank banks/curve --tier hard --policy $P --scenarios curve_0003 --out c-0003
 jq -c '.results[] | select(.scenario_id=="curve_0003") | [.steps,.reward,.actions_digest]' \
-  c-0003/results.json c-hard1/results.json
+  out/c-0003/hard/results.json out/c-hard1/hard/results.json
 # 6. Options actually do something
-jq -s '[.[0].summary.success_rate, .[1].summary.success_rate]' easy1/results.json hard1/results.json
-jq -s '[.[0].summary.success_rate, .[1].summary.success_rate]' c-easy1/results.json c-hard1/results.json
-jq -c '[.results[].steps]' easy1/results.json hard1/results.json
-jq '.results[0].placed' c-hard1/results.json hard1/results.json
+jq -s '[.[0].summary.success_rate, .[1].summary.success_rate]' out/easy1/easy/results.json out/hard1/hard/results.json
+jq -s '[.[0].summary.success_rate, .[1].summary.success_rate]' out/c-easy1/easy/results.json out/c-hard1/hard/results.json
+jq -c '[.results[].steps]' out/easy1/easy/results.json out/hard1/hard/results.json
+jq '.results[0].placed' out/c-hard1/hard/results.json out/hard1/hard/results.json
 ```
 **Expect: every diff empty** — identical steps, reward, cost, `failure_reason` and `actions_digest`
 for every scenario, with the option managers on, in one process or two, and the one-row job's
@@ -3431,14 +3441,14 @@ fixed view until someone needs another.
 ```bash
 P=scenariobank.policies:ExpertPolicy
 uv run scenariobank run --bank banks/curve --tier hard --policy $P --out film --record-video
-ls -la film/videos/                                   # five mp4s, one per row
-uv run python -c "import cv2; c=cv2.VideoCapture('film/videos/curve_0003.mp4'); \
+ls -la out/film/hard/videos/                                   # five mp4s, one per row
+uv run python -c "import cv2; c=cv2.VideoCapture('out/film/hard/videos/curve_0003.mp4'); \
   print(int(c.get(cv2.CAP_PROP_FRAME_COUNT)), c.get(cv2.CAP_PROP_FPS), int(c.get(3)), int(c.get(4)))"
 uv run scenariobank run --bank banks/curve --tier hard --policy $P --out no-film
-diff <(jq 'del(.started_utc, .finished_utc) | del(.results[].wall_time_s)' film/results.json) \
-     <(jq 'del(.started_utc, .finished_utc) | del(.results[].wall_time_s)' no-film/results.json)
+diff <(jq 'del(.started_utc, .finished_utc) | del(.results[].wall_time_s)' out/film/hard/results.json) \
+     <(jq 'del(.started_utc, .finished_utc) | del(.results[].wall_time_s)' out/no-film/hard/results.json)
 uv run scenariobank replay --bank banks/t-junction --scenario t_junction_0000 --steps 50 --record-video t.mp4
-xdg-open film/videos/curve_0003.mp4
+xdg-open out/film/hard/videos/curve_0003.mp4
 uv run pytest tests/unit/test_video.py -q && uv run ruff check src tests && uv run scenariobank commands
 ```
 **Expect:** five files; `curve_0003` has 340 frames at 10 fps, 800x800; **the diff empty** —
@@ -3508,7 +3518,7 @@ actor not driven with no car more than half a lane off centre behind an idle ego
 uv run pytest tests/unit/test_handedness.py tests/unit/test_actors.py -q
 P=scenariobank.policies:ExpertPolicy
 uv run scenariobank run --bank banks/curve --tier hard --policy $P --out fixed --record-video
-xdg-open fixed/videos/curve_0000.mp4          # traffic in its lanes through both bends
+xdg-open out/fixed/hard/videos/curve_0000.mp4          # traffic in its lanes through both bends
 # then Step 5's block again, into fresh directories
 ```
 **Expect:** both files green; the film shows the traffic queued in lane through the arcs; every
