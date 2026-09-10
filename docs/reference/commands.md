@@ -25,6 +25,7 @@ Every command is `uv run scenariobank <command>`.
 | turn a converter workspace into a bank | [`import`](#import) |
 | set the traffic level once instead of on every run | [`options`](#options) |
 | score a policy against every scenario of a bank | [`run`](#run) |
+| see whether a camera rig's cameras are alive and aimed right | [`rig`](#rig) |
 | do all of that by looking rather than typing | [`studio`](#studio) |
 
 **Changing one scenario does not mean rebuilding the bank.** `replace` rebuilds exactly
@@ -227,8 +228,19 @@ setting: deciding at 20 Hz on a 100 Hz recording holds each action for five step
 how many actions were issued, never how long the episode was. A road steps at 10 Hz, so a
 faster decision rate than that is refused there.
 
+**`--camera-rig` is the check that a rig's cameras are alive** (Phase 4 Step 6). MetaDrive
+deletes every camera from a headless env's sensors unless `image_observation` is on
+(`base_env.py:343`), so a rig that was never mounted looks exactly like one that was until
+something reads it; this reads every camera at every decision and reports the sensors the
+env held, how many image buffers, and the shape of each frame. The cameras never enter the
+observation, so nothing else in the report moves. A spec's `tick_rate` has to equal the
+interval it is read at -- the decision stride over the step rate -- and a road steps at
+10 Hz, so `rigs/av3.txt` at 0.05 s is refused there unless `--ignore-rig-rate` says the
+mismatch is understood.
+
 Needs the simulator. A full replay of `banks/junction-1` costs about 11 s; a road is well
-under a second. Use `--steps` to check the round trip without paying for the whole episode.
+under a second, and about 15 s more with a six-camera rig, which is the offscreen window.
+Use `--steps` to check the round trip without paying for the whole episode.
 
 | flag | | repeats | meaning |
 |---|---|---|---|
@@ -238,12 +250,44 @@ under a second. Use `--steps` to check the round trip without paying for the who
 | `--steps <int>` | optional |  | Stop after this many steps, for a quick check. |
 | `--json` | default `false` |  | Emit the report as JSON instead of aligned text. |
 | `--record-video <path>` | optional |  | Write a top-down film of the drive to this .mp4, for looking at it. Changes nothing the report measures. |
+| `--camera-rig <path>` | optional |  | Mount this camera spec on the ego (rigs/av3.txt) and read it at every decision; the report then says which cameras were alive and what a read cost. |
+| `--ignore-rig-rate` | default `false` |  | Mount the rig even though its tick_rate is not the interval it is read at. For looking at the cameras; the report still shows both rates. |
 
 ```bash
 uv run scenariobank replay --bank ./banks/junction-1
-uv run scenariobank replay --bank ./banks/t-junction --scenario t_junction_0000  # a procedural road: seed, route and the entry's own step cap
-uv run scenariobank replay --bank ./banks/junction-1 --steps 50                  # check the round trip without paying for the whole recording
-uv run scenariobank replay --bank ./banks/junction-1 --decision-hz 20 --json     # what a 20 Hz policy would have been asked for
+uv run scenariobank replay --bank ./banks/t-junction --scenario t_junction_0000                           # a procedural road: seed, route and the entry's own step cap
+uv run scenariobank replay --bank ./banks/junction-1 --steps 50                                           # check the round trip without paying for the whole recording
+uv run scenariobank replay --bank ./banks/junction-1 --decision-hz 20 --json                              # what a 20 Hz policy would have been asked for
+uv run scenariobank replay --bank ./banks/curve --camera-rig ./rigs/av3.txt --steps 20 --ignore-rig-rate  # six cameras alive on the ego, and what a read of them costs
+```
+
+### `rig`
+
+Read a camera-rig spec, convert it into MetaDrive's frame, and say where each camera aims.
+
+The spec is CARLA's (x forward, y right, +yaw right) and MetaDrive's vehicle frame is not
+(x right, y forward, +heading left), so the conversion is an x/y swap and a sign flip on yaw
+-- `av3/camera_rig.py` carries the measurements it was derived from. This prints every
+camera's resolved mount, heading and pitch beside its name and the direction it aims in
+words, so a camera named `front_left` that looks right is visible rather than baked in.
+Offline: reading a spec needs no simulator.
+
+`--check-frame` re-measures the frame itself on a real env: a `NodePath` parented to the
+ego is given a local offset or angle and read back in world coordinates against the car's
+own heading and attitude. Six rows -- +y forward, +x right, +H left, -H right, +P up, -P
+down -- and every rig mount and aim is wrong until all six pass. That is the sign-convention
+probe of Phase 4 Step 6; the model's own conversions are Step 7's, measured beside it.
+
+| flag | | repeats | meaning |
+|---|---|---|---|
+| `--camera-rig <path>` | **required** |  | The camera spec to read (rigs/av3.txt). |
+| `--check-frame` | default `false` |  | Also measure MetaDrive's vehicle frame on a real env, the facts the conversion rests on. Needs --bank and the simulator. |
+| `--bank <path>` | optional |  | The bank whose first scenario the frame is measured on. |
+| `--json` | default `false` |  | Emit the report as JSON instead of aligned text. |
+
+```bash
+uv run scenariobank rig --camera-rig ./rigs/av3.txt                                     # every camera's mount and heading in MetaDrive's frame, and where it aims
+uv run scenariobank rig --camera-rig ./rigs/av3.txt --check-frame --bank ./banks/curve  # re-measure the vehicle frame the conversion rests on
 ```
 
 ### `destinations`

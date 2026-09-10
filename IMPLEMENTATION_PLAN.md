@@ -200,6 +200,7 @@ section rather than in a phase because the temptation recurs — someone will re
 | Defend seed identity by hashing config keys, or by fingerprinting the built map | Both rejected, for different reasons. The config-key audit cannot be proven complete — `curriculum_level`, which silently rewrites the seed you asked for, was missing from the first draft. Fingerprinting the output *would* have worked, but **cross-batch identity is not a goal**: a bank is regenerated per batch and a road that comes out different is simply a different batch. `map_id` and `config_hash` are both cut (2026-08-31); the container's pinned commit is the whole guarantee. |
 | Trust two runs of one seeded job to agree because every manager draws from a seeded stream | They did not, on `curve` at `hard`, and neither draw nor seed was the cause (Phase 4 Step 5, measured 2026-09-09). `Lidar.get_surrounding_objects` (`lidar.py:170`) returns a **`set` of objects**, iterated by address, and the IDM policy keeps the nearest object per lane off it with a strict comparison (`idm_policy.py:83`) — so with cones tied on longitude, which cone a traffic car sees is the heap layout, and the same row ended at 339 steps or 348 depending on the size of the process's environment block. And an episode run after another in one env is not the episode run alone (339 alone, 218 after one row), through something `reset` does not clear and `force_destroy` does not touch. `env.pinned_lidar_class()` sorts the sets and `run_bank` builds one env per row; `test_reproducibility.py` holds both. |
 | Trust the mirror because the geometry test passes and the expert arrives | The map was exact and two controllers were not (Phase 4 Step 5c, found by looking at a film). `IDMPolicy` read the mirrored lateral and drove unmirrored steering, so every lane change drifted to the kerb; and its `act` swallows any exception into "no front object", so an object without a `lane` attribute in a car's lidar radius -- our pedestrians and cyclists -- made that car drive blind. A check behind an *idle* ego showed neither. Measure traffic with the expert driving, against stock MetaDrive in a subprocess, and give every object the traffic can see a `lane`. |
+| Build a rig env and then start a subprocess | The first `reset` of an env with `image_observation` on runs `asset_loader.py:116`, which writes `PYTHONUTF8=on` into `os.environ` -- a value CPython rejects at startup -- so every child process started afterwards in that process dies with `preconfig_init_utf8_mode: invalid PYTHONUTF8`. Headless envs never reach that line, which is why nothing noticed before Phase 4 Step 6. `env._with_rig` puts the variable back after every reset; `test_camera_rig.py` starts a child to prove it. |
 
 One more that is not a trap but is easy to over-build: **`crash_human` termination is already wired
 and free** — `TerminationState.CRASH_HUMAN` (`constants.py:28`), `crash_human_done=True` by default
@@ -3529,7 +3530,7 @@ error row; rates `[1.0, 1.0]` on the `X` bank with steps 133-160 at easy against
 hard, `[0.8, 0.0]` on `curve`; `curve_0004` at `hard` now runs to the 1200-step cap behind
 traffic that brakes for people, which is what hard is. Full suite 703 passed, ruff clean.
 
-### Step 6 — the camera rig: six cameras alive on `DefaultVehicle` ⬜
+### Step 6 — the camera rig: six cameras alive on `DefaultVehicle` ✅  ⟵ *built 2026-09-10*
 
 **The model boundary is an AV3 camera submission** *(amended 2026-08-30; replaces the
 `policy(observation: Box(19,)) -> [steer, throttle]` contract)*. Everything needed already exists
@@ -3545,9 +3546,17 @@ one of the other two, so having it verified in the image this runs in is worth m
 version numbers are.
 
 - `tools/camera_rig.py` — `load_rig()`, `CameraRig.sensors/mount/read/image_source`
+  → **`src/scenariobank/av3/camera_rig.py`**, every measurement intact, plus `check_frame`,
+  `image_buffers` and the report models `scenariobank rig` prints
 - `rigs/av3.txt` — the six AV3 cameras, ISO-8855 → CARLA sign rules applied, datum resolved onto
-  MetaDrive's `DefaultVehicle`
-- `tools/av3_probe.py` + `scripts/av3-probe.sh` — the sign-convention probe
+  MetaDrive's `DefaultVehicle` → **`rigs/av3.txt`**, byte-identical; `rigs/README.md` beside it
+- `tools/av3_probe.py` + `scripts/av3-probe.sh` — the sign-convention probe → **the rig's half
+  only**: `scenariobank rig --check-frame` (the converter's `camera_rig.check_frame`) and
+  `scripts/av3-probe.sh`, which runs it and then `replay --camera-rig`. *(Scoped 2026-09-10:
+  `av3_probe.py`'s four conversions -- camera order, ego state, route, waypoint sign -- are
+  all computed by `av3_model.py` and three of the four are scored against a checkpoint, so
+  they cannot be ported ahead of it. They come with Step 7, beside the model, and the script
+  says so in its header.)*
 
 `rigs/av3.txt`'s header records two open gaps, and they stay open: fisheye is rendered as an
 unwarped pinhole, and 4:3 is rendered then squashed by preprocess, never native 16:9.
@@ -3587,14 +3596,85 @@ Six things that bite, in the order they will bite:
 **Verify alone** — in the sim image, because the cupy gate is only known open there:
 
 ```bash
-docker run --rm --gpus all -v $PWD:/work metadrive-wingfin-sim:latest \
-  python -m scenariobank replay --bank /work/banks/t-junction --scenario t_junction_0000 \
-  --camera-rig /work/rigs/av3.txt --steps 20 --json | jq '.env.sensors, .env.image_buffers'
-docker run --rm --gpus all -v $PWD:/work metadrive-wingfin-sim:latest bash /work/scripts/av3-probe.sh
+docker run --rm --gpus all -v $PWD:/work:ro metadrive-wingfin-sim:latest bash /work/scripts/av3-probe.sh
+# the same two commands by hand, on the host:
+uv run scenariobank rig --camera-rig rigs/av3.txt --check-frame --bank banks/curve
+uv run scenariobank replay --bank banks/curve --camera-rig rigs/av3.txt --steps 20 --ignore-rig-rate --json \
+  | python3 -c "import json,sys; e=json.load(sys.stdin)['env']; print(e['sensors'], e['image_buffers'])"
+uv run pytest tests/unit/test_camera_rig.py -q
 ```
 **Expect:** six named sensors and no `rgb_camera` among them; `image_buffers <= 9`; the probe
-confirms every sign convention by measurement rather than by reading. No model, no bridge.
-`replay` gains `--camera-rig` here because it is the diagnostic that already exists.
+confirms every sign convention the rig rests on by measurement rather than by reading -- six
+`ok` rows. No model, no bridge. `replay` gains `--camera-rig` here because it is the diagnostic
+that already exists. *(The block used to pipe `--json` into `jq`, which the sim image does not
+carry, and to run the rig at the road's own rate, which gotcha 5 refuses -- see the notes.)*
+
+**Built 2026-09-10.** What was measured, and what moved from the notes above:
+
+1. **The cameras are alive, on both machines.** `replay --camera-rig rigs/av3.txt` on
+   `banks/curve`: sensors `front_left, front_middle, front_right, lane_line_detector, lidar,
+   rear_left, rear_middle, rear_right, side_detector` -- the six, the three ray detectors, no
+   `rgb_camera` -- `image_buffers` 6, `image_source front_middle`, every camera returning
+   `(384, 512, 3)` uint8 at every one of 21 reads (20 steps plus the reset's), the observation
+   `(19,)` at both ends. Host: **30 ms per read** of the whole rig, 38 ms/step. Sim container
+   with the GPU: **5.5 ms per read**, 18 ms/step. The frame probe returns the same six rows in
+   both, on the *mirrored* road: +y forward, +x right, H+55 left, H-55 right, P+10 up, P-10
+   down, each to 0.01. The mirror is on lane geometry and a camera is parented to the vehicle's
+   own node, so it never reaches the rig.
+2. **What a rig costs is the offscreen window, not the read.** An env with `image_observation`
+   on resets in **13 s** on the host against a quarter of a second without (the first build in a
+   fresh shader cache took 70 s); the container is faster but the same shape. The live tests
+   build exactly two rig envs for that reason; `test_camera_rig.py` runs in about 30 s.
+3. **Gotcha 5 bites the AV3 rig on every procedural road, today.** `rigs/av3.txt` declares
+   `tick_rate: 0.05` and a road steps at 10 Hz (`env.step_hz_for`, pinned by `test_env.py`), so
+   the shortest read interval is 0.1 s and the loader refuses the spec exactly as it should --
+   before anything is built, off the manifest. Nothing in this repo can step a PG road at 100 Hz
+   yet: `--step-hz` exists for recordings only (`replay_config`, the rate the pickle was written
+   at), and on a road it means `physics_world_step_size` / `decision_repeat`, which moves every
+   `max_steps` budget and every Step 5 number. That is gotcha 3's `--step-hz 100 --decision-hz 20`
+   and it lands with the model in **Step 7**. Until then `replay --ignore-rig-rate` loads the
+   spec with the check deferred, reads the cameras at the road's rate, and prints both rates
+   with a `!`; `run` has no such switch, on purpose.
+4. **Where the config is wired.** `env.build_env(..., rig=)` is the one place: the rig's
+   cameras join `sensors`, `image_observation` goes on (gotcha 1 -- and `agent_observation`
+   still wins, measured: 19 both ends), `vehicle_config["image_source"]` names the first rig
+   camera (no seventh buffer), and the returned `prepare` mounts the rig after every reset, so
+   no caller can forget. `CameraRig.mount` refuses an env built any other way by name --
+   `base_env.py:343` -- before `get_sensor` could raise, and refuses an engine holding more than
+   nine buffers. The parse refuses a spec of more than nine cameras. A rig on a recorded entry
+   goes through the same three keys; not driven here, `banks/junction-1` being 100 Hz and the
+   thing Step 7 wants.
+5. **A rig changes nothing a run scores.** `test_camera_rig.py` drives `curve_0000` with the
+   expert for 60 steps with the rig mounted and without: `issued_actions` identical, the same
+   claim the film gate makes for `--record-video`. The cameras are read off the engine through
+   `perceive()` and never through the observation, which is what **No lidar** decided.
+6. **The cupy gate is open by import and not yet by use.** In the container `base_camera`'s
+   `try:` succeeds (cupy 14.2.0, PyOpenGL 3.1.10, cuda-python 12.9.7), and PyOpenGL then logs
+   `Failed to load library ( 'libOpenGL.so.0' )` -- the import is lazy and the gate sees only
+   the import. Nothing here sets `image_on_cuda`, so nothing here needs it; Step 7, which wants a
+   frame that stays on the GPU, should measure `image_on_cuda=True` in the container before
+   relying on the gate's word.
+7. **A rig env poisons every subprocess started after it, and the seam undoes that.** Found
+   by the suite, not by reading: `test_handedness.py`'s reference run -- stock MetaDrive in a
+   child process -- died with `Fatal Python error: preconfig_init_utf8_mode: invalid PYTHONUTF8
+   environment variable value` only when `test_camera_rig.py` had run first. `asset_loader.py:116`
+   writes `os.environ["PYTHONUTF8"] = "on"` when the engine opens an offscreen or onscreen
+   window (`engine_core.py:250-252`, so never on a headless run and never before a rig), and
+   `on` is not a value CPython accepts at startup. It does nothing for the process that set it.
+   `env._with_rig` records the variable before the env is built and puts it back in the
+   post-reset `prepare`, where the engine comes to exist; the live test asserts the value and
+   starts a child. This would have reached Step 7 as "the bridge subprocess dies after the
+   first rig row" and cost a day. Recorded in **Traps**.
+8. **Tests: 30 offline, 2 live**, in `test_camera_rig.py`: the spec's six cameras in the
+   weights' order with the swap and the flip checked number by number, every camera aiming
+   where its name says, fourteen refusals by name, the ceiling at nine, `mount`'s refusal
+   naming `base_env.py:343`, the report round-tripping, the commands' refusals, and `replay`
+   refusing the AV3 rig on a 10 Hz road before building anything. `docs.GROUPS` places `rig`
+   under *Look before you commit*; `commands.md` regenerated.
+
+**Verify alone: met.** `scripts/av3-probe.sh` green in the sim container with the GPU (41 s)
+and on the host; six `ok` rows; six sensors, six buffers, no `rgb_camera`; `test_camera_rig.py`
+32 passed; full suite 737 passed, ruff clean.
 
 ### Step 7 — the AV3 model and the openpilot bridge ⬜
 
@@ -3603,6 +3683,15 @@ The other half of the port, plus the two things about it that are not a copy:
 - `tools/av3_model.py` — `AV3Model.observe/predict_with_navigation`, `FrameHistory`, `preprocess`,
   `ego_state`, `navigation`, `waypoints`
 - `tools/openpilot_policy.py` — `BridgeConnection`, `OpenpilotDriver`, `to_metadrive_action`
+- `tools/av3_probe.py`'s model half *(moved here from Step 6, 2026-09-10)*: the camera map,
+  the ego state, the navigation block against the route sensor, and the waypoints scored under
+  both signs -- all computed by `av3_model.py`, three of them against a checkpoint. It joins
+  `scripts/av3-probe.sh`, which already runs the rig's frame probe and a rig replay.
+- **`--step-hz` on a procedural road**, which is what lets the AV3 rig be read at its own 0.05 s
+  (Step 6, note 3): `physics_world_step_size = 1 / step_hz` with `decision_repeat = 1` on the PG
+  config, refused on a recording unless it equals the recording's rate. It changes what a step
+  is, so every `max_steps` budget in seconds and every Step 5 number is re-measured under it,
+  and `test_env.py`'s pin that the PG config leaves the rate alone becomes a pin on the default.
 - `metadrive-complete/openpilot/bridge/` — the zapeta bridge image (Python 3.8, its own container).
   Use **our own** openpilot bridge, not wing-sim's — and that tree is **byte-identical** to the
   one baked into the already-built `metadrive-wingfin-openpilot:prod` (`diff -rq`, empty), which

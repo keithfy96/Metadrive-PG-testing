@@ -417,6 +417,31 @@ enforced, since a bank is regenerated per batch and there is nothing to check it
 
 **Writes:** `.ruff_cache/`, `.pytest_cache/` — both gitignored.
 
+### `rig` and `replay --camera-rig` — the cameras a model reads, alive on the ego
+
+```bash
+uv run scenariobank rig --camera-rig rigs/av3.txt                                   # offline
+uv run scenariobank rig --camera-rig rigs/av3.txt --check-frame --bank banks/curve  # measures
+uv run scenariobank replay --bank banks/curve --camera-rig rigs/av3.txt --steps 20 --ignore-rig-rate
+bash scripts/av3-probe.sh                                                           # both, host or container
+```
+
+`rigs/av3.txt` is the AV3 model's six-camera rig in CARLA's frame; `rigs/README.md` says where it
+came from. `rig` converts it into MetaDrive's vehicle frame — an x/y swap and a sign flip on yaw,
+not a rename — and prints each camera's mount beside the direction it aims in words, so a camera
+named `front_left` that looks right is visible. `--check-frame` re-measures the frame itself on a
+real car, six rows. `replay --camera-rig` mounts the rig and reads every camera at every decision:
+MetaDrive silently deletes cameras from a headless env unless `image_observation` is on
+(`base_env.py:343`), so "the sensors are there" is measured, never assumed. The cameras never
+enter the observation, which stays 19 wide, and the expert's actions are identical with the rig
+on and off (`tests/unit/test_camera_rig.py`).
+
+The AV3 rig declares 0.05 s and a road steps at 10 Hz; nothing resamples, so the loader refuses
+the mismatch and `--ignore-rig-rate` is the switch for looking anyway. `run` has no such switch:
+the rig is read at its own rate only once a run can step at 100 Hz (Phase 4 Step 7).
+
+**Writes:** nothing.
+
 ## What gets generated, and where
 
 | path | written by | in git? |

@@ -43,6 +43,7 @@ GROUPS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
             "seeds",
             "review",
             "replay",
+            "rig",
             "destinations",
             "workspace",
             "importing",
@@ -153,6 +154,22 @@ EXAMPLES: dict[str, tuple[tuple[str, str], ...]] = {
         (
             "uv run scenariobank replay --bank ./banks/junction-1 --decision-hz 20 --json",
             "what a 20 Hz policy would have been asked for",
+        ),
+        (
+            "uv run scenariobank replay --bank ./banks/curve --camera-rig ./rigs/av3.txt"
+            " --steps 20 --ignore-rig-rate",
+            "six cameras alive on the ego, and what a read of them costs",
+        ),
+    ),
+    "rig": (
+        (
+            "uv run scenariobank rig --camera-rig ./rigs/av3.txt",
+            "every camera's mount and heading in MetaDrive's frame, and where it aims",
+        ),
+        (
+            "uv run scenariobank rig --camera-rig ./rigs/av3.txt --check-frame"
+            " --bank ./banks/curve",
+            "re-measure the vehicle frame the conversion rests on",
         ),
     ),
     "destinations": (("uv run scenariobank destinations", ""),),
@@ -270,6 +287,7 @@ INDEX: tuple[tuple[str, str], ...] = (
     ("turn a converter workspace into a bank", "import"),
     ("set the traffic level once instead of on every run", "options"),
     ("score a policy against every scenario of a bank", "run"),
+    ("see whether a camera rig's cameras are alive and aimed right", "rig"),
     ("do all of that by looking rather than typing", "studio"),
 )
 

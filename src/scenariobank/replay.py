@@ -31,6 +31,18 @@ bank, and the whole 12-wide difference is navigation: a stored scenario gets `Tr
 (22 scalars) where a PG road gets `NodeNetworkNavigation` (10). The number lives in
 `config.SCENARIO_OBSERVATION_SHAPE` and this module is what measures it.
 
+**A camera rig rides on the same drive** (Phase 4 Step 6). `--camera-rig rigs/av3.txt` puts the
+spec's cameras on the env through `env.build_env(rig=...)`, reads every one of them at each
+decision, and reports what the env held: its sensors by name, how many image buffers, which
+camera `image_source` names, and the shape of every frame that came back. That is the check that
+the cameras are alive -- `base_env.py:343-346` deletes them silently from a headless env unless
+`image_observation` is on -- and it changes nothing the episode measures, because the cameras are
+read off the engine and never through the observation (`agent_observation` is pinned at 19).
+A spec's `tick_rate` must equal the interval it is read at, the decision stride over the step
+rate; a road steps at 10 Hz, so the AV3 rig's 0.05 s is refused there unless `--ignore-rig-rate`
+says the mismatch is understood -- a switch for looking at the cameras, and `run` has no such
+switch.
+
 **The decision rate is a stride in the loop, not a MetaDrive setting.** Replay advances one
 recorded frame per `env.step`, which is why the entry's `step_hz` becomes
 `physics_world_step_size` with `decision_repeat = 1`; a policy that decides at 20 Hz on a 100 Hz
@@ -41,7 +53,10 @@ changes how many actions are issued and never how long the episode is.
 
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -105,6 +120,40 @@ CAPPED = "capped short"
 BUDGETED = "hit its own budget"
 
 
+class EnvReport(BaseModel):
+    """What the env carried, read off its engine after the drive: the cameras' half of a report.
+
+    Present on every drive, rig or not, so a report with no rig still says `image_observation`
+    was off and the sensors were the three ray detectors -- which is what a headless env holds.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: Every sensor the engine registered, by its config name, sorted. With a rig, the rig's
+    #: cameras and never `rgb_camera` (see `CameraRig.image_source`).
+    sensors: list[str]
+    #: `config["image_observation"]`: what keeps the cameras alive on a headless env.
+    image_observation: bool
+    #: `vehicle_config["image_source"]`. MetaDrive's default is `rgb_camera`.
+    image_source: str | None
+    #: How many image buffers the engine really holds; `camera_rig.MAX_IMAGE_BUFFERS` caps it.
+    image_buffers: int
+    #: The spec the rig was read from. `None` on a drive without one.
+    rig: str | None = None
+    #: The rig's camera names, in spec order.
+    rig_cameras: list[str] = Field(default_factory=list)
+    #: What the spec declared it must be read at, in seconds; `None` if it declared nothing.
+    rig_tick_rate_s: float | None = None
+    #: What the cameras were read at: the decision stride over the step rate.
+    read_interval_s: float | None = None
+    #: The shape of the last frame every camera returned, `(H, W, 3)`.
+    frames: dict[str, tuple[int, ...]] = Field(default_factory=dict)
+    #: How many times the rig was read: once per decision, the reset's frame included.
+    reads: int = 0
+    #: Wall clock per read of the whole rig, in ms. A cost, not a property of the bank.
+    ms_per_read: float = 0.0
+
+
 class Episode(BaseModel):
     """One drive, measured. A report rather than a result -- see the module docstring.
 
@@ -165,6 +214,9 @@ class Episode(BaseModel):
     #: the bank -- it will differ on the rig -- so nothing refuses on it.
     seconds: float
     ms_per_step: float
+    #: The env's sensors, buffers and rig, read after the drive. `None` only on an `Episode`
+    #: built by hand rather than driven.
+    env: EnvReport | None = None
 
 
 def select(manifest: Manifest, scenario: str | None = None) -> tuple[str, Entry, Row]:
@@ -203,6 +255,8 @@ def drive(
     steps: int | None = None,
     action: tuple[float, float] = IDLE_ACTION,
     record_video: Path | None = None,
+    camera_rig: Path | None = None,
+    ignore_rig_rate: bool = False,
 ) -> Episode:
     """Drive one scenario and report the drive. Builds an env, so it needs the simulator.
 
@@ -211,6 +265,8 @@ def drive(
     for a quick check that the round trip works without paying for the whole episode; the episode
     it reports then ends `capped short` rather than pretending the cap was the env's.
     `record_video` films the drive into that one file, top-down, at the step rate (`video.py`).
+    `camera_rig` mounts that spec's cameras and reads them at every decision; its `tick_rate`
+    must match the read interval unless `ignore_rig_rate`, and either way the report says both.
     """
     # Every refusal first, and before the simulator is touched: a bank that pins an axis this
     # phase cannot run, an unknown scenario id and an impossible decision rate are all answerable
@@ -225,13 +281,20 @@ def drive(
     )
     budget = entry.budget_for(row)
     cap = budget if steps is None else min(budget, steps)
+    read_interval_s = stride / step_hz
+    rig = None
+    if camera_rig is not None:
+        from scenariobank.av3.camera_rig import load_rig
+
+        rig = load_rig(camera_rig, read_interval_s=None if ignore_rig_rate else read_interval_s)
 
     recorder = None
     if record_video is not None:
         from scenariobank.video import Recorder
 
         recorder = Recorder().open(record_video, fps=step_hz)
-    env, prepare = build_env(bank_dir, entry, options)
+    reader = None if rig is None else _RigReader(rig, stride)
+    env, prepare = build_env(bank_dir, entry, options, rig=rig)
     try:
         run = run_episode(
             env,
@@ -240,8 +303,9 @@ def drive(
             cap=cap,
             stride=stride,
             act=lambda _observation: action,
-            observe=None if recorder is None else recorder.add,
+            observe=_chain(None if recorder is None else recorder.add, reader),
         )
+        env_report = _env_report(env, rig, reader, read_interval_s)
     finally:
         if recorder is not None:
             recorder.close()
@@ -276,6 +340,70 @@ def drive(
         action_shape=run.action_shape,
         seconds=round(run.seconds, 3),
         ms_per_step=round(run.seconds / run.steps * 1000, 3) if run.steps else 0.0,
+        env=env_report,
+    )
+
+
+class _RigReader:
+    """The `observe` hook that reads a rig once per decision and keeps the cost.
+
+    The loop calls `observe` after the reset and after every step, so call `k` sees the scene
+    the decision at step `k` is made on; reading every `stride`-th call is reading at the
+    decision rate, which is the interval the spec's `tick_rate` is checked against.
+    """
+
+    def __init__(self, rig: Any, stride: int) -> None:
+        self.rig = rig
+        self.stride = stride
+        self.calls = 0
+        self.reads = 0
+        self.seconds = 0.0
+        self.frames: dict[str, tuple[int, ...]] = {}
+
+    def __call__(self, env: Any) -> None:
+        del env  # the cameras are already on the ego; the rig reads its own sensors
+        if self.calls % self.stride == 0:
+            started = time.perf_counter()
+            frames = self.rig.read()
+            self.seconds += time.perf_counter() - started
+            self.reads += 1
+            self.frames = {name: tuple(int(n) for n in f.shape) for name, f in frames.items()}
+        self.calls += 1
+
+
+def _chain(*hooks: Callable[[Any], None] | None) -> Callable[[Any], None] | None:
+    """One `observe` out of several, in order; `None` when there is nothing to observe."""
+    live = [hook for hook in hooks if hook is not None]
+    if not live:
+        return None
+    if len(live) == 1:
+        return live[0]
+
+    def observe(env: Any) -> None:
+        for hook in live:
+            hook(env)
+
+    return observe
+
+
+def _env_report(env: Any, rig: Any, reader: _RigReader | None, read_interval_s: float) -> EnvReport:
+    """What the env held, read off its engine while it is still open."""
+    from scenariobank.av3.camera_rig import image_buffers
+
+    return EnvReport(
+        sensors=sorted(env.engine.sensors),
+        image_observation=bool(env.config["image_observation"]),
+        image_source=env.config["vehicle_config"].get("image_source"),
+        image_buffers=image_buffers(env),
+        rig=None if rig is None else rig.path,
+        rig_cameras=[] if rig is None else list(rig.names),
+        rig_tick_rate_s=None if rig is None else rig.tick_rate_s,
+        read_interval_s=None if rig is None else round(read_interval_s, 6),
+        frames={} if reader is None else dict(reader.frames),
+        reads=0 if reader is None else reader.reads,
+        ms_per_read=(
+            round(reader.seconds / reader.reads * 1000, 3) if reader and reader.reads else 0.0
+        ),
     )
 
 
@@ -325,11 +453,40 @@ def format_episode(episode: Episode) -> str:
     lines.append(
         f"  cost:       {episode.seconds:.1f} s wall, {episode.ms_per_step:.2f} ms/step"
     )
+    if episode.env is not None and episode.env.rig is not None:
+        lines += _format_rig(episode.env)
     if not same:
         lines.append(
             "  ! the observation changed width mid-episode, which no policy can be handed"
         )
     return "\n".join(lines)
+
+
+def _format_rig(report: EnvReport) -> list[str]:
+    """The rig's lines of the text report: what is alive, what it cost, and the rate."""
+    shapes = {
+        name: "x".join(str(n) for n in shape[1::-1]) for name, shape in report.frames.items()
+    }
+    lines = [
+        f"  rig:        {report.rig}  {len(report.rig_cameras)} cameras, "
+        f"{report.image_buffers} image buffers, image_source {report.image_source}",
+        "  cameras:    "
+        + ", ".join(f"{name} {shapes.get(name, 'unread')}" for name in report.rig_cameras),
+        f"  read:       {report.reads} times, {report.ms_per_read:.1f} ms per read of the rig",
+    ]
+    missing = sorted(set(report.rig_cameras) - set(report.sensors))
+    if missing:
+        lines.append(f"  ! not on the env: {', '.join(missing)}")
+    if (
+        report.rig_tick_rate_s is not None
+        and report.read_interval_s is not None
+        and abs(report.rig_tick_rate_s - report.read_interval_s) > 1e-9
+    ):
+        lines.append(
+            f"  ! the spec declares tick_rate {report.rig_tick_rate_s:g} s and the cameras "
+            f"were read every {report.read_interval_s:g} s; nothing resampled"
+        )
+    return lines
 
 
 __all__ = [
@@ -339,6 +496,7 @@ __all__ = [
     "IDLE_ACTION",
     "MAX_STEP_PHRASE",
     "STILL_DRIVING",
+    "EnvReport",
     "Episode",
     "drive",
     "format_episode",

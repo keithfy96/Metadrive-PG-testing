@@ -24,3 +24,9 @@ How replay works
   Neither replay nor run opens a window, so there is nothing to watch yet. If you want a visual check, the smallest addition is a --render flag on replay that opens MetaDrive's own window for one scenario. That
   is a small step I can add to the plan.
 
+
+run replay with 2d visualisation
+
+uv run scenariobank run --bank banks/curve --tier easy \                                                            INT ✘  00:50:07 
+    --policy scenariobank.policies:ExpertPolicy --out film --record-video
+  xdg-open film/videos/curve_0003.mp4

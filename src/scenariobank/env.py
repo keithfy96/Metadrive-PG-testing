@@ -14,6 +14,7 @@ a cap" and never learn which kind they are driving. Written out, the seam is:
 | options | the six axes, `resolve_options` | the three replay switches, pinned |
 | managers | `ObstacleManager`, `VRUManager`, off the counts | the recording's |
 | observation | `OBSERVATION_SHAPE` (19) | `SCENARIO_OBSERVATION_SHAPE` (31) |
+| cameras | a `CameraRig`'s, mounted by `prepare` | the same |
 
 Both columns bound an **index** with `num_scenarios`, so `num_scenarios_for` sizes both:
 `base_env.py:926` asserts `start <= seed < start + num_scenarios` whichever env it is.
@@ -72,6 +73,7 @@ from __future__ import annotations
 
 import functools
 import logging
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -321,7 +323,7 @@ def pinned_lidar_class() -> type:
 
 
 def build_env(
-    bank_dir: Path, entry: Entry, options: ResolvedOptions
+    bank_dir: Path, entry: Entry, options: ResolvedOptions, rig: Any | None = None
 ) -> tuple[Any, Callable[[Any, Row], str | None]]:
     """Build the env for one entry and return it with its `prepare(env, row)` step.
 
@@ -330,17 +332,71 @@ def build_env(
     off the env so the report says what was set rather than what was asked; on a recorded row it
     does nothing and returns `None`, because the recording already has its route.
 
+    `rig`, a `CameraRig`, puts its cameras on the env -- the same way on both kinds -- and
+    `prepare` then also mounts them on the ego after every reset. Three config keys carry it
+    (Phase 4 Step 6): the cameras join `sensors`; `image_observation` goes on, **not for the
+    observation** -- `agent_observation` is pinned and wins (`base_env.py:674-678`), so the
+    policy still sees 19 -- but because `base_env.py:343-346` deletes every camera from a
+    headless env's sensors when it is off, and says nothing; and `image_source` names a rig
+    camera so MetaDrive's default `rgb_camera` is never registered as a buffer nothing reads.
+
     The caller owns `env.close()`.
     """
     config = build_config(bank_dir, entry, options)
     # The stock `sensors` entry is `(Lidar,)`; the pinned one keeps the other two sensors.
     config["sensors"] = {"lidar": (pinned_lidar_class(),)}
+    if rig is not None:
+        config["sensors"].update(rig.sensors())
+        config["image_observation"] = True
+        config["vehicle_config"]["image_source"] = rig.image_source()
     if isinstance(entry, RealWorldEntry):
         from metadrive.envs.scenario_env import ScenarioEnv
 
-        return ScenarioEnv(config), _prepare_recorded
+        return ScenarioEnv(config), _with_rig(_prepare_recorded, rig)
+    return procedural_env_class()(config), _with_rig(_prepare_procedural, rig)
 
-    return procedural_env_class()(config), _prepare_procedural
+
+#: What MetaDrive writes into the process environment when it opens an offscreen window, and
+#: what CPython says about it: `asset_loader.py:116` sets `PYTHONUTF8=on` for "load model file
+#: in utf-8" (only from `engine_core.py:250-252`, so only with a rig here, and only at the first
+#: `reset`, where the engine is built), and the value is not one CPython accepts -- every child
+#: process started afterwards dies at startup with `Fatal Python error: preconfig_init_utf8_mode:
+#: invalid PYTHONUTF8 environment variable value`. The variable does nothing for the process
+#: that set it; it is read at interpreter start. Found by the suite: the subprocess a handedness
+#: test spawns failed only after a rig env had been reset in the same process.
+_UTF8_KEY = "PYTHONUTF8"
+_UTF8_BAD_VALUE = "on"
+
+
+def _restore_utf8_variable(before: str | None) -> None:
+    """Put `PYTHONUTF8` back to what it was before the env was built, if MetaDrive broke it."""
+    if os.environ.get(_UTF8_KEY) != _UTF8_BAD_VALUE:
+        return
+    if before is None:
+        del os.environ[_UTF8_KEY]
+    else:
+        os.environ[_UTF8_KEY] = before
+
+
+def _with_rig(
+    prepare: Callable[[Any, Row], str | None], rig: Any | None
+) -> Callable[[Any, Row], str | None]:
+    """`prepare`, then the rig mounted on the ego. `prepare` itself when there is no rig.
+
+    Runs after every reset, which is where a rig env's engine comes to exist, so it is also
+    where MetaDrive's `PYTHONUTF8` is put back (`_restore_utf8_variable`).
+    """
+    if rig is None:
+        return prepare
+    utf8_before = os.environ.get(_UTF8_KEY)
+
+    def prepare_and_mount(env: Any, row: Row) -> str | None:
+        destination = prepare(env, row)
+        _restore_utf8_variable(utf8_before)
+        rig.mount(env)
+        return destination
+
+    return prepare_and_mount
 
 
 def _prepare_recorded(env: Any, row: Row) -> None:

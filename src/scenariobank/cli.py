@@ -1076,6 +1076,22 @@ def replay(
             "Changes nothing the report measures.",
         ),
     ] = None,
+    camera_rig: Annotated[
+        Path | None,
+        typer.Option(
+            "--camera-rig",
+            help="Mount this camera spec on the ego (rigs/av3.txt) and read it at every "
+            "decision; the report then says which cameras were alive and what a read cost.",
+        ),
+    ] = None,
+    ignore_rig_rate: Annotated[
+        bool,
+        typer.Option(
+            "--ignore-rig-rate",
+            help="Mount the rig even though its tick_rate is not the interval it is read at. "
+            "For looking at the cameras; the report still shows both rates.",
+        ),
+    ] = False,
 ) -> None:
     """Drive one scenario of a bank end to end and report what the drive measured.
 
@@ -1100,9 +1116,21 @@ def replay(
     how many actions were issued, never how long the episode was. A road steps at 10 Hz, so a
     faster decision rate than that is refused there.
 
+    **`--camera-rig` is the check that a rig's cameras are alive** (Phase 4 Step 6). MetaDrive
+    deletes every camera from a headless env's sensors unless `image_observation` is on
+    (`base_env.py:343`), so a rig that was never mounted looks exactly like one that was until
+    something reads it; this reads every camera at every decision and reports the sensors the
+    env held, how many image buffers, and the shape of each frame. The cameras never enter the
+    observation, so nothing else in the report moves. A spec's `tick_rate` has to equal the
+    interval it is read at -- the decision stride over the step rate -- and a road steps at
+    10 Hz, so `rigs/av3.txt` at 0.05 s is refused there unless `--ignore-rig-rate` says the
+    mismatch is understood.
+
     Needs the simulator. A full replay of `banks/junction-1` costs about 11 s; a road is well
-    under a second. Use `--steps` to check the round trip without paying for the whole episode.
+    under a second, and about 15 s more with a six-camera rig, which is the offscreen window.
+    Use `--steps` to check the round trip without paying for the whole episode.
     """
+    from scenariobank.av3.camera_rig import RigError
     from scenariobank.bank import BankError, read_manifest
     from scenariobank.replay import drive, format_episode
 
@@ -1114,12 +1142,103 @@ def replay(
             decision_hz=decision_hz,
             steps=steps,
             record_video=record_video,
+            camera_rig=camera_rig,
+            ignore_rig_rate=ignore_rig_rate,
         )
-    except (BankError, ValueError) as error:
+    except (BankError, RigError, ValueError) as error:
         typer.echo(f"replay failed: {error}", err=True)
         raise typer.Exit(code=1) from error
 
     typer.echo(episode.model_dump_json(indent=2) if as_json else format_episode(episode))
+
+
+@app.command()
+def rig(
+    camera_rig: Annotated[
+        Path, typer.Option("--camera-rig", help="The camera spec to read (rigs/av3.txt).")
+    ],
+    check_frame: Annotated[
+        bool,
+        typer.Option(
+            "--check-frame",
+            help="Also measure MetaDrive's vehicle frame on a real env, the facts the "
+            "conversion rests on. Needs --bank and the simulator.",
+        ),
+    ] = False,
+    bank: Annotated[
+        Path | None,
+        typer.Option("--bank", help="The bank whose first scenario the frame is measured on."),
+    ] = None,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Emit the report as JSON instead of aligned text.")
+    ] = False,
+) -> None:
+    """Read a camera-rig spec, convert it into MetaDrive's frame, and say where each camera aims.
+
+    The spec is CARLA's (x forward, y right, +yaw right) and MetaDrive's vehicle frame is not
+    (x right, y forward, +heading left), so the conversion is an x/y swap and a sign flip on yaw
+    -- `av3/camera_rig.py` carries the measurements it was derived from. This prints every
+    camera's resolved mount, heading and pitch beside its name and the direction it aims in
+    words, so a camera named `front_left` that looks right is visible rather than baked in.
+    Offline: reading a spec needs no simulator.
+
+    `--check-frame` re-measures the frame itself on a real env: a `NodePath` parented to the
+    ego is given a local offset or angle and read back in world coordinates against the car's
+    own heading and attitude. Six rows -- +y forward, +x right, +H left, -H right, +P up, -P
+    down -- and every rig mount and aim is wrong until all six pass. That is the sign-convention
+    probe of Phase 4 Step 6; the model's own conversions are Step 7's, measured beside it.
+    """
+    from scenariobank.av3.camera_rig import (
+        RigError,
+        format_frame,
+        load_rig,
+        report_for,
+    )
+    from scenariobank.av3.camera_rig import (
+        check_frame as measure_frame,
+    )
+
+    try:
+        loaded = load_rig(camera_rig, read_interval_s=None)
+    except RigError as error:
+        typer.echo(f"rig spec rejected: {error}", err=True)
+        raise typer.Exit(code=1) from error
+
+    rows = None
+    if check_frame:
+        if bank is None:
+            typer.echo("rig failed: --check-frame needs --bank, the road to measure on", err=True)
+            raise typer.Exit(code=2)
+        _require_simulator()
+        from scenariobank.bank import BankError, read_manifest
+        from scenariobank.env import build_env, seed_for
+        from scenariobank.options import resolve_options
+        from scenariobank.replay import select
+
+        try:
+            manifest = read_manifest(bank)
+            _, entry, row = select(manifest)
+        except BankError as error:
+            typer.echo(f"rig failed: {error}", err=True)
+            raise typer.Exit(code=1) from error
+        env, prepare = build_env(bank, entry, resolve_options(manifest), rig=loaded)
+        try:
+            env.reset(seed=seed_for(row))
+            prepare(env, row)
+            rows = measure_frame(env)
+        finally:
+            env.close()
+
+    report = report_for(loaded, rows)
+    if as_json:
+        typer.echo(report.model_dump_json(indent=2))
+    else:
+        typer.echo("\n".join(loaded.describe()))
+        if rows is not None:
+            typer.echo(f"MetaDrive's vehicle frame, measured on {bank}:")
+            typer.echo("\n".join(format_frame(rows)))
+    if rows is not None and not all(check.ok for check in rows):
+        raise typer.Exit(code=1)
 
 
 #: One axis's level flag on `run`, where it overrides the bank's pinned level for this run only.

@@ -1,0 +1,140 @@
+# The six cameras the AV3 checkpoint reads, in a form tools/camera_rig.py can mount.
+#
+# GENERATED from
+#   /home/keith/Desktop/work/wingfin/wing-sim/evaluation/configurations/validation_invariants.yml
+# which is the rig the weights were trained on. Do not hand-edit: re-derive it from that file
+# if it moves. The camera *names* are model_dev.yml's `camera_order` and are a contract with
+# the weights, so they are kept exactly.
+#
+# THE CONVERSION. wing-sim states its mounts in the vehicle frame the CAD uses -- ISO 8855 /
+# REP-103: origin at the rear-axle centre ON THE GROUND, x forward, y LEFT, yaw CCW-positive,
+# pitch quoted nose-DOWN. It says so in its own header, and
+# `sensors/utils.py:transform_from_config` is the conversion it applies:
+#
+#     y  ->  -y        handedness
+#     yaw -> -yaw      handedness
+#     pitch -> -pitch  the two conventions disagree about which way is positive
+#     roll -> roll     UNCHANGED, and wing-sim measured that rather than deriving it
+#     x  ->  rear_axle_x + x        datum
+#     z  ->  ground_z    + z        datum
+#
+# tools/camera_rig.py reads a spec in CARLA's frame relative to the actor origin, so the four
+# sign rules are applied here and the two datum shifts are resolved against MetaDrive's
+# DefaultVehicle rather than against a BYD ATTO 3:
+#
+#     rear axle    y = -REAR_WHEELBASE  = -1.4166   (vehicle_type.py)
+#     ground       z = -CHASSIS_TO_WHEEL_AXIS = -0.2
+#                      (base_vehicle.py:687 puts the wheel axis at TIRE_RADIUS -
+#                       CHASSIS_TO_WHEEL_AXIS, and the ground one tire radius below it)
+#
+# Height above the ROAD is what is preserved, not height above the roofline -- the same thing
+# wing-sim does when it resolves this rig onto a body that is not the one it was measured on.
+# MetaDrive's default car is shorter than an ATTO 3, so these sit above its roof.
+#
+# WHY THIS IS NOT rigs/cams.txt. That file has y: 0.0 on all seven cameras, so its yaw column
+# has nothing to be cross-checked against and it is self-inconsistent about the sign (see
+# `camera_rig.Camera.aim`). Here the two columns agree by construction, so every camera's name
+# and its resolved aim say the same thing. cams.txt is left untouched: every step-timing figure
+# in the repo was priced with it and must keep meaning what it says.
+#
+# TWO GAPS, stated rather than hidden:
+#
+#   * FISHEYE. The four corners are 105.4 deg equidistant lenses. MetaDrive's RGBCamera is
+#     rectilinear and cannot render one, exactly as CARLA's cannot. The fov below is
+#     wing-sim's own `default_fov` -- what `camera.py:90` renders an UNWARPED fisheye at -- so
+#     this matches a CARLA run with fisheye off. It is not the lens. wing-sim's header says 70
+#     is the worst of the three available pinhole readings and is held anyway so the corners
+#     move once rather than twice; the same reasoning applies here.
+#
+#   * RENDER SIZE. The spec renders 1440x1080 and the model eats 512x288 -- a 4:3 frame
+#     SQUASHED vertically by 1.33x into 16:9, which the model was trained on. So this must
+#     render 4:3 and let the preprocess do the squash; rendering 512x288 natively would give a
+#     vertical field of view a third narrower than the model has ever seen, with nothing
+#     raising. 512x384 is 4:3 at 1/2.8125 the linear size -- the same picture, 1/8 the pixels.
+#
+# tick_rate is 0.05 s, the interval the AV3 stack is driven at:
+# `--step-hz 100 --decision-hz 20`, which is also what openpilot's bridge is written for.
+sensors:
+  - type: rgb_camera
+    name: front_middle
+    transform:
+      x: 0.2244
+      y: 0
+      z: 1.393
+      pitch: -5
+      yaw: 0
+      roll: 0
+    width: 512
+    height: 384
+    fov: 42.1
+    tick_rate: 0.05
+
+  - type: rgb_camera
+    name: front_right
+    transform:
+      x: 0.1844
+      y: 0.468
+      z: 1.392
+      pitch: -10
+      yaw: 53.7
+      roll: 0
+    width: 512
+    height: 384
+    fov: 70   # lens is a 105.4 deg fisheye; this is wing-sim's own unwarped fallback
+    tick_rate: 0.05
+
+  - type: rgb_camera
+    name: rear_right
+    transform:
+      x: -1.3016
+      y: 0.412
+      z: 1.462
+      pitch: -10
+      yaw: 116.9
+      roll: 0
+    width: 512
+    height: 384
+    fov: 70   # lens is a 105.4 deg fisheye; this is wing-sim's own unwarped fallback
+    tick_rate: 0.05
+
+  - type: rgb_camera
+    name: rear_middle
+    transform:
+      x: -1.4066
+      y: 0
+      z: 1.464
+      pitch: -5
+      yaw: 180
+      roll: 0
+    width: 512
+    height: 384
+    fov: 45
+    tick_rate: 0.05
+
+  - type: rgb_camera
+    name: rear_left
+    transform:
+      x: -1.3016
+      y: -0.412
+      z: 1.462
+      pitch: -10
+      yaw: -116.9
+      roll: 0
+    width: 512
+    height: 384
+    fov: 70   # lens is a 105.4 deg fisheye; this is wing-sim's own unwarped fallback
+    tick_rate: 0.05
+
+  - type: rgb_camera
+    name: front_left
+    transform:
+      x: 0.1844
+      y: -0.468
+      z: 1.392
+      pitch: -10
+      yaw: -53.7
+      roll: 0
+    width: 512
+    height: 384
+    fov: 70   # lens is a 105.4 deg fisheye; this is wing-sim's own unwarped fallback
+    tick_rate: 0.05
