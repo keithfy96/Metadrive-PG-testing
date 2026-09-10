@@ -609,8 +609,17 @@ the repository root. An absolute path goes where it says. `--out film --tier har
 `out/film/hard/`, so the three tiers of one bank sit side by side instead of overwriting
 each other; a run without a tier writes to the directory itself.
 
+**`--camera-rig` puts the model's cameras on the car, and `--record-video` then films what
+they see** (Phase 4 Step 6b): `<out>/videos/<scenario_id>.<camera>.mp4` per camera and
+`<scenario_id>.rig.mp4` with every view tiled, beside the top-down film, at the step rate.
+The cameras never enter the observation, so a row with a rig scores exactly as the row
+without one. The AV3 spec declares 0.05 s and a road steps at 10 Hz, so it needs
+`--ignore-rig-rate` until a run can step at 100 Hz (Step 7); a film is a look, not a model
+input, and the record keeps both rates.
+
 Needs the simulator. A `T` road is well under a second per scenario; `banks/junction-1` is
-about 11 s.
+about 11 s; a rig adds about 15 s per row to open the offscreen window, and filming six
+cameras about 60 ms a step on the host.
 
 | flag | | repeats | meaning |
 |---|---|---|---|
@@ -635,15 +644,18 @@ about 11 s.
 | `--cyclists-count <float>` | optional |  | How many cyclists as a number, instead of a level name for cyclists. A whole number, 0 or more. |
 | `--decision-hz <float>` | optional |  | Hold each action for this decision rate. Defaults to every step. A rate no faster than the env steps: 10 on a road, the recording's own rate on an import. |
 | `--save-trajectories` | default `false` |  | Also write each scenario's per-decision actions under trajectories/. |
-| `--record-video` | default `false` |  | Write a top-down film of every row to <out>/videos/<scenario_id>.mp4, for looking at a run. Off by default; changes nothing the result records. |
+| `--record-video` | default `false` |  | Write a top-down film of every row to <out>/videos/<scenario_id>.mp4, for looking at a run, and with --camera-rig one film per camera and a mosaic of them all beside it. Off by default; changes nothing the result records. |
+| `--camera-rig <path>` | optional |  | Mount this camera spec on the ego for every row (rigs/av3.txt); the record names it, and --record-video then films every camera too. |
+| `--ignore-rig-rate` | default `false` |  | Mount the rig even though its tick_rate is not the interval it is read at. For filming: a film reads at the step rate whatever the spec says. A policy that reads the rig refuses it. |
 
 ```bash
-uv run scenariobank run --bank ./banks/t-junction --out ./runs/floor                                                                    # the whole bank against the constant-action floor
-uv run scenariobank run --bank ./banks/curve --tier hard --traffic low --policy scenariobank.policies:ConstantPolicy --out ./runs/hard  # hard everywhere except traffic
-uv run scenariobank run --bank ./banks/t-junction --policy scenariobank.policies:ExpertPolicy --out ./runs/ceiling                      # the ceiling: the bundled expert, deterministic
-uv run scenariobank run --bank ./banks/junction-1 --decision-hz 20 --out ./runs/j1                                                      # a recording, deciding at 20 Hz
-uv run scenariobank run --job ./job.json --out ./runs/queued                                                                            # what the container runs
-uv run scenariobank run --bank ./banks/curve --scenarios curve_0000,curve_0003 --save-trajectories --out ./runs/two                     # two rows, with their per-decision actions
+uv run scenariobank run --bank ./banks/t-junction --out ./runs/floor                                                                                                          # the whole bank against the constant-action floor
+uv run scenariobank run --bank ./banks/curve --tier hard --traffic low --policy scenariobank.policies:ConstantPolicy --out ./runs/hard                                        # hard everywhere except traffic
+uv run scenariobank run --bank ./banks/t-junction --policy scenariobank.policies:ExpertPolicy --out ./runs/ceiling                                                            # the ceiling: the bundled expert, deterministic
+uv run scenariobank run --bank ./banks/junction-1 --decision-hz 20 --out ./runs/j1                                                                                            # a recording, deciding at 20 Hz
+uv run scenariobank run --job ./job.json --out ./runs/queued                                                                                                                  # what the container runs
+uv run scenariobank run --bank ./banks/curve --scenarios curve_0000,curve_0003 --save-trajectories --out ./runs/two                                                           # two rows, with their per-decision actions
+uv run scenariobank run --bank ./banks/curve --tier hard --policy scenariobank.policies:ExpertPolicy --out film --camera-rig ./rigs/av3.txt --ignore-rig-rate --record-video  # a film of the drive from all six cameras, out/film/hard/videos/
 ```
 
 ## Do all of it in a page

@@ -140,6 +140,12 @@ EXAMPLES: dict[str, tuple[tuple[str, str], ...]] = {
             "--save-trajectories --out ./runs/two",
             "two rows, with their per-decision actions",
         ),
+        (
+            "uv run scenariobank run --bank ./banks/curve --tier hard "
+            "--policy scenariobank.policies:ExpertPolicy --out film "
+            "--camera-rig ./rigs/av3.txt --ignore-rig-rate --record-video",
+            "a film of the drive from all six cameras, out/film/hard/videos/",
+        ),
     ),
     "replay": (
         ("uv run scenariobank replay --bank ./banks/junction-1", ""),

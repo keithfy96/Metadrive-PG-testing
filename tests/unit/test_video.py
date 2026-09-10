@@ -20,7 +20,7 @@ import pytest
 from scenariobank.doctor import has_simulator
 from scenariobank.results import JOB_SCHEMA_VERSION, Job, JobBank, JobOptions
 from scenariobank.runner import run_bank, run_episode
-from scenariobank.video import SCREEN_SIZE, Recorder, VideoError
+from scenariobank.video import SCREEN_SIZE, CameraFilm, Recorder, VideoError, chain, mosaic
 
 
 def _has_cv2() -> bool:
@@ -84,6 +84,104 @@ def test_the_recorder_refuses_by_name(tmp_path):
     with pytest.raises(VideoError, match="640x480"):
         recorder.write(np.zeros((480, 640, 3), dtype=np.uint8))
     recorder.close()
+
+
+@needs_cv2
+def test_the_recorder_takes_a_size_and_holds_its_frames_to_it(tmp_path):
+    recorder = Recorder().open(tmp_path / "cam.mp4", fps=10, size=(64, 48))
+    recorder.write(np.zeros((48, 64, 3), dtype=np.uint8))
+    with pytest.raises(VideoError, match=r"800x800, and the film is \(64, 48\)"):
+        recorder.write(np.zeros((800, 800, 3), dtype=np.uint8))
+    assert recorder.close() == 1
+    assert read_back(tmp_path / "cam.mp4") == (1, 10.0, 64, 48)
+
+
+# --- offline: the camera film ---------------------------------------------------------------------
+
+
+def tile(shade: int, height: int = 4, width: int = 6) -> np.ndarray:
+    return np.full((height, width, 3), shade, dtype=np.uint8)
+
+
+def test_a_mosaic_tiles_three_across_in_order_and_pads_the_last_row_with_black():
+    six = mosaic([tile(n) for n in (1, 2, 3, 4, 5, 6)])
+    assert six.shape == (8, 18, 3)
+    assert [int(six[0, c * 6, 0]) for c in range(3)] == [1, 2, 3]
+    assert [int(six[4, c * 6, 0]) for c in range(3)] == [4, 5, 6]
+    four = mosaic([tile(n) for n in (1, 2, 3, 4)])
+    assert four.shape == (8, 18, 3)
+    assert [int(four[4, c * 6, 0]) for c in range(3)] == [4, 0, 0], "black where it runs short"
+    one = mosaic([tile(9)])
+    assert one.shape == (4, 6, 3) and int(one[0, 0, 0]) == 9
+    assert mosaic([tile(1), tile(2)], columns=1).shape == (8, 6, 3)
+
+
+def test_a_mosaic_of_mixed_sizes_or_nothing_is_refused_by_name():
+    with pytest.raises(VideoError, match="tile 1 is 8x4 and the first is 6x4"):
+        mosaic([tile(1), tile(2, width=8)])
+    with pytest.raises(VideoError, match="no frames"):
+        mosaic([])
+
+
+class FakeCamera:
+    def __init__(self, name: str, width: int, height: int) -> None:
+        self.name, self.width, self.height = name, width, height
+
+
+class FakeRig:
+    """Reads a frame per camera whose shade is the read count, so a film's frames are ordered."""
+
+    def __init__(self, *cameras: FakeCamera) -> None:
+        self.cameras = list(cameras)
+        self.reads = 0
+
+    def read(self):
+        self.reads += 1
+        return {
+            camera.name: np.full((camera.height, camera.width, 3), self.reads, dtype=np.uint8)
+            for camera in self.cameras
+        }
+
+
+@needs_cv2
+def test_the_camera_film_writes_one_file_per_camera_and_the_mosaic_from_one_read(tmp_path):
+    rig = FakeRig(FakeCamera("a", 64, 48), FakeCamera("b", 64, 48), FakeCamera("c", 64, 48),
+                  FakeCamera("d", 64, 48))
+    film = CameraFilm().open(tmp_path, "row", rig, fps=10)
+    for _ in range(3):
+        film.add(env=None)
+    assert film.close() == 3
+    assert rig.reads == 3, "one read of the rig per frame, however many films"
+    assert [path.name for path in film.paths] == [
+        "row.a.mp4", "row.b.mp4", "row.c.mp4", "row.d.mp4", "row.rig.mp4"
+    ]
+    for name in ("a", "b", "c", "d"):
+        assert read_back(tmp_path / f"row.{name}.mp4") == (3, 10.0, 64, 48)
+    assert read_back(tmp_path / "row.rig.mp4") == (3, 10.0, 192, 96), "four tiles, 3x2"
+    assert film.mosaic_skipped is None
+    with pytest.raises(VideoError, match="not open"):
+        CameraFilm().add(env=None)
+
+
+@needs_cv2
+def test_a_rig_of_two_sizes_is_filmed_per_camera_and_the_mosaic_is_skipped_by_name(tmp_path):
+    rig = FakeRig(FakeCamera("wide", 128, 48), FakeCamera("narrow", 64, 48))
+    film = CameraFilm().open(tmp_path, "row", rig, fps=10)
+    film.add(env=None)
+    film.close()
+    assert [path.name for path in film.paths] == ["row.wide.mp4", "row.narrow.mp4"]
+    assert film.mosaic_skipped == "the rig's cameras are 64x48, 128x48 and a mosaic tiles one size"
+    assert not (tmp_path / "row.rig.mp4").exists()
+
+
+def test_chain_runs_every_hook_in_order_and_is_nothing_when_there_are_none():
+    seen = []
+    both = chain(lambda env: seen.append(("a", env)), None, lambda env: seen.append(("b", env)))
+    both("env")
+    assert seen == [("a", "env"), ("b", "env")]
+    only = seen.append
+    assert chain(None, only) is only
+    assert chain(None, None) is None
 
 
 # --- offline: the hook ---------------------------------------------------------------------------

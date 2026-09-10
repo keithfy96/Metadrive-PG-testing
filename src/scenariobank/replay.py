@@ -54,7 +54,6 @@ changes how many actions are issued and never how long the episode is.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -264,7 +263,8 @@ def drive(
     takes no option flags because it measures a bank, not a run of it. `steps` caps the run short,
     for a quick check that the round trip works without paying for the whole episode; the episode
     it reports then ends `capped short` rather than pretending the cap was the env's.
-    `record_video` films the drive into that one file, top-down, at the step rate (`video.py`).
+    `record_video` films the drive into that one file, top-down, at the step rate (`video.py`),
+    and with a rig, every camera beside it (`<name>.<camera>.mp4`, `<name>.rig.mp4`).
     `camera_rig` mounts that spec's cameras and reads them at every decision; its `tick_rate`
     must match the read interval unless `ignore_rig_rate`, and either way the report says both.
     """
@@ -289,10 +289,17 @@ def drive(
         rig = load_rig(camera_rig, read_interval_s=None if ignore_rig_rate else read_interval_s)
 
     recorder = None
+    film = None
     if record_video is not None:
-        from scenariobank.video import Recorder
+        from scenariobank.video import CameraFilm, Recorder, chain
 
+        record_video = Path(record_video)
         recorder = Recorder().open(record_video, fps=step_hz)
+        if rig is not None:
+            # `x.mp4` -> `x.<camera>.mp4` and `x.rig.mp4` beside it, the way `run` names them.
+            film = CameraFilm().open(record_video.parent, record_video.stem, rig, fps=step_hz)
+    else:
+        from scenariobank.video import chain
     reader = None if rig is None else _RigReader(rig, stride)
     env, prepare = build_env(bank_dir, entry, options, rig=rig)
     try:
@@ -303,12 +310,18 @@ def drive(
             cap=cap,
             stride=stride,
             act=lambda _observation: action,
-            observe=_chain(None if recorder is None else recorder.add, reader),
+            observe=chain(
+                None if recorder is None else recorder.add,
+                None if film is None else film.add,
+                reader,
+            ),
         )
         env_report = _env_report(env, rig, reader, read_interval_s)
     finally:
         if recorder is not None:
             recorder.close()
+        if film is not None:
+            film.close()
         env.close()
 
     flags = {key: bool(run.info.get(key)) for key, _ in ENDINGS if key in run.info}
@@ -369,21 +382,6 @@ class _RigReader:
             self.reads += 1
             self.frames = {name: tuple(int(n) for n in f.shape) for name, f in frames.items()}
         self.calls += 1
-
-
-def _chain(*hooks: Callable[[Any], None] | None) -> Callable[[Any], None] | None:
-    """One `observe` out of several, in order; `None` when there is nothing to observe."""
-    live = [hook for hook in hooks if hook is not None]
-    if not live:
-        return None
-    if len(live) == 1:
-        return live[0]
-
-    def observe(env: Any) -> None:
-        for hook in live:
-            hook(env)
-
-    return observe
 
 
 def _env_report(env: Any, rig: Any, reader: _RigReader | None, read_interval_s: float) -> EnvReport:

@@ -41,6 +41,14 @@ cannot ask for it, and `test_reproducibility.py` holds the row filmed to the row
 `actions_digest` included. What it is for is looking: cones, barriers, people and traffic on
 the road the numbers describe.
 
+**A camera rig rides on a run the same way, and a film from it is the same hook** (Step 6b).
+`run_bank(camera_rig=...)` loads the spec before any env is built -- the same rate refusal
+`replay` makes, unless `ignore_rig_rate` -- hands it to `build_env`, which mounts it after every
+reset, and with `record_video` points a second hook at `video.CameraFilm`: one mp4 per camera
+and a mosaic of all of them beside the top-down film. The cameras are read off the engine and
+never through the observation, so a row with a rig scores as the row without one;
+`test_camera_rig.py` holds that, `actions_digest` included.
+
 **The decision rate is a stride in this loop**, never a MetaDrive key: the same action is handed
 to `env.step` until the next decision is due, so a slower rate changes how many actions are
 issued and never how long the episode is.
@@ -93,6 +101,7 @@ from scenariobank.results import (
     summarize,
     write_json,
 )
+from scenariobank.video import chain
 
 #: The `info` flags a collision count is read off, as `info` key -> the name the count is kept
 #: under. In the order `metadrive_env.py:138-142` writes them.
@@ -463,6 +472,8 @@ def run_bank(
     stop: Callable[[], bool] | None = None,
     progress: Callable[[str], None] | None = None,
     record_video: bool = False,
+    camera_rig: Path | None = None,
+    ignore_rig_rate: bool = False,
 ) -> Results:
     """Run every scenario a job names and write the results under `out`. The one entry point.
 
@@ -473,6 +484,10 @@ def run_bank(
     unless the caller hands one in, which is how a test stops a batch without a signal.
     `record_video` films every row into `<out>/videos/<scenario_id>.mp4` at the step rate; it is
     a switch on the run and not a field of the job, so nothing a queue job says can turn it on.
+    `camera_rig` mounts that spec's cameras on the ego for every row, and with `record_video`
+    films each of them too (`<out>/videos/<scenario_id>.<camera>.mp4` and `<scenario_id>.rig.mp4`,
+    the mosaic); its `tick_rate` must equal the read interval unless `ignore_rig_rate`, the
+    switch for filming, which a policy that reads the rig refuses.
 
     Returns the `Results` it wrote to `<out>/results.json`. A stopped batch returns normally --
     a cancelled run that still writes its results is a scored partial run. A batch whose
@@ -505,6 +520,11 @@ def run_bank(
     stride = stride_for(
         step_hz, job.decision_hz, what="the recording" if recorded else "the env"
     )
+    rig = None
+    if camera_rig is not None:
+        from scenariobank.av3.camera_rig import load_rig
+
+        rig = load_rig(camera_rig, read_interval_s=None if ignore_rig_rate else stride / step_hz)
     out = Path(out)
     (out / "results").mkdir(parents=True, exist_ok=True)
     if record_video:
@@ -523,10 +543,11 @@ def run_bank(
                 break
             env = None
             recorder = None
+            film = None
             try:
                 built = time.perf_counter()
                 try:
-                    env, prepare = build_env(bank_dir, entry, options)
+                    env, prepare = build_env(bank_dir, entry, options, rig=rig)
                     bind_policy(act, env)
                 except Exception:  # noqa: BLE001 -- the batch's promise: this row is an error row
                     result = _error_row(name, entry, row, seconds=time.perf_counter() - built)
@@ -535,15 +556,20 @@ def run_bank(
                     say(f"{row.scenario_id}: error building the env")
                     continue
                 if record_video:
-                    from scenariobank.video import Recorder
+                    from scenariobank.video import CameraFilm, Recorder
 
                     recorder = Recorder().open(
                         out / "videos" / f"{row.scenario_id}.mp4", fps=step_hz
                     )
+                    if rig is not None:
+                        film = CameraFilm().open(out / "videos", row.scenario_id, rig, fps=step_hz)
                 result, drive = _score(
                     env, prepare, name=name, entry=entry, row=row, act=act,
                     stride=stride, stop=flag,
-                    observe=None if recorder is None else recorder.add,
+                    observe=chain(
+                        None if recorder is None else recorder.add,
+                        None if film is None else film.add,
+                    ),
                 )
                 results.append(result)
                 write_json(out / "results" / f"{row.scenario_id}.json", result)
@@ -563,6 +589,8 @@ def run_bank(
             finally:
                 if recorder is not None:
                     recorder.close()
+                if film is not None:
+                    film.close()
                 if env is not None:
                     env.close()
         stopped = bool(flag())
@@ -594,6 +622,8 @@ def run_bank(
             decision_hz=job.decision_hz,
             stride=stride,
             metadrive_commit=_metadrive_commit(),
+            camera_rig=None if rig is None else rig.path,
+            rig_tick_rate_s=None if rig is None else rig.tick_rate_s,
         ),
         results=results,
         summary=summarize(results),

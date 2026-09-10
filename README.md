@@ -437,10 +437,24 @@ enter the observation, which stays 19 wide, and the expert's actions are identic
 on and off (`tests/unit/test_camera_rig.py`).
 
 The AV3 rig declares 0.05 s and a road steps at 10 Hz; nothing resamples, so the loader refuses
-the mismatch and `--ignore-rig-rate` is the switch for looking anyway. `run` has no such switch:
-the rig is read at its own rate only once a run can step at 100 Hz (Phase 4 Step 7).
+the mismatch and `--ignore-rig-rate` is the switch for looking anyway, on `replay` and on `run`.
+A model that reads the rig will refuse it; the rig is read at its own rate only once a run can
+step at 100 Hz (Phase 4 Step 7).
 
-**Writes:** nothing.
+**A film from the cameras** is `run --camera-rig --record-video`:
+
+```bash
+uv run scenariobank run --bank banks/curve --tier hard --policy scenariobank.policies:ExpertPolicy \
+  --out film --camera-rig rigs/av3.txt --ignore-rig-rate --record-video
+xdg-open out/film/hard/videos/curve_0000.rig.mp4
+```
+
+Beside the top-down `videos/<scenario_id>.mp4` it writes one mp4 per camera,
+`<scenario_id>.<camera>.mp4` at the spec's size, and `<scenario_id>.rig.mp4`, every view tiled
+three across, at the step rate so a 10 Hz road plays in real time. The pictures are the frames a
+model would read, straight off the rig; the row's numbers are the numbers without the film.
+
+**Writes:** `rig` nothing; `run` its record under `out/`, plus the films with `--record-video`.
 
 ## What gets generated, and where
 

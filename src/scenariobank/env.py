@@ -333,12 +333,14 @@ def build_env(
     does nothing and returns `None`, because the recording already has its route.
 
     `rig`, a `CameraRig`, puts its cameras on the env -- the same way on both kinds -- and
-    `prepare` then also mounts them on the ego after every reset. Three config keys carry it
+    `prepare` then also mounts them on the ego after every reset. Four config keys carry it
     (Phase 4 Step 6): the cameras join `sensors`; `image_observation` goes on, **not for the
     observation** -- `agent_observation` is pinned and wins (`base_env.py:674-678`), so the
     policy still sees 19 -- but because `base_env.py:343-346` deletes every camera from a
-    headless env's sensors when it is off, and says nothing; and `image_source` names a rig
-    camera so MetaDrive's default `rgb_camera` is never registered as a buffer nothing reads.
+    headless env's sensors when it is off, and says nothing; `image_source` names a rig
+    camera so MetaDrive's default `rgb_camera` is never registered as a buffer nothing reads;
+    and `preload_models` goes off, because a render-mode env otherwise warms objects into the
+    pool that a headless env never sees, and the drive moves (Step 6b).
 
     The caller owns `env.close()`.
     """
@@ -349,6 +351,13 @@ def build_env(
         config["sensors"].update(rig.sensors())
         config["image_observation"] = True
         config["vehicle_config"]["image_source"] = rig.image_source()
+        # `preload_models` (default True) runs only in a render mode (`base_engine.py:749`): it
+        # spawns a pedestrian, a traffic light, a barrier and a cone at [0, 0], steps them, and
+        # hands them back to the object pool. The row then gets those warmed objects where a
+        # headless env gets fresh ones, and the expert's throttle parted from the headless
+        # drive in the seventh decimal at decision 60 on `curve_0000` at `hard` -- reproducibly.
+        # Measured 2026-09-10 (Step 6b): with it off, a rig env drives the headless row exactly.
+        config["preload_models"] = False
     if isinstance(entry, RealWorldEntry):
         from metadrive.envs.scenario_env import ScenarioEnv
 

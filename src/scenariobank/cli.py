@@ -1359,7 +1359,25 @@ def run(
         typer.Option(
             "--record-video",
             help="Write a top-down film of every row to <out>/videos/<scenario_id>.mp4, for "
-            "looking at a run. Off by default; changes nothing the result records.",
+            "looking at a run, and with --camera-rig one film per camera and a mosaic of them "
+            "all beside it. Off by default; changes nothing the result records.",
+        ),
+    ] = False,
+    camera_rig: Annotated[
+        Path | None,
+        typer.Option(
+            "--camera-rig",
+            help="Mount this camera spec on the ego for every row (rigs/av3.txt); the record "
+            "names it, and --record-video then films every camera too.",
+        ),
+    ] = None,
+    ignore_rig_rate: Annotated[
+        bool,
+        typer.Option(
+            "--ignore-rig-rate",
+            help="Mount the rig even though its tick_rate is not the interval it is read at. "
+            "For filming: a film reads at the step rate whatever the spec says. A policy "
+            "that reads the rig refuses it.",
         ),
     ] = False,
 ) -> None:
@@ -1392,8 +1410,17 @@ def run(
     `out/film/hard/`, so the three tiers of one bank sit side by side instead of overwriting
     each other; a run without a tier writes to the directory itself.
 
+    **`--camera-rig` puts the model's cameras on the car, and `--record-video` then films what
+    they see** (Phase 4 Step 6b): `<out>/videos/<scenario_id>.<camera>.mp4` per camera and
+    `<scenario_id>.rig.mp4` with every view tiled, beside the top-down film, at the step rate.
+    The cameras never enter the observation, so a row with a rig scores exactly as the row
+    without one. The AV3 spec declares 0.05 s and a road steps at 10 Hz, so it needs
+    `--ignore-rig-rate` until a run can step at 100 Hz (Step 7); a film is a look, not a model
+    input, and the record keeps both rates.
+
     Needs the simulator. A `T` road is well under a second per scenario; `banks/junction-1` is
-    about 11 s.
+    about 11 s; a rig adds about 15 s per row to open the offscreen window, and filming six
+    cameras about 60 ms a step on the host.
     """
     from pydantic import ValidationError
 
@@ -1489,6 +1516,8 @@ def run(
             out,
             progress=lambda line: typer.echo(line, err=True),
             record_video=record_video,
+            camera_rig=camera_rig,
+            ignore_rig_rate=ignore_rig_rate,
         )
     except (BankError, OptionError, PolicyError, RunError, ValidationError, ValueError) as error:
         typer.echo(f"run failed: {error}", err=True)

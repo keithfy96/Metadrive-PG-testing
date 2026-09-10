@@ -260,8 +260,8 @@ def test_the_rig_command_refuses_a_bad_spec_and_a_probe_with_no_bank(tmp_path):
 
 def test_replay_refuses_the_av3_rig_on_a_10_hz_road_before_building_anything(tmp_path):
     """The AV3 rig declares 0.05 s and a road reads it every 0.1 s at most; nothing resamples,
-    so the refusal is off the manifest and needs no simulator. `--ignore-rig-rate` is the
-    switch for looking anyway, and `run` has no such switch."""
+    so the refusal is off the manifest and needs no simulator, on `run` as on `replay`.
+    `--ignore-rig-rate` is the switch for looking anyway, on both."""
     from test_replay import procedural
 
     from scenariobank.bank import write_manifest
@@ -270,8 +270,13 @@ def test_replay_refuses_the_av3_rig_on_a_10_hz_road_before_building_anything(tmp
     result = run_cli("replay", "--bank", str(tmp_path), "--camera-rig", str(AV3))
     assert result.exit_code == 1
     assert "tick_rate 0.05 s (20 Hz), but these cameras are read every 0.1 s" in result.output
+    result = run_cli("run", "--bank", str(tmp_path), "--camera-rig", str(AV3),
+                     "--out", str(tmp_path / "out"))
+    assert result.exit_code == 1
+    assert "tick_rate 0.05 s (20 Hz), but these cameras are read every 0.1 s" in result.output
+    assert not (tmp_path / "out").exists(), "refused before anything was written"
     assert "--ignore-rig-rate" in run_cli("replay", "--help").output
-    assert "--ignore-rig-rate" not in run_cli("run", "--help").output
+    assert "--ignore-rig-rate" in run_cli("run", "--help").output, "for filming (Step 6b)"
 
 
 # --- live: six cameras alive ----------------------------------------------------------------
@@ -371,3 +376,53 @@ def test_the_mounted_rig_reads_six_pictures_and_the_frame_is_what_the_conversion
     assert with_rig.issued_actions == without.issued_actions
     assert with_rig.steps == without.steps == cap
     assert with_rig.observation_shape == without.observation_shape == (19,)
+
+
+@needs_sim
+@needs_curve
+def test_a_filmed_run_with_the_rig_is_the_plain_run_and_every_camera_has_a_film(tmp_path):
+    """`run --camera-rig --record-video`, the reason the rig can go on `run` before Step 7: the
+    expert drives `curve_0000` at `hard` with the rig mounted and all six cameras filmed, and
+    the row's record is the row's record without either -- `actions_digest` included. At
+    `hard`, not the bank's pinned levels: with nothing placed the row agreed while MetaDrive's
+    `preload_models` was still warming a cone, a barrier and a pedestrian into the pool of every
+    render-mode env, and the first hard row reused them and parted from the headless drive at
+    decision 60 (`env.build_env` turns it off with a rig). One mp4 per camera at the spec's
+    size, a 3x2 mosaic, and the top-down film, each holding a frame per step plus the reset's,
+    at the step rate."""
+    from test_video import read_back
+
+    from scenariobank.results import JOB_SCHEMA_VERSION, Job, JobBank, JobOptions
+    from scenariobank.runner import run_bank
+
+    def job():
+        return Job(
+            schema_version=JOB_SCHEMA_VERSION,
+            bank=JobBank(path=str(CURVE)),
+            scenarios=["curve_0000"],
+            options=JobOptions(tier="hard"),
+            policy="scenariobank.policies:ExpertPolicy",
+        )
+
+    filmed = run_bank(
+        job(), tmp_path / "film", record_video=True, camera_rig=AV3, ignore_rig_rate=True
+    )
+    plain = run_bank(job(), tmp_path / "plain")
+    exclude = {"wall_time_s"}
+    assert filmed.results[0].model_dump(exclude=exclude) == plain.results[0].model_dump(
+        exclude=exclude
+    )
+    assert filmed.results[0].status == "ok" and filmed.results[0].steps > 50
+    assert filmed.results[0].placed["TrafficCone"] and filmed.results[0].placed["Pedestrian"]
+    assert (filmed.env.camera_rig, filmed.env.rig_tick_rate_s) == (str(AV3), AV3_TICK_S)
+    assert (plain.env.camera_rig, plain.env.rig_tick_rate_s) == (None, None)
+
+    videos = tmp_path / "film" / "videos"
+    frames = filmed.results[0].steps + 1
+    assert read_back(videos / "curve_0000.mp4")[:2] == (frames, 10.0), "the top-down film"
+    for name in AV3_ORDER:
+        assert read_back(videos / f"curve_0000.{name}.mp4") == (frames, 10.0, 512, 384), name
+    assert read_back(videos / "curve_0000.rig.mp4") == (frames, 10.0, 1536, 768), "3x2 mosaic"
+    assert sorted(p.name for p in videos.iterdir()) == sorted(
+        ["curve_0000.mp4", "curve_0000.rig.mp4", *(f"curve_0000.{n}.mp4" for n in AV3_ORDER)]
+    )

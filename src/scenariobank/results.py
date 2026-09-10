@@ -185,6 +185,11 @@ class EnvInfo(BaseModel):
     stride: int
     #: The simulator's commit, read off the installed distribution. `None` where it cannot be.
     metadrive_commit: str | None = None
+    #: The camera rig on the ego, as the spec's path (`run --camera-rig`). `None` without one.
+    camera_rig: str | None = None
+    #: The rate that spec declared, in seconds; `None` without a rig or a declaration. Beside
+    #: `step_hz` and `stride` it says whether the rig was read at its own rate.
+    rig_tick_rate_s: float | None = None
 
 
 class Results(BaseModel):

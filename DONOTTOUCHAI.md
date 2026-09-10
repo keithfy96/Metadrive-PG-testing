@@ -30,3 +30,9 @@ run replay with 2d visualisation
 uv run scenariobank run --bank banks/curve --tier easy \                                                            INT ✘  00:50:07 
     --policy scenariobank.policies:ExpertPolicy --out film --record-video
   xdg-open film/videos/curve_0003.mp4
+
+
+film a drive 3d
+
+  uv run scenariobank run --bank banks/curve --tier hard --policy scenariobank.policies:ExpertPolicy \
+    --out film --camera-rig rigs/av3.txt --ignore-rig-rate --record-video   

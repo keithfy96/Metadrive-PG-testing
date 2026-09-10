@@ -201,6 +201,7 @@ section rather than in a phase because the temptation recurs — someone will re
 | Trust two runs of one seeded job to agree because every manager draws from a seeded stream | They did not, on `curve` at `hard`, and neither draw nor seed was the cause (Phase 4 Step 5, measured 2026-09-09). `Lidar.get_surrounding_objects` (`lidar.py:170`) returns a **`set` of objects**, iterated by address, and the IDM policy keeps the nearest object per lane off it with a strict comparison (`idm_policy.py:83`) — so with cones tied on longitude, which cone a traffic car sees is the heap layout, and the same row ended at 339 steps or 348 depending on the size of the process's environment block. And an episode run after another in one env is not the episode run alone (339 alone, 218 after one row), through something `reset` does not clear and `force_destroy` does not touch. `env.pinned_lidar_class()` sorts the sets and `run_bank` builds one env per row; `test_reproducibility.py` holds both. |
 | Trust the mirror because the geometry test passes and the expert arrives | The map was exact and two controllers were not (Phase 4 Step 5c, found by looking at a film). `IDMPolicy` read the mirrored lateral and drove unmirrored steering, so every lane change drifted to the kerb; and its `act` swallows any exception into "no front object", so an object without a `lane` attribute in a car's lidar radius -- our pedestrians and cyclists -- made that car drive blind. A check behind an *idle* ego showed neither. Measure traffic with the expert driving, against stock MetaDrive in a subprocess, and give every object the traffic can see a `lane`. |
 | Build a rig env and then start a subprocess | The first `reset` of an env with `image_observation` on runs `asset_loader.py:116`, which writes `PYTHONUTF8=on` into `os.environ` -- a value CPython rejects at startup -- so every child process started afterwards in that process dies with `preconfig_init_utf8_mode: invalid PYTHONUTF8`. Headless envs never reach that line, which is why nothing noticed before Phase 4 Step 6. `env._with_rig` puts the variable back after every reset; `test_camera_rig.py` starts a child to prove it. |
+| Trust a render-mode env to drive the headless row, because the cameras never enter the observation | The observation is not the only path. `preload_models` (default True) runs only in a render mode (`base_engine.py:749`): it spawns a pedestrian, a light, a barrier and a cone at reset and returns them to the object pool, and the row then reuses those warmed objects where a headless env builds fresh ones. `curve_0000` at `hard` parted from the headless drive at decision 60, in the seventh decimal, reproducibly; a check at the pinned levels, with nothing placed, passed. `env.build_env` sets `preload_models=False` with a rig; `test_camera_rig.py` compares whole records at `hard` (Phase 4 Step 6b). |
 
 One more that is not a trap but is easy to over-build: **`crash_human` termination is already wired
 and free** — `TerminationState.CRASH_HUMAN` (`constants.py:28`), `crash_human_done=True` by default
@@ -3632,9 +3633,10 @@ carry, and to run the rig at the road's own rate, which gotcha 5 refuses -- see 
    yet: `--step-hz` exists for recordings only (`replay_config`, the rate the pickle was written
    at), and on a road it means `physics_world_step_size` / `decision_repeat`, which moves every
    `max_steps` budget and every Step 5 number. That is gotcha 3's `--step-hz 100 --decision-hz 20`
-   and it lands with the model in **Step 7**. Until then `replay --ignore-rig-rate` loads the
-   spec with the check deferred, reads the cameras at the road's rate, and prints both rates
-   with a `!`; `run` has no such switch, on purpose.
+   and it lands with the model in **Step 7**. Until then `--ignore-rig-rate` loads the spec
+   with the check deferred and reads the cameras at the road's rate: `replay` prints both rates
+   with a `!`, and `run` records both in `env` *(Step 6b gave `run` the switch too, for
+   filming; a policy that reads the rig refuses it, which Step 7 pins)*.
 4. **Where the config is wired.** `env.build_env(..., rig=)` is the one place: the rig's
    cameras join `sensors`, `image_observation` goes on (gotcha 1 -- and `agent_observation`
    still wins, measured: 19 both ends), `vehicle_config["image_source"]` names the first rig
@@ -3648,6 +3650,9 @@ carry, and to run the rig at the road's own rate, which gotcha 5 refuses -- see 
    expert for 60 steps with the rig mounted and without: `issued_actions` identical, the same
    claim the film gate makes for `--record-video`. The cameras are read off the engine through
    `perceive()` and never through the observation, which is what **No lidar** decided.
+   *(Not enough, it turned out: at the bank's pinned levels nothing is placed, and Step 6b's
+   hard row parted from the plain one through MetaDrive's `preload_models`. `build_env` now
+   turns that off with a rig, and the test that holds the claim runs at `hard`.)*
 6. **The cupy gate is open by import and not yet by use.** In the container `base_camera`'s
    `try:` succeeds (cupy 14.2.0, PyOpenGL 3.1.10, cuda-python 12.9.7), and PyOpenGL then logs
    `Failed to load library ( 'libOpenGL.so.0' )` -- the import is lazy and the gate sees only
@@ -3676,6 +3681,84 @@ carry, and to run the rig at the road's own rate, which gotcha 5 refuses -- see 
 and on the host; six `ok` rows; six sensors, six buffers, no `rgb_camera`; `test_camera_rig.py`
 32 passed; full suite 737 passed, ruff clean.
 
+### Step 6b — a film from the car's cameras ✅  ⟵ *added and built 2026-09-10*
+
+*(Added at Keith's ask, once Step 6 was built: "is it possible to record an actual drive from
+the point of view of a camera? or at least i can see the pictures that are generated and string
+them together into a video myself?" Step 5b films a run top-down; Step 6 reads the rig every
+step and throws the frames away. This strings them together, and puts the rig on `run` so the
+film is of the expert driving rather than of `replay`'s idle car.)*
+
+**What it is.** `run --camera-rig rigs/av3.txt --record-video` writes, beside the top-down
+`<out>/videos/<scenario_id>.mp4`, one mp4 per camera at the spec's size --
+`<scenario_id>.<camera>.mp4`, six of them for AV3 -- and `<scenario_id>.rig.mp4`, every view
+tiled three across (3x2, 1536x768), all at the step rate so a 10 Hz road plays in real time.
+`replay --camera-rig --record-video x.mp4` writes `x.<camera>.mp4` and `x.rig.mp4` the same way.
+Three facts it rests on, all read or measured:
+
+- **A frame off the rig is already BGR.** `perceive()` ends in `get_rgb_array_cpu`
+  (`image_buffer.py:101-110`): panda3d's `getRamImage` is BGRA, sliced to three channels, so
+  the array is what `cv2.VideoWriter` wants and nothing is swapped -- the Step 6 probe's PNG,
+  written with `cv2.imwrite`, had a blue sky.
+- **One read feeds every film.** `video.CameraFilm.add` calls `rig.read()` once per step and
+  writes each camera's file and the mosaic from that dict; `video.mosaic` is a pure tiling
+  function, black where the last row runs short, refused by name for tiles of two sizes (the
+  per-camera films are written anyway).
+- **A film is a look, not a model input**, so `run` takes `--ignore-rig-rate` for it: the AV3
+  spec's 0.05 s against the road's 0.1 s is exactly what gotcha 5 refuses for a model, and
+  exactly irrelevant to a film that plays at the step rate. The record keeps both:
+  `EnvInfo.camera_rig` and `EnvInfo.rig_tick_rate_s` beside `step_hz` and `stride`.
+
+**Built.** `video.Recorder.open(size=)` so a film can be a camera's size; `CameraFilm`;
+`chain` moved from `replay.py` into `video.py`, since both callers need it; `run_bank(
+camera_rig=, ignore_rig_rate=)` loads the spec before any env is built -- the same refusal
+`replay` makes, off the manifest -- hands it to `build_env` per row and opens a `CameraFilm`
+beside the `Recorder`; `run --camera-rig --ignore-rig-rate` on the CLI, with the filming example
+in `docs.EXAMPLES`. **A filmed row with the rig is the plain row**: `test_camera_rig.py` runs
+`curve_0000` with the expert both ways and compares the records minus the clock,
+`actions_digest` included, then reads every film back -- six at 512x384, the mosaic at
+1536x768, the top-down -- each holding a frame per step plus the reset's at 10 fps. Offline,
+`test_video.py` pins the sized recorder, the mosaic's layout with numbered tiles, the film's one
+read per step and the mixed-size refusal.
+
+**Verify alone:**
+
+```bash
+P=scenariobank.policies:ExpertPolicy
+uv run scenariobank run --bank banks/curve --scenarios curve_0000 --tier hard --policy $P \
+  --out film --camera-rig rigs/av3.txt --ignore-rig-rate --record-video
+ls out/film/hard/videos/          # curve_0000.mp4, six curve_0000.<camera>.mp4, curve_0000.rig.mp4
+xdg-open out/film/hard/videos/curve_0000.rig.mp4
+uv run pytest tests/unit/test_video.py tests/unit/test_camera_rig.py -q
+```
+**Expect:** the mosaic plays the six views of the expert driving the hard row in real time,
+cones and queued traffic in the front cameras; the row's numbers identical to the same run
+without the two flags; both files green.
+
+**And the claim failed when it was first measured, which is what the verify block is for.**
+The row filmed with the rig ended at 272 steps against the plain row's 273, with another
+`actions_digest`; two rig runs agreed with each other, two plain runs agreed with each other,
+and the two drives parted at decision 60 in the seventh decimal of the throttle. The Step 6 test
+had compared 60 steps at the bank's pinned levels, where nothing is placed, and passed. Bisected
+one config key at a time in fresh processes: not `_fix_offscreen_rendering`'s throwaway engine,
+not the threading model, not the mount -- **`preload_models`**. It is on by default and runs only
+in a render mode (`base_engine.py:749-763`): at the first reset it spawns a pedestrian, a traffic
+light, a barrier and a cone at `[0, 0]`, steps the pedestrian through its speeds, and clears
+them back into the object pool. The hard row then reuses those warmed objects where a headless
+env builds fresh ones, and the contact physics differs by an ulp. `build_env` sets it off with a
+rig; with that, the filmed hard row is the plain hard row field for field. The live test now
+runs at `hard`, where the pool is exercised. Recorded in **Traps**.
+
+**Cost, measured on the host.** `curve_0000` at `hard`, 273 steps: 6.9 s plain, 29.4 s with
+the rig read and seven films written every step -- **82 ms a step** for the rig read (30 ms) and
+the writes -- plus 13 s once to open the offscreen window; 42.6 s in all against 8.2 s. The
+mosaic is 15 MB for 27 s of drive, the six single films 2-3 MB each.
+
+**Verify alone: met.** The eight files above; the mosaic plays the expert closing on the queue
+and rear-ending it, the front cameras full of traffic, the rear ones showing the bend's
+embankment; the record identical to the plain run's; `test_video.py` and `test_camera_rig.py`
+green; full suite 744 passed, ruff clean.
+
 ### Step 7 — the AV3 model and the openpilot bridge ⬜
 
 The other half of the port, plus the two things about it that are not a copy:
@@ -3692,6 +3775,9 @@ The other half of the port, plus the two things about it that are not a copy:
   config, refused on a recording unless it equals the recording's rate. It changes what a step
   is, so every `max_steps` budget in seconds and every Step 5 number is re-measured under it,
   and `test_env.py`'s pin that the PG config leaves the rate alone becomes a pin on the default.
+  And the AV3 policy **refuses `--ignore-rig-rate`**: that switch exists for a film (Step 6b),
+  which reads at the step rate whatever the spec says; a model reading a 20 Hz rig at 10 Hz is
+  the silently wrong frame rate gotcha 5 is about.
 - `metadrive-complete/openpilot/bridge/` — the zapeta bridge image (Python 3.8, its own container).
   Use **our own** openpilot bridge, not wing-sim's — and that tree is **byte-identical** to the
   one baked into the already-built `metadrive-wingfin-openpilot:prod` (`diff -rq`, empty), which

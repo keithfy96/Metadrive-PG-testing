@@ -164,8 +164,8 @@ def use_fake_env(monkeypatch, **script):
     """Swap `runner.build_env` for one that builds a scripted `FakeEnv` per row."""
     FakeEnv.built = []
 
-    def build_env(bank_dir, entry, options):
-        del bank_dir, entry, options
+    def build_env(bank_dir, entry, options, rig=None):
+        del bank_dir, entry, options, rig
         return FakeEnv(**script), prepare
 
     monkeypatch.setattr(runner_module, "build_env", build_env)
@@ -342,8 +342,8 @@ def test_an_entry_whose_env_will_not_build_is_four_error_rows_and_the_next_entry
 ):
     FakeEnv.built = []
 
-    def build_env(bank_dir, entry, options):
-        del bank_dir, options
+    def build_env(bank_dir, entry, options, rig=None):
+        del bank_dir, options, rig
         if entry.block_seq == "CC":
             raise RuntimeError("no such road")
         return FakeEnv(), prepare
@@ -414,8 +414,8 @@ def test_a_stop_ends_the_row_it_lands_in_writes_what_there_is_and_closes_the_env
     FakeEnv.built = []
     original = runner_module.build_env
 
-    def counting_build(bank_dir, entry, options):
-        env, prep = original(bank_dir, entry, options)
+    def counting_build(bank_dir, entry, options, rig=None):
+        env, prep = original(bank_dir, entry, options, rig)
         env.on_step = count
         return env, prep
 
