@@ -1,0 +1,120 @@
+{
+  "schema_version": "1.2",
+  "bank_id": "test-roundabout5",
+  "created_utc": "2026-09-04T11:16:55Z",
+  "metadrive": {
+    "edition": "MetaDrive v0.4.3",
+    "dist_version": "0.4.3",
+    "commit": "85e5dadc6c7436d324348f6e3d8f8e680c06b4db",
+    "asset_version": "0.4.3"
+  },
+  "base_config": {
+    "use_render": false,
+    "agent_observation": "metadrive.obs.state_obs.StateObservation",
+    "vehicle_config": {
+      "lidar": {
+        "num_lasers": 0,
+        "distance": 0,
+        "num_others": 0
+      },
+      "side_detector": {
+        "num_lasers": 0,
+        "distance": 50
+      },
+      "lane_line_detector": {
+        "num_lasers": 0,
+        "distance": 20
+      }
+    },
+    "traffic_density": 0.0,
+    "random_traffic": false,
+    "accident_prob": 0.0,
+    "random_spawn_lane_index": true,
+    "horizon": 1000,
+    "log_level": 30
+  },
+  "drive_side": "left",
+  "options": {
+    "traffic": "none",
+    "cones": "none",
+    "barriers": "none",
+    "pedestrians": "none",
+    "cyclists": "none",
+    "lights": "none"
+  },
+  "categories": {
+    "roundabout": {
+      "description": "Roundabout, leaving by the right-hand exit -- the longest way round, and so the most time spent in the circulating lanes. Traffic keeps left and the roundabout circulates clockwise, which makes the *right* turn the one that has to circulate past three exits and give way from the right. Turn direction is already covered by the three intersection categories; this one exists to test the traversal.",
+      "block_seq": "O",
+      "exit_rule": "right",
+      "max_steps": 700,
+      "scenarios": [
+        {
+          "scenario_id": "roundabout_0000",
+          "seed": 0,
+          "destination": "1O2_3_",
+          "spawn_lane_index": 0,
+          "route_length_m": 252.36,
+          "net_rotation_deg": -90.0,
+          "turn_pairs": "",
+          "thumbnail": "thumbs/roundabout_0000.png",
+          "exit_rule": null,
+          "exit_node": null,
+          "max_steps": null
+        },
+        {
+          "scenario_id": "roundabout_0001",
+          "seed": 1,
+          "destination": "1O2_3_",
+          "spawn_lane_index": 1,
+          "route_length_m": 268.52,
+          "net_rotation_deg": -90.0,
+          "turn_pairs": "",
+          "thumbnail": "thumbs/roundabout_0001.png",
+          "exit_rule": null,
+          "exit_node": null,
+          "max_steps": null
+        },
+        {
+          "scenario_id": "roundabout_0002",
+          "seed": 2,
+          "destination": "1O2_3_",
+          "spawn_lane_index": 0,
+          "route_length_m": 206.83,
+          "net_rotation_deg": -90.0,
+          "turn_pairs": "",
+          "thumbnail": "thumbs/roundabout_0002.png",
+          "exit_rule": null,
+          "exit_node": null,
+          "max_steps": null
+        },
+        {
+          "scenario_id": "roundabout_0003",
+          "seed": 3,
+          "destination": "1O2_3_",
+          "spawn_lane_index": 1,
+          "route_length_m": 192.64,
+          "net_rotation_deg": -90.0,
+          "turn_pairs": "",
+          "thumbnail": "thumbs/roundabout_0003.png",
+          "exit_rule": null,
+          "exit_node": null,
+          "max_steps": null
+        },
+        {
+          "scenario_id": "roundabout_0004",
+          "seed": 4,
+          "destination": "1O2_3_",
+          "spawn_lane_index": 1,
+          "route_length_m": 253.56,
+          "net_rotation_deg": -90.0,
+          "turn_pairs": "",
+          "thumbnail": "thumbs/roundabout_0004.png",
+          "exit_rule": null,
+          "exit_node": null,
+          "max_steps": null
+        }
+      ]
+    }
+  }
+}

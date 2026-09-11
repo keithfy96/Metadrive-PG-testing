@@ -51,7 +51,17 @@ never through the observation, so a row with a rig scores as the row without one
 
 **The decision rate is a stride in this loop**, never a MetaDrive key: the same action is handed
 to `env.step` until the next decision is due, so a slower rate changes how many actions are
-issued and never how long the episode is.
+issued and never how long the episode is. **The step rate is the env's** (`env.step_hz_for`):
+a job's `step_hz` re-rates a procedural road (Step 7, `--step-hz 100 --decision-hz 20` for the
+AV3 stack), and every step budget is scaled with it by `env.budget_at`, so a cap sized in
+seconds at 10 Hz is the same seconds at 100.
+
+**A policy is told about the run once, and about each env as it is built.** `load_policy` makes
+`Name(checkpoint_path=)`; `setup_policy` then hands a policy with a `setup(run)` hook a
+`RunSetup` -- the step rate, the stride, the rig, whether its rate check was waived, the model
+config -- before any env exists, which is where a policy that reads the rig refuses a run it
+cannot drive; `bind_policy` hands each env over before its rows; `close_policy` ends the batch.
+All three are optional halves of the protocol and the loop reads none of them.
 
 **The batch is `run_bank(job, out)`, and it never aborts.** One env per row, built and closed
 around it, every row of the job through the loop above, each row's result written to
@@ -86,7 +96,7 @@ from pathlib import Path
 from typing import Any
 
 from scenariobank.bank import Manifest, RealWorldEntry, read_manifest
-from scenariobank.env import Entry, Row, build_env, seed_for, step_hz_for
+from scenariobank.env import Entry, Row, budget_at, build_env, seed_for, step_hz_for
 from scenariobank.fingerprint import sha256_hex
 from scenariobank.options import resolve_options
 from scenariobank.results import (
@@ -283,8 +293,109 @@ def run_episode(
 
 
 
+class Heartbeat:
+    """The `observe` hook that says, every `every_s` of wall time, whether the car is moving.
+
+    A scored row with a model on the car takes a second per decision and prints nothing until it
+    ends, which reads the same as a hang. This prints one line per interval off the env: the
+    step and decision counts, the car's speed, how far it moved since the last line, the route
+    completed, and the action being held. It reads the env and writes nothing; a row on the
+    host that ends inside the first interval prints nothing at all. `stride` is the decision
+    stride, so the decision count is arithmetic and not a second counter on the loop.
+    """
+
+    def __init__(self, say: Callable[[str], None], *, every_s: float, stride: int) -> None:
+        if every_s <= 0:
+            raise ValueError(f"a heartbeat interval must be positive, not {every_s}")
+        self.say = say
+        self.every_s = float(every_s)
+        self.stride = max(1, int(stride))
+        self.calls = 0
+        self.lines = 0
+        self.started: float | None = None
+        self.last_said: float | None = None
+        self.last_position: tuple[float, float] | None = None
+
+    def __call__(self, env: Any) -> None:
+        now = time.perf_counter()
+        if self.started is None:
+            # The reset call: the placed scene, before anything moves.
+            self.started = self.last_said = now
+            self.last_position = _position(env)
+            return
+        self.calls += 1
+        if now - self.last_said < self.every_s:
+            return
+        self.say(self.line(env, now))
+        self.last_said = now
+        self.last_position = _position(env)
+        self.lines += 1
+
+    def line(self, env: Any, now: float) -> str:
+        agent = env.agent
+        steps = self.calls
+        decisions = (steps + self.stride - 1) // self.stride
+        position = _position(env)
+        moved = (
+            0.0
+            if position is None or self.last_position is None
+            else float(
+                ((position[0] - self.last_position[0]) ** 2
+                 + (position[1] - self.last_position[1]) ** 2) ** 0.5
+            )
+        )
+        try:
+            speed = float(agent.speed)
+        except Exception:  # noqa: BLE001 -- a fake env without a body
+            speed = float("nan")
+        completion = getattr(getattr(agent, "navigation", None), "route_completion", None)
+        route = "" if completion is None else f"  route {float(completion) * 100:5.1f}%"
+        action = getattr(agent, "last_current_action", None)
+        held = ""
+        if action:
+            try:
+                held = "  action " + ",".join(f"{float(v):+.2f}" for v in action[-1])
+            except (TypeError, ValueError, IndexError):
+                held = ""
+        elapsed = now - (self.started or now)
+        return (
+            f"  t+{elapsed:5.0f}s  step {steps}  decision {decisions}  "
+            f"speed {speed:4.1f} m/s  moved {moved:5.1f} m{route}{held}"
+        )
+
+
+def _position(env: Any) -> tuple[float, float] | None:
+    try:
+        x, y = env.agent.position[:2]
+        return float(x), float(y)
+    except Exception:  # noqa: BLE001 -- a fake env without a body
+        return None
+
+
 class RunError(RuntimeError):
     """A job that cannot be run as written. Always says what, and against which bank."""
+
+
+@dataclass(frozen=True)
+class RunSetup:
+    """What a policy may ask the batch about, once, before any env is built.
+
+    Handed to a policy's `setup(run)` hook by `setup_policy`. `stride / step_hz` is the interval
+    between two of its decisions; `rig` is the `CameraRig` the run mounts on every ego, or
+    `None`; `ignore_rig_rate` says the rig's declared rate was not checked against that
+    interval, which a policy reading the rig refuses; `model_config` is the job's.
+    """
+
+    step_hz: float
+    stride: int
+    rig: Any | None = None
+    ignore_rig_rate: bool = False
+    model_config: str | None = None
+    checkpoint_path: str | None = None
+
+    @property
+    def decision_interval_s(self) -> float:
+        return self.stride / self.step_hz
 
 
 def stride_for(step_hz: float, decision_hz: float | None, *, what: str = "the recording") -> int:
@@ -418,10 +529,11 @@ def _score(
     stride: int,
     stop: Callable[[], bool],
     observe: Callable[[Any], None] | None = None,
+    step_hz: float | None = None,
 ) -> tuple[ScenarioResult, Drive | None]:
     """One row through the loop, as a result. Raises nothing: an exception is an error row."""
     recorded = isinstance(entry, RealWorldEntry)
-    cap = entry.budget_for(row)
+    cap = budget_at(entry.budget_for(row), entry, step_hz)
     started = time.perf_counter()
     try:
         drive = run_episode(
@@ -474,6 +586,7 @@ def run_bank(
     record_video: bool = False,
     camera_rig: Path | None = None,
     ignore_rig_rate: bool = False,
+    heartbeat_s: float | None = 10.0,
 ) -> Results:
     """Run every scenario a job names and write the results under `out`. The one entry point.
 
@@ -487,7 +600,10 @@ def run_bank(
     `camera_rig` mounts that spec's cameras on the ego for every row, and with `record_video`
     films each of them too (`<out>/videos/<scenario_id>.<camera>.mp4` and `<scenario_id>.rig.mp4`,
     the mosaic); its `tick_rate` must equal the read interval unless `ignore_rig_rate`, the
-    switch for filming, which a policy that reads the rig refuses.
+    switch for filming, which a policy that reads the rig refuses. `heartbeat_s` prints, through
+    `progress`, one line every that many seconds of wall time while a row runs -- step, decision,
+    speed, distance moved, route completed, the action held -- so a slow row with a model on the
+    car can be told from a hung one; `None` or 0 turns it off. It changes nothing a row records.
 
     Returns the `Results` it wrote to `<out>/results.json`. A stopped batch returns normally --
     a cancelled run that still writes its results is a scored partial run. A batch whose
@@ -509,7 +625,7 @@ def run_bank(
 
     act = load_policy(job.policy, checkpoint_path=job.checkpoint_path)
     chosen = select_rows(manifest, job.scenarios)
-    rates = sorted({step_hz_for(entry) for _, entry, _ in chosen})
+    rates = sorted({step_hz_for(entry, job.step_hz) for _, entry, _ in chosen})
     if len(rates) > 1:
         raise RunError(
             f"{manifest.bank_id} steps at more than one rate ({', '.join(f'{r:g}' for r in rates)}"
@@ -525,75 +641,99 @@ def run_bank(
         from scenariobank.av3.camera_rig import load_rig
 
         rig = load_rig(camera_rig, read_interval_s=None if ignore_rig_rate else stride / step_hz)
+    say = progress or (lambda _line: None)
+    # The policy's own refusals, still before any env: a rig it needs and was not given, a rate
+    # it will not read at, a config that does not load.
+    for note in setup_policy(
+        act,
+        RunSetup(
+            step_hz=step_hz,
+            stride=stride,
+            rig=rig,
+            ignore_rig_rate=ignore_rig_rate,
+            model_config=job.model_config_path,
+            checkpoint_path=job.checkpoint_path,
+        ),
+    ):
+        say(f"note: {note}")
     out = Path(out)
     (out / "results").mkdir(parents=True, exist_ok=True)
     if record_video:
         (out / "videos").mkdir(parents=True, exist_ok=True)
-    say = progress or (lambda _line: None)
 
     started_utc = _utc_now()
     results: list[ScenarioResult] = []
     shape_before: tuple[int, ...] | None = None
     shape_after: tuple[int, ...] | None = None
-    with nullcontext(stop) if stop is not None else stop_on_signals() as flag:
-        # One env per row, closed before the next is built: a row scores the same alone, in
-        # any company and in any order. See the module docstring for the measurement.
-        for name, entry, row in chosen:
-            if flag():
-                break
-            env = None
-            recorder = None
-            film = None
-            try:
-                built = time.perf_counter()
+    try:
+        with nullcontext(stop) if stop is not None else stop_on_signals() as flag:
+            # One env per row, closed before the next is built: a row scores the same alone, in
+            # any company and in any order. See the module docstring for the measurement.
+            for name, entry, row in chosen:
+                if flag():
+                    break
+                env = None
+                recorder = None
+                film = None
                 try:
-                    env, prepare = build_env(bank_dir, entry, options, rig=rig)
-                    bind_policy(act, env)
-                except Exception:  # noqa: BLE001 -- the batch's promise: this row is an error row
-                    result = _error_row(name, entry, row, seconds=time.perf_counter() - built)
+                    built = time.perf_counter()
+                    try:
+                        env, prepare = build_env(
+                            bank_dir, entry, options, rig=rig, step_hz=job.step_hz
+                        )
+                        bind_policy(act, env)
+                    except Exception:  # noqa: BLE001 -- the batch's promise: this row is an error row
+                        result = _error_row(name, entry, row, seconds=time.perf_counter() - built)
+                        results.append(result)
+                        write_json(out / "results" / f"{row.scenario_id}.json", result)
+                        say(f"{row.scenario_id}: error building the env")
+                        continue
+                    if record_video:
+                        from scenariobank.video import CameraFilm, Recorder
+
+                        recorder = Recorder().open(
+                            out / "videos" / f"{row.scenario_id}.mp4", fps=step_hz
+                        )
+                        if rig is not None:
+                            film = CameraFilm().open(
+                                out / "videos", row.scenario_id, rig, fps=step_hz
+                            )
+                    result, drive = _score(
+                        env, prepare, name=name, entry=entry, row=row, act=act,
+                        stride=stride, stop=flag, step_hz=job.step_hz,
+                        observe=chain(
+                            None if recorder is None else recorder.add,
+                            None if film is None else film.add,
+                            None if not heartbeat_s else Heartbeat(
+                                say, every_s=heartbeat_s, stride=stride
+                            ),
+                        ),
+                    )
                     results.append(result)
                     write_json(out / "results" / f"{row.scenario_id}.json", result)
-                    say(f"{row.scenario_id}: error building the env")
-                    continue
-                if record_video:
-                    from scenariobank.video import CameraFilm, Recorder
-
-                    recorder = Recorder().open(
-                        out / "videos" / f"{row.scenario_id}.mp4", fps=step_hz
-                    )
-                    if rig is not None:
-                        film = CameraFilm().open(out / "videos", row.scenario_id, rig, fps=step_hz)
-                result, drive = _score(
-                    env, prepare, name=name, entry=entry, row=row, act=act,
-                    stride=stride, stop=flag,
-                    observe=chain(
-                        None if recorder is None else recorder.add,
-                        None if film is None else film.add,
-                    ),
-                )
-                results.append(result)
-                write_json(out / "results" / f"{row.scenario_id}.json", result)
-                if drive is not None:
-                    shape_before = shape_before or drive.observation_shape
-                    shape_after = drive.observation_shape_end
-                    if job.save_trajectories:
-                        write_json(
-                            out / "trajectories" / f"{row.scenario_id}.json",
-                            Trajectory(
-                                scenario_id=row.scenario_id,
-                                stride=stride,
-                                actions=drive.issued_actions,
-                            ),
-                        )
-                say(_progress_line(result))
-            finally:
-                if recorder is not None:
-                    recorder.close()
-                if film is not None:
-                    film.close()
-                if env is not None:
-                    env.close()
-        stopped = bool(flag())
+                    if drive is not None:
+                        shape_before = shape_before or drive.observation_shape
+                        shape_after = drive.observation_shape_end
+                        if job.save_trajectories:
+                            write_json(
+                                out / "trajectories" / f"{row.scenario_id}.json",
+                                Trajectory(
+                                    scenario_id=row.scenario_id,
+                                    stride=stride,
+                                    actions=drive.issued_actions,
+                                ),
+                            )
+                    say(_progress_line(result))
+                finally:
+                    if recorder is not None:
+                        recorder.close()
+                    if film is not None:
+                        film.close()
+                    if env is not None:
+                        env.close()
+            stopped = bool(flag())
+    finally:
+        close_policy(act)
 
     first_recorded = next(
         (entry for _, entry, _ in chosen if isinstance(entry, RealWorldEntry)), None
@@ -645,6 +785,27 @@ def bind_policy(act: Actor, env: Any) -> None:
         bind(env)
 
 
+def setup_policy(act: Actor, run: RunSetup) -> list[str]:
+    """Hand the run to a policy with a `setup`, before any env is built; its notes come back.
+
+    A policy raises here to refuse the run -- the AV3 policy with no rig, or with the rig's
+    rate check waived -- and a `PolicyError` from it is the same refusal `load_policy` makes.
+    Nothing for a policy without the hook.
+    """
+    setup = getattr(act, "setup", None)
+    if not callable(setup):
+        return []
+    notes = setup(run)
+    return [str(note) for note in (notes or [])]
+
+
+def close_policy(act: Actor) -> None:
+    """End the batch for a policy with a `close`: a bridge connection dropped, an engine freed."""
+    close = getattr(act, "close", None)
+    if callable(close):
+        close()
+
+
 def _progress_line(result: ScenarioResult) -> str:
     """One row as one line: id, what happened, how long."""
     if result.status == "error":
@@ -657,15 +818,19 @@ __all__ = [
     "COLLISION_FLAGS",
     "Actor",
     "Drive",
+    "Heartbeat",
     "RunError",
+    "RunSetup",
     "StopFlag",
     "actor_layout_digest",
     "bind_policy",
+    "close_policy",
     "count_rising_edges",
     "placed_counts",
     "run_bank",
     "run_episode",
     "select_rows",
+    "setup_policy",
     "shape_of",
     "stop_on_signals",
     "stride_for",

@@ -437,9 +437,9 @@ enter the observation, which stays 19 wide, and the expert's actions are identic
 on and off (`tests/unit/test_camera_rig.py`).
 
 The AV3 rig declares 0.05 s and a road steps at 10 Hz; nothing resamples, so the loader refuses
-the mismatch and `--ignore-rig-rate` is the switch for looking anyway, on `replay` and on `run`.
-A model that reads the rig will refuse it; the rig is read at its own rate only once a run can
-step at 100 Hz (Phase 4 Step 7).
+the mismatch. `--step-hz 100 --decision-hz 20` steps the road at the rig's own rate (below), and
+`--ignore-rig-rate` is the switch for looking anyway at 10 Hz, on `replay` and on `run`. A model
+that reads the rig refuses that switch.
 
 **A film from the cameras** is `run --camera-rig --record-video`:
 
@@ -455,6 +455,50 @@ three across, at the step rate so a 10 Hz road plays in real time. The pictures 
 model would read, straight off the rig; the row's numbers are the numbers without the film.
 
 **Writes:** `rig` nothing; `run` its record under `out/`, plus the films with `--record-video`.
+
+### `av3`, `run --policy scenariobank.av3:AV3Policy` and `scripts/bridge.sh` — the model on the car
+
+```bash
+bash scripts/bridge.sh start                                # openpilot's planner and controller, TCP 5558
+uv run scenariobank av3 --bank banks/t-junction --camera-rig rigs/av3.txt \
+  --model-config ../models/model_dev.yml --no-model --step-hz 100 --decision-hz 20   # host, no torch
+uv run scenariobank run --bank banks/t-junction --policy scenariobank.av3:BridgePolicy \
+  --step-hz 100 --decision-hz 20 --out bridge                # the bridge alone, no model, no GPU
+docker run --rm --gpus all --network host -v $PWD:/work:ro -v $PWD/../models:/models:ro \
+  -e HOME=/tmp metadrive-wingfin-sim:latest python -m scenariobank run \
+  --bank /work/banks/t-junction --policy scenariobank.av3:AV3Policy --camera-rig /work/rigs/av3.txt \
+  --step-hz 100 --decision-hz 20 --model-config /models/model_dev.yml \
+  --checkpoint /models/step_440000_trt_direct_full.ep --out /tmp/av3   # the submission
+```
+
+The AV3 submission is a TensorRT checkpoint that reads the six cameras and predicts twenty
+waypoints two seconds ahead; openpilot's planner and controller, in the bridge container, turn
+those into pedals. `scenariobank.av3:AV3Policy` is that path on a scored run: the rig read at
+every decision, the model's ring and ego state fed, the forward pass against the route's
+navigation block, the waypoints and their `modelv2` rows sent to the bridge, its reply negated
+into MetaDrive's action. `scenariobank.av3:BridgePolicy` is the same path with the model taken
+out — the bank's route resampled at the car's speed, wing-sim's `route_gt.py` — so the bridge,
+the frame and both negations can be driven on a machine with no GPU. A scored row with the model
+on the car takes about 1.5 s per decision, so `run` prints a heartbeat line every 10 s
+(`--heartbeat SECONDS`, 0 for off): step, decision, speed, metres moved, route completed, the
+action held. `moved 0.0 m` line after line is a stuck car; no lines at all is a hung run.
+
+**The clock is `--step-hz 100 --decision-hz 20`.** The rig declares 0.05 s and the bridge is
+written for 0.05 s; a road steps at 10 Hz by default, so a run for the AV3 stack steps it at
+100 Hz with one physics step per `env.step` and decides every fifth, and every step budget is
+scaled with it. `AV3Policy` refuses `--ignore-rig-rate`: a model reading a 20 Hz rig at 10 Hz is
+the silently wrong frame rate.
+
+**Six conversions stand between the model and the car and none of them raises when it is
+wrong**, so `scenariobank av3` measures each before a run: the camera map by name, the ego
+state against the car's own speed, the route block against the bridge's route points, the
+predicted waypoints against where the car went under both sign conventions, and the model's
+answer to a synthetic bend right and then left. `--no-model` checks the three that need no
+forward pass, on the host. `--model-config` is the submission's `model_dev.yml`, every field
+required and none defaulted; `--checkpoint` its `.ep`. `MODEL_CONFIG`, `MODEL_CHECKPOINT` and
+`AV3_BRIDGE` (`host:port`) in the environment stand in for the flags.
+
+**Writes:** `av3` nothing; `bridge.sh start` a container named `metadrive-wingfin-openpilot-bridge`.
 
 ## What gets generated, and where
 

@@ -26,6 +26,7 @@ Every command is `uv run scenariobank <command>`.
 | set the traffic level once instead of on every run | [`options`](#options) |
 | score a policy against every scenario of a bank | [`run`](#run) |
 | see whether a camera rig's cameras are alive and aimed right | [`rig`](#rig) |
+| check the AV3 model's inputs and its output sign before a scored run | [`av3`](#av3) |
 | do all of that by looking rather than typing | [`studio`](#studio) |
 
 **Changing one scenario does not mean rebuilding the bank.** `replace` rebuilds exactly
@@ -236,7 +237,8 @@ env held, how many image buffers, and the shape of each frame. The cameras never
 observation, so nothing else in the report moves. A spec's `tick_rate` has to equal the
 interval it is read at -- the decision stride over the step rate -- and a road steps at
 10 Hz, so `rigs/av3.txt` at 0.05 s is refused there unless `--ignore-rig-rate` says the
-mismatch is understood.
+mismatch is understood -- or unless `--step-hz 100 --decision-hz 20` steps the road at the
+rig's own rate (Phase 4 Step 7), which is the AV3 stack's, and what `run` does for it.
 
 Needs the simulator. A full replay of `banks/junction-1` costs about 11 s; a road is well
 under a second, and about 15 s more with a six-camera rig, which is the offscreen window.
@@ -252,6 +254,7 @@ Use `--steps` to check the round trip without paying for the whole episode.
 | `--record-video <path>` | optional |  | Write a top-down film of the drive to this .mp4, for looking at it. Changes nothing the report measures. |
 | `--camera-rig <path>` | optional |  | Mount this camera spec on the ego (rigs/av3.txt) and read it at every decision; the report then says which cameras were alive and what a read cost. |
 | `--ignore-rig-rate` | default `false` |  | Mount the rig even though its tick_rate is not the interval it is read at. For looking at the cameras; the report still shows both rates. |
+| `--step-hz <float>` | optional |  | Step a procedural road at this rate instead of MetaDrive's 10 Hz, with the budget scaled to match. A recording steps at its own rate and refuses any other. |
 
 ```bash
 uv run scenariobank replay --bank ./banks/junction-1
@@ -288,6 +291,47 @@ probe of Phase 4 Step 6; the model's own conversions are Step 7's, measured besi
 ```bash
 uv run scenariobank rig --camera-rig ./rigs/av3.txt                                     # every camera's mount and heading in MetaDrive's frame, and where it aims
 uv run scenariobank rig --camera-rig ./rigs/av3.txt --check-frame --bank ./banks/curve  # re-measure the vehicle frame the conversion rests on
+```
+
+### `av3`
+
+Run the AV3 model beside a drive and check every conversion into it. Nothing steers.
+
+The model half of the sign-convention probe (Phase 4 Step 7; `rig --check-frame` is the
+rig half). `av3/av3_model.py` writes five conversions into the checkpoint -- pixels, camera
+order, frame history, ego speed, route -- and not one of them raises when it is wrong: a
+mirrored route or a swapped camera pair is a model that runs, returns twenty plausible
+waypoints and drives into the oncoming carriageway. So each is measured here first, on a
+car the bundled expert is driving, where the answer is known: the camera map, the ego
+state against the car's own speed, the navigation block against the bridge's route
+points, the predicted waypoints against where the car went under both sign conventions,
+and the model's answer to a synthetic right-hand and left-hand bend.
+
+`--no-model` checks the three conversions that need no forward pass on a machine with no
+torch. With the model, `--step-hz 100 --decision-hz 20` is the rate the run will use; a
+pass is about a second, so `--decisions` bounds the count. Exit 0 when every checked
+conversion agrees, 1 when one fails, 2 when the probe cannot be set up.
+
+Needs the simulator, and for the model the sim image's torch and a GPU.
+
+| flag | | repeats | meaning |
+|---|---|---|---|
+| `--bank <path>` | **required** |  | Bank directory holding the scenario to drive. |
+| `--camera-rig <path>` | **required** |  | The camera spec the model reads (rigs/av3.txt). |
+| `--scenario <str>` | optional |  | Which scenario, by its id. Defaults to the first. A `scenario_id` from the bank's manifest, e.g. `curve_0004`. |
+| `--model-config <path>` | optional |  | The submission's model_dev.yml. MODEL_CONFIG in the environment otherwise. |
+| `--checkpoint <path>` | optional |  | The .ep to load. MODEL_CHECKPOINT in the environment otherwise. |
+| `--no-model` | default `false` |  | Skip the checkpoint. Conversions 2, 4 and 5 are still checked, in seconds, on a machine with no torch. |
+| `--step-hz <float>` | optional |  | Step the road at this rate (100 for the AV3 stack). |
+| `--decision-hz <float>` | optional |  | Decide, read the rig and predict at this rate. A rate no faster than the env steps: 10 on a road, the recording's own rate on an import. |
+| `--ignore-rig-rate` | default `false` |  | Mount the rig even though its tick_rate is not the decision interval. |
+| `--decisions <int>` | default `40` |  | How many forward passes to run, spread over the drive; 0 for every decision, at about a second each. |
+| `--nav-sweep <float>` | default `30.0` |  | Radius in metres of the synthetic arc fed to the navigation-response test; 0 turns the test off. |
+| `--driver <str>` | default `scenariobank.policies:ExpertPolicy` |  | What drives while the model watches, as `pkg.mod:Name`. |
+
+```bash
+uv run scenariobank av3 --bank ./banks/t-junction --camera-rig ./rigs/av3.txt --model-config ../models/model_dev.yml --no-model                                                                            # the camera map, the ego state and the route block, with no checkpoint
+uv run scenariobank av3 --bank ./banks/t-junction --camera-rig ./rigs/av3.txt --step-hz 100 --decision-hz 20 --model-config ../models/model_dev.yml --checkpoint ../models/step_440000_trt_direct_full.ep  # every conversion, forward passes included; in the sim container, where torch is
 ```
 
 ### `destinations`
@@ -613,13 +657,21 @@ each other; a run without a tier writes to the directory itself.
 they see** (Phase 4 Step 6b): `<out>/videos/<scenario_id>.<camera>.mp4` per camera and
 `<scenario_id>.rig.mp4` with every view tiled, beside the top-down film, at the step rate.
 The cameras never enter the observation, so a row with a rig scores exactly as the row
-without one. The AV3 spec declares 0.05 s and a road steps at 10 Hz, so it needs
-`--ignore-rig-rate` until a run can step at 100 Hz (Step 7); a film is a look, not a model
-input, and the record keeps both rates.
+without one. The AV3 spec declares 0.05 s and a road steps at 10 Hz, so a film needs
+`--ignore-rig-rate`; a film is a look, not a model input, and the record keeps both rates.
+
+**`--step-hz 100 --decision-hz 20` is the AV3 stack's clock** (Phase 4 Step 7): the road
+stepped at the rig's own 0.05 s and the bridge ticked at its 20 Hz, every step budget
+scaled with it. `--policy scenariobank.av3:AV3Policy` with `--camera-rig`, `--model-config`
+and `--checkpoint` is the submission -- six cameras into the checkpoint, its waypoints into
+the openpilot bridge (`scripts/bridge.sh start`), the bridge's pedals onto the car -- and
+it refuses `--ignore-rig-rate`, since a model reading a 20 Hz rig at 10 Hz is the silently
+wrong frame rate. `scenariobank.av3:BridgePolicy` is the same path with the model taken
+out, for a machine with no GPU. `scenariobank av3` measures every conversion first.
 
 Needs the simulator. A `T` road is well under a second per scenario; `banks/junction-1` is
 about 11 s; a rig adds about 15 s per row to open the offscreen window, and filming six
-cameras about 60 ms a step on the host.
+cameras about 60 ms a step on the host. The AV3 forward pass is about a second a decision.
 
 | flag | | repeats | meaning |
 |---|---|---|---|
@@ -647,15 +699,20 @@ cameras about 60 ms a step on the host.
 | `--record-video` | default `false` |  | Write a top-down film of every row to <out>/videos/<scenario_id>.mp4, for looking at a run, and with --camera-rig one film per camera and a mosaic of them all beside it. Off by default; changes nothing the result records. |
 | `--camera-rig <path>` | optional |  | Mount this camera spec on the ego for every row (rigs/av3.txt); the record names it, and --record-video then films every camera too. |
 | `--ignore-rig-rate` | default `false` |  | Mount the rig even though its tick_rate is not the interval it is read at. For filming: a film reads at the step rate whatever the spec says. A policy that reads the rig refuses it. |
+| `--heartbeat <float>` | default `10.0` |  | Print a progress line to stderr every this many seconds while a row runs: step, decision, speed, metres moved, route completed, the action held. Tells a slow row from a hung one. 0 turns it off. |
+| `--step-hz <float>` | optional |  | Step a procedural road at this rate instead of MetaDrive's 10 Hz, with every budget scaled to match; `--step-hz 100 --decision-hz 20` is the AV3 stack's. A recording steps at its own rate and refuses any other. |
+| `--model-config <path>` | optional |  | The submission's model_dev.yml, for a policy that reads one (scenariobank.av3:AV3Policy). Every field is required; nothing is defaulted. |
 
 ```bash
-uv run scenariobank run --bank ./banks/t-junction --out ./runs/floor                                                                                                          # the whole bank against the constant-action floor
-uv run scenariobank run --bank ./banks/curve --tier hard --traffic low --policy scenariobank.policies:ConstantPolicy --out ./runs/hard                                        # hard everywhere except traffic
-uv run scenariobank run --bank ./banks/t-junction --policy scenariobank.policies:ExpertPolicy --out ./runs/ceiling                                                            # the ceiling: the bundled expert, deterministic
-uv run scenariobank run --bank ./banks/junction-1 --decision-hz 20 --out ./runs/j1                                                                                            # a recording, deciding at 20 Hz
-uv run scenariobank run --job ./job.json --out ./runs/queued                                                                                                                  # what the container runs
-uv run scenariobank run --bank ./banks/curve --scenarios curve_0000,curve_0003 --save-trajectories --out ./runs/two                                                           # two rows, with their per-decision actions
-uv run scenariobank run --bank ./banks/curve --tier hard --policy scenariobank.policies:ExpertPolicy --out film --camera-rig ./rigs/av3.txt --ignore-rig-rate --record-video  # a film of the drive from all six cameras, out/film/hard/videos/
+uv run scenariobank run --bank ./banks/t-junction --out ./runs/floor                                                                                                                                                                                            # the whole bank against the constant-action floor
+uv run scenariobank run --bank ./banks/curve --tier hard --traffic low --policy scenariobank.policies:ConstantPolicy --out ./runs/hard                                                                                                                          # hard everywhere except traffic
+uv run scenariobank run --bank ./banks/t-junction --policy scenariobank.policies:ExpertPolicy --out ./runs/ceiling                                                                                                                                              # the ceiling: the bundled expert, deterministic
+uv run scenariobank run --bank ./banks/junction-1 --decision-hz 20 --out ./runs/j1                                                                                                                                                                              # a recording, deciding at 20 Hz
+uv run scenariobank run --job ./job.json --out ./runs/queued                                                                                                                                                                                                    # what the container runs
+uv run scenariobank run --bank ./banks/curve --scenarios curve_0000,curve_0003 --save-trajectories --out ./runs/two                                                                                                                                             # two rows, with their per-decision actions
+uv run scenariobank run --bank ./banks/curve --tier hard --policy scenariobank.policies:ExpertPolicy --out film --camera-rig ./rigs/av3.txt --ignore-rig-rate --record-video                                                                                    # a film of the drive from all six cameras, out/film/hard/videos/
+uv run scenariobank run --bank ./banks/t-junction --policy scenariobank.av3:BridgePolicy --step-hz 100 --decision-hz 20 --out ./runs/bridge                                                                                                                     # the openpilot bridge driving the bank's route, no model: the controller alone
+uv run scenariobank run --bank ./banks/t-junction --policy scenariobank.av3:AV3Policy --camera-rig ./rigs/av3.txt --step-hz 100 --decision-hz 20 --model-config ../models/model_dev.yml --checkpoint ../models/step_440000_trt_direct_full.ep --out ./runs/av3  # the AV3 submission, with the bridge up; as `python -m scenariobank` in the sim container, which is where the checkpoint can load
 ```
 
 ## Do all of it in a page

@@ -52,7 +52,13 @@ seed), and one env per entry cannot hold a construction-time destination that di
 **The step rate differs by kind and is known before anything is built.** `base_config` leaves
 MetaDrive's `physics_world_step_size` x `decision_repeat` at 0.02 x 5, so one `env.step` is 10 Hz
 on a procedural road; a recording is stepped one frame at a time, at the rate its tracks were
-sampled at. `step_hz_for` says which, off the manifest.
+sampled at. `step_hz_for` says which, off the manifest. **A road can be asked to step faster**
+(Phase 4 Step 7): `step_hz` on `build_config` sets `physics_world_step_size = 1 / step_hz` with
+`decision_repeat = 1`, which is what lets the AV3 rig be read at its own 0.05 s and the bridge
+be ticked at its 20 Hz (`--step-hz 100 --decision-hz 20`). It changes what a step is, so every
+step budget is scaled with it (`budget_at`) and every number measured at 10 Hz is a different
+number at 100; a recording refuses any rate but its own, because replay advances one recorded
+frame per step.
 
 **The procedural env is a subclass, built on first use.** Four of the six axes are counts for
 managers MetaDrive does not register -- `ObstacleManager` for cones and barriers, `VRUManager`
@@ -73,6 +79,7 @@ from __future__ import annotations
 
 import functools
 import logging
+import math
 import os
 from collections.abc import Callable
 from pathlib import Path
@@ -126,19 +133,45 @@ def expected_shape(entry: Entry) -> tuple[int, ...]:
     return SCENARIO_OBSERVATION_SHAPE if isinstance(entry, RealWorldEntry) else OBSERVATION_SHAPE
 
 
-def step_hz_for(entry: Entry) -> float:
+#: What a procedural road steps at unless a run asks otherwise: MetaDrive's 0.02 x 5.
+DEFAULT_STEP_HZ = 1 / (DEFAULT_PHYSICS_STEP_S * DEFAULT_DECISION_REPEAT)
+
+
+def step_hz_for(entry: Entry, step_hz: float | None = None) -> float:
     """How many times a second `env.step` advances for this entry. Answerable off the manifest.
 
     One `env.step` is `decision_repeat` physics steps of `physics_world_step_size` each. A
-    recording pins both to step one recorded frame at a time, so this is its `step_hz`; a
-    procedural config leaves both at MetaDrive's defaults, which is 10 Hz. `test_env.py` pins
-    that `build_config` does not touch either key, so the number here is the number the env runs
-    at -- and it is known before the env is built, which is what lets `replay` refuse an
-    impossible decision rate without the simulator.
+    recording pins both to step one recorded frame at a time, so this is its `step_hz`, and a
+    `step_hz` asked for that is not the recording's own is refused here. A procedural config
+    leaves both at MetaDrive's defaults, which is 10 Hz, unless `step_hz` asks for another rate,
+    in which case `build_config` sets the two keys to it. `test_env.py` pins both halves, so the
+    number here is the number the env runs at -- and it is known before the env is built, which
+    is what lets `replay` refuse an impossible decision rate without the simulator.
     """
+    if step_hz is not None and step_hz <= 0:
+        raise ValueError(f"--step-hz must be positive, not {step_hz:g}")
     if isinstance(entry, RealWorldEntry):
+        if step_hz is not None and abs(step_hz - entry.step_hz) > 1e-9:
+            raise ValueError(
+                f"--step-hz {step_hz:g} on a recording sampled at {entry.step_hz:g} Hz: replay "
+                "advances one recorded frame per env.step, so a recording steps at its own rate "
+                "and no other"
+            )
         return entry.step_hz
-    return 1 / (DEFAULT_PHYSICS_STEP_S * DEFAULT_DECISION_REPEAT)
+    return DEFAULT_STEP_HZ if step_hz is None else float(step_hz)
+
+
+def budget_at(budget: int, entry: Entry, step_hz: float | None = None) -> int:
+    """A step budget measured at the kind's own rate, counted in this run's steps.
+
+    A category's `max_steps` was sized at 10 Hz (`categories.step_budget`, 0.1 s a step), so a
+    road stepped at 100 Hz needs ten times as many steps to cover the same seconds. Rounded up:
+    a budget that cuts a route off is worse than one a step long. A recording's budget is its
+    own frame count and never scales.
+    """
+    if isinstance(entry, RealWorldEntry) or step_hz is None:
+        return int(budget)
+    return math.ceil(int(budget) * step_hz_for(entry, step_hz) / DEFAULT_STEP_HZ)
 
 
 def replay_config(bank_dir: Path, entry: RealWorldEntry, row: RealWorldRow) -> dict[str, Any]:
@@ -193,17 +226,22 @@ def _recorded_config(
     }
 
 
-def build_config(bank_dir: Path, entry: Entry, options: ResolvedOptions) -> dict[str, Any]:
+def build_config(
+    bank_dir: Path, entry: Entry, options: ResolvedOptions, step_hz: float | None = None
+) -> dict[str, Any]:
     """The env config for every row of one entry: one branch per kind, the seam's first half.
 
     On the procedural side the three `_PER_RUN_KEYS` are filled the way `variety.scan` fills
     them, `horizon` becomes the entry's `max_steps`, the traffic axis becomes `traffic_density`,
     the one option knob stock MetaDrive reads, and the four `COUNT_AXES` become the keys
     `procedural_env_class` registers -- which is why this config fits that class and not a
-    stock `MetaDriveEnv`, whose `Config` refuses a key it does not know.
+    stock `MetaDriveEnv`, whose `Config` refuses a key it does not know. `step_hz`, when it is
+    not the road's own 10 Hz, sets `physics_world_step_size` and `decision_repeat` and scales
+    `horizon` with them; on a recording it may only restate the recording's rate.
 
     Needs the simulator: both branches name `StateObservation`.
     """
+    rate = step_hz_for(entry, step_hz)
     if isinstance(entry, RealWorldEntry):
         indices = [row.scenario_index for row in entry.scenarios]
         return _recorded_config(
@@ -218,14 +256,22 @@ def build_config(bank_dir: Path, entry: Entry, options: ResolvedOptions) -> dict
             f"options resolved for a {options.kind!r} bank cannot build a procedural env"
         )
     seeds = [row.seed for row in entry.scenarios]
-    return base_config(
+    config = base_config(
         map=entry.block_seq,
         start_seed=min(seeds),
         num_scenarios=num_scenarios_for(seeds),
-        horizon=entry.max_steps,
+        horizon=budget_at(entry.max_steps, entry, step_hz),
         traffic_density=float(options.values["traffic"]),
         **{axis: int(options.values[axis]) for axis in COUNT_AXES},
     )
+    if step_hz is not None and abs(rate - DEFAULT_STEP_HZ) > 1e-9:
+        # One physics step per env.step, at the asked rate: the same shape a recording is
+        # stepped in (`_recorded_config`), so a road at 100 Hz and a 100 Hz recording are one
+        # step size apart from nothing. Left untouched at the default so the pinned-default
+        # test and every number measured at 10 Hz still hold.
+        config["physics_world_step_size"] = 1 / rate
+        config["decision_repeat"] = 1
+    return config
 
 
 @functools.cache
@@ -323,7 +369,11 @@ def pinned_lidar_class() -> type:
 
 
 def build_env(
-    bank_dir: Path, entry: Entry, options: ResolvedOptions, rig: Any | None = None
+    bank_dir: Path,
+    entry: Entry,
+    options: ResolvedOptions,
+    rig: Any | None = None,
+    step_hz: float | None = None,
 ) -> tuple[Any, Callable[[Any, Row], str | None]]:
     """Build the env for one entry and return it with its `prepare(env, row)` step.
 
@@ -342,9 +392,11 @@ def build_env(
     and `preload_models` goes off, because a render-mode env otherwise warms objects into the
     pool that a headless env never sees, and the drive moves (Step 6b).
 
+    `step_hz` is `build_config`'s: the rate a road is stepped at, MetaDrive's 10 Hz when `None`.
+
     The caller owns `env.close()`.
     """
-    config = build_config(bank_dir, entry, options)
+    config = build_config(bank_dir, entry, options, step_hz)
     # The stock `sensors` entry is `(Lidar,)`; the pinned one keeps the other two sensors.
     config["sensors"] = {"lidar": (pinned_lidar_class(),)}
     if rig is not None:
@@ -427,8 +479,10 @@ __all__ = [
     "CRASH_HUMAN_PENALTY",
     "DEFAULT_DECISION_REPEAT",
     "DEFAULT_PHYSICS_STEP_S",
+    "DEFAULT_STEP_HZ",
     "Entry",
     "Row",
+    "budget_at",
     "build_config",
     "build_env",
     "expected_shape",

@@ -1092,6 +1092,14 @@ def replay(
             "For looking at the cameras; the report still shows both rates.",
         ),
     ] = False,
+    step_hz: Annotated[
+        float | None,
+        typer.Option(
+            "--step-hz",
+            help="Step a procedural road at this rate instead of MetaDrive's 10 Hz, with the "
+            "budget scaled to match. A recording steps at its own rate and refuses any other.",
+        ),
+    ] = None,
 ) -> None:
     """Drive one scenario of a bank end to end and report what the drive measured.
 
@@ -1124,7 +1132,8 @@ def replay(
     observation, so nothing else in the report moves. A spec's `tick_rate` has to equal the
     interval it is read at -- the decision stride over the step rate -- and a road steps at
     10 Hz, so `rigs/av3.txt` at 0.05 s is refused there unless `--ignore-rig-rate` says the
-    mismatch is understood.
+    mismatch is understood -- or unless `--step-hz 100 --decision-hz 20` steps the road at the
+    rig's own rate (Phase 4 Step 7), which is the AV3 stack's, and what `run` does for it.
 
     Needs the simulator. A full replay of `banks/junction-1` costs about 11 s; a road is well
     under a second, and about 15 s more with a six-camera rig, which is the offscreen window.
@@ -1144,6 +1153,7 @@ def replay(
             record_video=record_video,
             camera_rig=camera_rig,
             ignore_rig_rate=ignore_rig_rate,
+            step_hz=step_hz,
         )
     except (BankError, RigError, ValueError) as error:
         typer.echo(f"replay failed: {error}", err=True)
@@ -1239,6 +1249,123 @@ def rig(
             typer.echo("\n".join(format_frame(rows)))
     if rows is not None and not all(check.ok for check in rows):
         raise typer.Exit(code=1)
+
+
+@app.command()
+def av3(
+    bank: Annotated[
+        Path, typer.Option("--bank", help="Bank directory holding the scenario to drive.")
+    ],
+    camera_rig: Annotated[
+        Path, typer.Option("--camera-rig", help="The camera spec the model reads (rigs/av3.txt).")
+    ],
+    scenario: Annotated[
+        str | None,
+        typer.Option("--scenario", help="Which scenario, by its id. Defaults to the first."),
+    ] = None,
+    model_config: Annotated[
+        Path | None,
+        typer.Option(
+            "--model-config",
+            help="The submission's model_dev.yml. MODEL_CONFIG in the environment otherwise.",
+        ),
+    ] = None,
+    checkpoint: Annotated[
+        Path | None,
+        typer.Option(
+            "--checkpoint",
+            help="The .ep to load. MODEL_CHECKPOINT in the environment otherwise.",
+        ),
+    ] = None,
+    no_model: Annotated[
+        bool,
+        typer.Option(
+            "--no-model",
+            help="Skip the checkpoint. Conversions 2, 4 and 5 are still checked, in seconds, "
+            "on a machine with no torch.",
+        ),
+    ] = False,
+    step_hz: Annotated[
+        float | None,
+        typer.Option("--step-hz", help="Step the road at this rate (100 for the AV3 stack)."),
+    ] = None,
+    decision_hz: Annotated[
+        float | None,
+        typer.Option("--decision-hz", help="Decide, read the rig and predict at this rate."),
+    ] = None,
+    ignore_rig_rate: Annotated[
+        bool,
+        typer.Option(
+            "--ignore-rig-rate",
+            help="Mount the rig even though its tick_rate is not the decision interval.",
+        ),
+    ] = False,
+    decisions: Annotated[
+        int,
+        typer.Option(
+            "--decisions",
+            help="How many forward passes to run, spread over the drive; 0 for every decision, "
+            "at about a second each.",
+        ),
+    ] = 40,
+    nav_sweep: Annotated[
+        float,
+        typer.Option(
+            "--nav-sweep",
+            help="Radius in metres of the synthetic arc fed to the navigation-response test; "
+            "0 turns the test off.",
+        ),
+    ] = 30.0,
+    driver: Annotated[
+        str,
+        typer.Option("--driver", help="What drives while the model watches, as `pkg.mod:Name`."),
+    ] = "scenariobank.policies:ExpertPolicy",
+) -> None:
+    """Run the AV3 model beside a drive and check every conversion into it. Nothing steers.
+
+    The model half of the sign-convention probe (Phase 4 Step 7; `rig --check-frame` is the
+    rig half). `av3/av3_model.py` writes five conversions into the checkpoint -- pixels, camera
+    order, frame history, ego speed, route -- and not one of them raises when it is wrong: a
+    mirrored route or a swapped camera pair is a model that runs, returns twenty plausible
+    waypoints and drives into the oncoming carriageway. So each is measured here first, on a
+    car the bundled expert is driving, where the answer is known: the camera map, the ego
+    state against the car's own speed, the navigation block against the bridge's route
+    points, the predicted waypoints against where the car went under both sign conventions,
+    and the model's answer to a synthetic right-hand and left-hand bend.
+
+    `--no-model` checks the three conversions that need no forward pass on a machine with no
+    torch. With the model, `--step-hz 100 --decision-hz 20` is the rate the run will use; a
+    pass is about a second, so `--decisions` bounds the count. Exit 0 when every checked
+    conversion agrees, 1 when one fails, 2 when the probe cannot be set up.
+
+    Needs the simulator, and for the model the sim image's torch and a GPU.
+    """
+    _require_simulator()
+    from scenariobank.av3.probe import ProbeError, probe
+    from scenariobank.bank import BankError, read_manifest
+
+    try:
+        code = probe(
+            bank,
+            read_manifest(bank),
+            camera_rig=camera_rig,
+            scenario=scenario,
+            model_config=None if model_config is None else str(model_config),
+            checkpoint=None if checkpoint is None else str(checkpoint),
+            no_model=no_model,
+            step_hz=step_hz,
+            decision_hz=decision_hz,
+            ignore_rig_rate=ignore_rig_rate,
+            decisions=decisions,
+            nav_sweep_m=nav_sweep,
+            driver=driver,
+            say=typer.echo,
+        )
+    except (BankError, ProbeError) as error:
+        typer.echo(f"av3 failed: {error}", err=True)
+        raise typer.Exit(code=2) from error
+    if code:
+        raise typer.Exit(code=code)
 
 
 #: One axis's level flag on `run`, where it overrides the bank's pinned level for this run only.
@@ -1380,6 +1507,32 @@ def run(
             "that reads the rig refuses it.",
         ),
     ] = False,
+    heartbeat: Annotated[
+        float,
+        typer.Option(
+            "--heartbeat",
+            help="Print a progress line to stderr every this many seconds while a row runs: "
+            "step, decision, speed, metres moved, route completed, the action held. Tells a "
+            "slow row from a hung one. 0 turns it off.",
+        ),
+    ] = 10.0,
+    step_hz: Annotated[
+        float | None,
+        typer.Option(
+            "--step-hz",
+            help="Step a procedural road at this rate instead of MetaDrive's 10 Hz, with every "
+            "budget scaled to match; `--step-hz 100 --decision-hz 20` is the AV3 stack's. A "
+            "recording steps at its own rate and refuses any other.",
+        ),
+    ] = None,
+    model_config: Annotated[
+        Path | None,
+        typer.Option(
+            "--model-config",
+            help="The submission's model_dev.yml, for a policy that reads one "
+            "(scenariobank.av3:AV3Policy). Every field is required; nothing is defaulted.",
+        ),
+    ] = None,
 ) -> None:
     """Score a policy against a bank, one result per scenario, and never abort the batch.
 
@@ -1414,13 +1567,21 @@ def run(
     they see** (Phase 4 Step 6b): `<out>/videos/<scenario_id>.<camera>.mp4` per camera and
     `<scenario_id>.rig.mp4` with every view tiled, beside the top-down film, at the step rate.
     The cameras never enter the observation, so a row with a rig scores exactly as the row
-    without one. The AV3 spec declares 0.05 s and a road steps at 10 Hz, so it needs
-    `--ignore-rig-rate` until a run can step at 100 Hz (Step 7); a film is a look, not a model
-    input, and the record keeps both rates.
+    without one. The AV3 spec declares 0.05 s and a road steps at 10 Hz, so a film needs
+    `--ignore-rig-rate`; a film is a look, not a model input, and the record keeps both rates.
+
+    **`--step-hz 100 --decision-hz 20` is the AV3 stack's clock** (Phase 4 Step 7): the road
+    stepped at the rig's own 0.05 s and the bridge ticked at its 20 Hz, every step budget
+    scaled with it. `--policy scenariobank.av3:AV3Policy` with `--camera-rig`, `--model-config`
+    and `--checkpoint` is the submission -- six cameras into the checkpoint, its waypoints into
+    the openpilot bridge (`scripts/bridge.sh start`), the bridge's pedals onto the car -- and
+    it refuses `--ignore-rig-rate`, since a model reading a 20 Hz rig at 10 Hz is the silently
+    wrong frame rate. `scenariobank.av3:BridgePolicy` is the same path with the model taken
+    out, for a machine with no GPU. `scenariobank av3` measures every conversion first.
 
     Needs the simulator. A `T` road is well under a second per scenario; `banks/junction-1` is
     about 11 s; a rig adds about 15 s per row to open the offscreen window, and filming six
-    cameras about 60 ms a step on the host.
+    cameras about 60 ms a step on the host. The AV3 forward pass is about a second a decision.
     """
     from pydantic import ValidationError
 
@@ -1462,6 +1623,8 @@ def run(
             ("--checkpoint", checkpoint),
             ("--tier", tier),
             ("--decision-hz", decision_hz),
+            ("--step-hz", step_hz),
+            ("--model-config", model_config),
         )
         if value
     ] + [f"--{axis}" for axis in levels] + [f"--{axis}" for axis in raw]
@@ -1508,6 +1671,8 @@ def run(
                 policy=policy,
                 checkpoint_path=None if checkpoint is None else str(checkpoint),
                 decision_hz=decision_hz,
+                step_hz=step_hz,
+                model_config_path=None if model_config is None else str(model_config),
                 save_trajectories=save_trajectories,
             )
         out = under_out(out, what.options.tier)
@@ -1518,6 +1683,7 @@ def run(
             record_video=record_video,
             camera_rig=camera_rig,
             ignore_rig_rate=ignore_rig_rate,
+            heartbeat_s=heartbeat if heartbeat > 0 else None,
         )
     except (BankError, OptionError, PolicyError, RunError, ValidationError, ValueError) as error:
         typer.echo(f"run failed: {error}", err=True)

@@ -7,3 +7,7 @@ file exchange the converter used to cross from its 3.8 to its 3.10. Nothing in t
 imported by the runner unless a run asks for a rig or the AV3 policy; a machine without the
 simulator still imports every module here.
 """
+
+from scenariobank.av3.policy import AV3Policy, BridgePolicy
+
+__all__ = ["AV3Policy", "BridgePolicy"]

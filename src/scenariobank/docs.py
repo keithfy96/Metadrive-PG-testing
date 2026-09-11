@@ -44,6 +44,7 @@ GROUPS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
             "review",
             "replay",
             "rig",
+            "av3",
             "destinations",
             "workspace",
             "importing",
@@ -146,6 +147,20 @@ EXAMPLES: dict[str, tuple[tuple[str, str], ...]] = {
             "--camera-rig ./rigs/av3.txt --ignore-rig-rate --record-video",
             "a film of the drive from all six cameras, out/film/hard/videos/",
         ),
+        (
+            "uv run scenariobank run --bank ./banks/t-junction "
+            "--policy scenariobank.av3:BridgePolicy --step-hz 100 --decision-hz 20 "
+            "--out ./runs/bridge",
+            "the openpilot bridge driving the bank's route, no model: the controller alone",
+        ),
+        (
+            "uv run scenariobank run --bank ./banks/t-junction "
+            "--policy scenariobank.av3:AV3Policy --camera-rig ./rigs/av3.txt "
+            "--step-hz 100 --decision-hz 20 --model-config ../models/model_dev.yml "
+            "--checkpoint ../models/step_440000_trt_direct_full.ep --out ./runs/av3",
+            "the AV3 submission, with the bridge up; as `python -m scenariobank` in the sim "
+            "container, which is where the checkpoint can load",
+        ),
     ),
     "replay": (
         ("uv run scenariobank replay --bank ./banks/junction-1", ""),
@@ -176,6 +191,19 @@ EXAMPLES: dict[str, tuple[tuple[str, str], ...]] = {
             "uv run scenariobank rig --camera-rig ./rigs/av3.txt --check-frame"
             " --bank ./banks/curve",
             "re-measure the vehicle frame the conversion rests on",
+        ),
+    ),
+    "av3": (
+        (
+            "uv run scenariobank av3 --bank ./banks/t-junction --camera-rig ./rigs/av3.txt "
+            "--model-config ../models/model_dev.yml --no-model",
+            "the camera map, the ego state and the route block, with no checkpoint",
+        ),
+        (
+            "uv run scenariobank av3 --bank ./banks/t-junction --camera-rig ./rigs/av3.txt "
+            "--step-hz 100 --decision-hz 20 --model-config ../models/model_dev.yml "
+            "--checkpoint ../models/step_440000_trt_direct_full.ep",
+            "every conversion, forward passes included; in the sim container, where torch is",
         ),
     ),
     "destinations": (("uv run scenariobank destinations", ""),),
@@ -294,6 +322,7 @@ INDEX: tuple[tuple[str, str], ...] = (
     ("set the traffic level once instead of on every run", "options"),
     ("score a policy against every scenario of a bank", "run"),
     ("see whether a camera rig's cameras are alive and aimed right", "rig"),
+    ("check the AV3 model's inputs and its output sign before a scored run", "av3"),
     ("do all of that by looking rather than typing", "studio"),
 )
 

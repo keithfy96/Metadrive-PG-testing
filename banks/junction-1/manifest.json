@@ -1,0 +1,137 @@
+{
+  "schema_version": "1.4",
+  "bank_id": "junction-1",
+  "created_utc": "2026-09-07T07:21:14Z",
+  "source": "osm-scenario",
+  "metadrive": {
+    "edition": null,
+    "dist_version": null,
+    "commit": null,
+    "asset_version": null
+  },
+  "base_config": {},
+  "drive_side": "left",
+  "options": {
+    "traffic": "none",
+    "cones": "none",
+    "barriers": "none",
+    "pedestrians": "none",
+    "cyclists": "none",
+    "lights": "none"
+  },
+  "categories": {
+    "junction-1": {
+      "description": "junction-1: 1 recorded scenario from OpenStreetMap at 100 Hz, converted from scenarionet-100hz",
+      "dataset_dir": "dataset",
+      "step_hz": 100.0,
+      "origin": {
+        "latitude": 3.1858943271453275,
+        "longitude": 101.61155462936247
+      },
+      "attribution": "OpenStreetMap contributors",
+      "provenance": {
+        "generator_version": "direct-osm-stage2-v24",
+        "generation_fingerprint": "57dcd345d17e5a862f9f38c97916fefe1799873c72b1e280407bb69b2e1da42c",
+        "source_osm_sha256": "4607fd469ebaf1cf552599ba85640d03e9d5b7c1202dbcaca4fd4c9b97920191",
+        "reviewed_lane_model_sha256": "fc205bca2305a0cc3cb68e7a7ee83b5c8d8a200622d6a1749dde0b258cab65fb",
+        "stage_5_status": "passed"
+      },
+      "tool_versions": {
+        "converter": "0.1.0",
+        "geopandas": "1.1.4",
+        "osmnx": "2.0.7",
+        "pyproj": "3.7.1",
+        "python": "3.10.19",
+        "shapely": "2.1.2"
+      },
+      "artifacts": {
+        "inspection/stage-2-review-audit.html": "0d706f21b1de28b881a10e179bff492973efe35e9256dc29be407447210707d3",
+        "inspection/stage-4-comparison.html": "6c3d42b3493cc45d6c68f9d2a8e9de7458703e7ff96bab50c7045402e47ccef9",
+        "inspection/stage-5-validation.html": "564d1bbc381bdc75d0b71f1042211c002d5297a00a04448017160af4dcb27302",
+        "inspection/stage-6-actor-builder.html": "6235b627aed6e9444a849f5fddae319220c213039781ee4fcd08d9570498084d",
+        "inspection/stage-6-reachability.html": "e5a735ffa1fccae3a1bd286f65391f92306e0c7b0ff63b93ad597f264d8c9044",
+        "inspection/stage-6-route-builder.html": "75c6377d2f03641c6130f64e0b9b4c1e1b4c82b280b97f1867286bb0ea27a736",
+        "inspection/stage-6-signal-builder.html": "7f7672e07d6102614fc86d25cd8e4c7a83072a67959f4b0ecb749d18abc59727",
+        "lane-model/preliminary.json": "21484000e7a16521058260d674df9fd8afc9b86b1bdd80e2428f0c68abe92f0d",
+        "lane-model/reviewed.json": "fc205bca2305a0cc3cb68e7a7ee83b5c8d8a200622d6a1749dde0b258cab65fb",
+        "normalized/road-network-local.gpkg": "36217bad3e019e8a6a4857c4f71c8d87ea4241de8d4ba1a4a0691ff0b0ef4604",
+        "normalized/road-network-local.graphml": "8e3c50cdeaf877fb8097d47acd1a4c557ff1dabe38871e75cc780acedc3feede",
+        "normalized/road-network.gpkg": "4c6be232fc30372eef3fef29526f01b26202a4a2135489253bc33b7fae1ba9cd",
+        "normalized/road-network.graphml": "31d2992f24921f48c9789bd5e0537766a58bf8f166335b594b0278436c024e36",
+        "reports/acquisition.json": "b3b96242efecf010af0d79f74748b6b5a100f48995cd8869bf26464537da47e6",
+        "reports/acquisition.md": "c4dd7eaaf182dda3d37828b1417b0ce04eec9c964b01b636497a730825d479c3",
+        "reports/lane-model-generation.json": "4df61cd08925ded5a8d02013256e0faa9e10810d610ef1b01e99b4c883490199",
+        "reports/map-validation.json": "945d8dcc33cd3f1267fb85b426a80ef5461a05861b26d33949b847e24dd2ed67",
+        "reports/map-validation.md": "4025fe1ca6bb43f9d70dc19233b826a916e3e0dcc3bc441f4298d0395ff7e31a",
+        "reports/reviewed-comparison.json": "4c78c427815d88989a6985c317753eb2559812f43fc18a1b64a182b4eb31e464",
+        "reports/reviewed-comparison.md": "d650ce8187a58848d520df3b87eef1fb5233842c2196cc97fc79bcde0b68ede4",
+        "reports/stage-1b-data-audit.json": "49ba4d0cd42f4f2b1f1462dff0e06e238226882c75584c2d16f565266e492871",
+        "reports/stage-1b-data-audit.md": "c86cdc8eaacbb3a51ecba7b00caad7df805a614b8fedf4025a92ec7485cd70da",
+        "review/applied-decisions.json": "42b5b189064354d3b33b454a1aaae6fe36912685fed5d35cf2f2d01b552a8f84",
+        "review/reviewed.osm": "4607fd469ebaf1cf552599ba85640d03e9d5b7c1202dbcaca4fd4c9b97920191",
+        "scenarionet-100hz/dataset_mapping.pkl": "d23851109cdd35720f3bb16d71508540762cdf0dc50e9c49ad2296eaa80abe86",
+        "scenarionet-100hz/dataset_summary.pkl": "84c0ec6381e2644d7cb4bb9d95e22f329a8d2b8cba983bc3dc0c9654fb2580b8",
+        "scenarionet-100hz/sd_osm-scenario_v1_junction-1-57dcd345d17e5a86-route-1.pkl": "c88cbc8ca3f6286655df5fb4125ecb9cbc4df25dbac2ef2e8a0de8a224970129",
+        "source/map.osm": "4607fd469ebaf1cf552599ba85640d03e9d5b7c1202dbcaca4fd4c9b97920191"
+      },
+      "copied": [
+        "source/manifest.json",
+        "reports/scenario-conversion-100hz.json"
+      ],
+      "signals": {
+        "source": "synthesised",
+        "version": 1,
+        "cycle_seconds": 60.0,
+        "time_step_s": 0.01,
+        "phase_groups": 3,
+        "signalled_lanes": 8,
+        "lane_model_signals": 1,
+        "note": "OSM records only that a signal exists; it carries no cycle, split or offset. Every number here was chosen in the Stage 6 signal builder, not surveyed."
+      },
+      "max_steps": 3782,
+      "scenarios": [
+        {
+          "scenario_id": "junction-1_0000",
+          "scenario_index": 0,
+          "file": "sd_osm-scenario_v1_junction-1-57dcd345d17e5a86-route-1.pkl",
+          "stored_id": "junction-1-57dcd345d17e5a86-route-1",
+          "max_steps": 3782,
+          "route_length_m": 395.11,
+          "duration_s": 37.81,
+          "tracks": {
+            "PEDESTRIAN": 101,
+            "CYCLIST": 25,
+            "TRAFFIC_BARRIER": 24,
+            "VEHICLE": 1
+          },
+          "lights": {
+            "TRAFFIC_LIGHT": 8
+          },
+          "route": {
+            "source": "generated",
+            "name": "route-1",
+            "start_lane": "1eef4a136cc4167d",
+            "end_lane": "863caef770461b65",
+            "lane_count": 18,
+            "lane_changes": 3,
+            "junction_movements": 14,
+            "distance_m": 395.11,
+            "speed_kph": 50.0,
+            "slowest_kph": 10.42,
+            "duration_s": 37.82,
+            "driving_duration_s": 37.82,
+            "waiting_s": 0.0,
+            "stop_count": 0
+          },
+          "map_features": 974,
+          "map_feature_types": {
+            "ROAD_EDGE_BOUNDARY": 455,
+            "LANE_SURFACE_STREET": 434,
+            "ROAD_LINE_BROKEN_SINGLE_WHITE": 85
+          },
+          "thumbnail": "thumbs/junction-1.png"
+        }
+      ]
+    }
+  }
+}

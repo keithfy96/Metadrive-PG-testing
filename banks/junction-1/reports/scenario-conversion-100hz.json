@@ -1,0 +1,233 @@
+{
+  "artifacts": {
+    "actor_builder_html": {
+      "path": "inspection/stage-6-actor-builder.html",
+      "sha256": "6235b627aed6e9444a849f5fddae319220c213039781ee4fcd08d9570498084d",
+      "size_bytes": 142943
+    },
+    "dataset_mapping": {
+      "path": "scenarionet-100hz/dataset_mapping.pkl",
+      "sha256": "d23851109cdd35720f3bb16d71508540762cdf0dc50e9c49ad2296eaa80abe86",
+      "size_bytes": 79
+    },
+    "dataset_summary": {
+      "path": "scenarionet-100hz/dataset_summary.pkl",
+      "sha256": "84c0ec6381e2644d7cb4bb9d95e22f329a8d2b8cba983bc3dc0c9654fb2580b8",
+      "size_bytes": 37929
+    },
+    "reachability_html": {
+      "path": "inspection/stage-6-reachability.html",
+      "sha256": "e5a735ffa1fccae3a1bd286f65391f92306e0c7b0ff63b93ad597f264d8c9044",
+      "size_bytes": 188862
+    },
+    "route_builder_html": {
+      "path": "inspection/stage-6-route-builder.html",
+      "sha256": "75c6377d2f03641c6130f64e0b9b4c1e1b4c82b280b97f1867286bb0ea27a736",
+      "size_bytes": 193192
+    },
+    "scenario:junction-1-57dcd345d17e5a86-route-1": {
+      "path": "scenarionet-100hz/sd_osm-scenario_v1_junction-1-57dcd345d17e5a86-route-1.pkl",
+      "sha256": "c88cbc8ca3f6286655df5fb4125ecb9cbc4df25dbac2ef2e8a0de8a224970129",
+      "size_bytes": 49931162
+    },
+    "signal_builder_html": {
+      "path": "inspection/stage-6-signal-builder.html",
+      "sha256": "7f7672e07d6102614fc86d25cd8e4c7a83072a67959f4b0ecb749d18abc59727",
+      "size_bytes": 202006
+    }
+  },
+  "converted": {
+    "actors": 150,
+    "connectors_active": 82,
+    "connectors_total": 116,
+    "crosswalks": 0,
+    "junction_lanes": 149,
+    "lane_boundaries": 540,
+    "lanes": 285,
+    "phase_groups": 3,
+    "restrictions": 8,
+    "signalled_lanes": 8,
+    "signals": 1,
+    "stop_lines": 0
+  },
+  "dataset_dir": "scenarionet-100hz",
+  "generated_at": "2026-09-04T07:13:04.941686+00:00",
+  "inputs": {
+    "actors": "actors.json",
+    "reviewed_lane_model": "lane-model/reviewed.json",
+    "reviewed_lane_model_sha256": "fc205bca2305a0cc3cb68e7a7ee83b5c8d8a200622d6a1749dde0b258cab65fb",
+    "routes": "routes.json",
+    "signals": "signals.json"
+  },
+  "map_features": 974,
+  "report_version": 1,
+  "routes": [
+    {
+      "distance_m": 395.11,
+      "driving_duration_s": 37.82,
+      "duration_s": 37.82,
+      "end_lane": "863caef770461b65",
+      "junction_movements": 14,
+      "lane_changes": 3,
+      "lanes": [
+        "1eef4a136cc4167d",
+        "39dd43685ca9037d",
+        "56c2d4939faba727",
+        "b3f6c9d7ed8c200f",
+        "cab3280515d4b733",
+        "7fcd934cbee2b9da",
+        "c1465d55f5a0ffe8",
+        "2028b9790521107c",
+        "d3a9ce159877508c",
+        "0d3edef5d46ac41a",
+        "845d4c97388f94e4",
+        "f48eca4a35f5de76",
+        "72156dbcd296ce8a",
+        "228b912d0cfb6359",
+        "2603bce63d3ee855",
+        "d61381effb2ba59a",
+        "5fe50f735e40d7c2",
+        "863caef770461b65"
+      ],
+      "name": "route-1",
+      "slowest_kph": 10.42,
+      "source": "generated",
+      "speed_kph": 50.0,
+      "start_lane": "1eef4a136cc4167d",
+      "stops": [],
+      "waiting_s": 0
+    }
+  ],
+  "routing": {
+    "best_start_lane_id": "4628081f4cd9922f",
+    "best_start_reaches": 188,
+    "components_respecting_direction": {
+      "count": 185,
+      "largest": 12
+    },
+    "lane_change_edges": 178,
+    "lane_changes_allowed": true,
+    "lanes_reaching_nothing": 8,
+    "median_reach": 86,
+    "possible_lane_pairs": 80940,
+    "reachable_lane_pairs": 22070,
+    "without_lane_changes": {
+      "best_start_lane_id": "60444583932ec866",
+      "best_start_reaches": 79,
+      "components_respecting_direction": {
+        "count": 274,
+        "largest": 12
+      },
+      "lanes_reaching_nothing": 18,
+      "median_reach": 11,
+      "possible_lane_pairs": 80940,
+      "reachable_lane_pairs": 6547
+    }
+  },
+  "scenario_files": [
+    "sd_osm-scenario_v1_junction-1-57dcd345d17e5a86-route-1.pkl"
+  ],
+  "scenario_id": "junction-1-57dcd345d17e5a86",
+  "signals": {
+    "cycle_seconds": 60.0,
+    "groups": [
+      {
+        "green_seconds": 27.0,
+        "lanes": [
+          {
+            "lane_id": "9f83d567b07605dc",
+            "stop_point": [
+              64.03797988344095,
+              -107.3246419483404,
+              0.0
+            ]
+          },
+          {
+            "lane_id": "bf35774542bb44d6",
+            "stop_point": [
+              64.97040635641017,
+              -110.69815360127807,
+              0.0
+            ]
+          },
+          {
+            "lane_id": "d20282ae0fe3c37e",
+            "stop_point": [
+              65.90283282937938,
+              -114.07166525421573,
+              0.0
+            ]
+          }
+        ],
+        "name": "phase-a",
+        "offset_seconds": 0.0,
+        "red_seconds": 30.0,
+        "yellow_seconds": 3.0
+      },
+      {
+        "green_seconds": 27.0,
+        "lanes": [
+          {
+            "lane_id": "0b0e7cdbfeb471c7",
+            "stop_point": [
+              86.3406624600143,
+              -110.1551196989672,
+              0.0
+            ]
+          },
+          {
+            "lane_id": "c388e30ffb2cf461",
+            "stop_point": [
+              87.625334435546,
+              -113.41082513946446,
+              0.0
+            ]
+          },
+          {
+            "lane_id": "7c442504fa5d1766",
+            "stop_point": [
+              88.91000641107769,
+              -116.66653057996173,
+              0.0
+            ]
+          }
+        ],
+        "name": "phase-b",
+        "offset_seconds": 0.0,
+        "red_seconds": 30.0,
+        "yellow_seconds": 3.0
+      },
+      {
+        "green_seconds": 27.0,
+        "lanes": [
+          {
+            "lane_id": "027a3ef89e3e7b88",
+            "stop_point": [
+              74.5482905906191,
+              -125.01664121683413,
+              0.0
+            ]
+          },
+          {
+            "lane_id": "1831f85bcfe6bd84",
+            "stop_point": [
+              77.95197999937781,
+              -124.2012281873186,
+              0.0
+            ]
+          }
+        ],
+        "name": "phase-c",
+        "offset_seconds": 30.0,
+        "red_seconds": 30.0,
+        "yellow_seconds": 3.0
+      }
+    ],
+    "note": "OSM records only that a signal exists; it carries no cycle, split or offset. Every number here was chosen in the Stage 6 signal builder, not surveyed.",
+    "signals_version": 1,
+    "source": "synthesised",
+    "time_step_s": 0.01
+  },
+  "status": "converted",
+  "step_hz": 100.0
+}

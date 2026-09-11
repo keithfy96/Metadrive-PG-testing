@@ -36,3 +36,26 @@ film a drive 3d
 
   uv run scenariobank run --bank banks/curve --tier hard --policy scenariobank.policies:ExpertPolicy \
     --out film --camera-rig rigs/av3.txt --ignore-rig-rate --record-video   
+
+
+
+Using the actual model
+
+bash scripts/bridge.sh start      # starts it; prints "already up" if it is
+bash scripts/bridge.sh status     # confirms it is listening on 127.0.0.1:5558
+bash scripts/bridge.sh logs       # one line per control tick; Ctrl-C leaves it running
+bash scripts/bridge.sh stop       # only when you are done for the day
+
+docker rm av3 2>/dev/null         # a finished run still holds the name
+docker run -d --name av3 --gpus all --network host \
+  -v $PWD:/work:ro -v $PWD/../models:/models:ro -v $PWD/out:/out \
+  -e HOME=/tmp -e MPLCONFIGDIR=/tmp/matplotlib \
+  metadrive-wingfin-sim:latest \
+  python -m scenariobank run \
+    --bank /work/banks/t-junction --scenarios t_junction_0000 \
+    --policy scenariobank.av3:AV3Policy --camera-rig /work/rigs/av3.txt \
+    --step-hz 100 --decision-hz 20 \
+    --model-config /models/model_dev.yml \
+    --checkpoint /models/step_440000_trt_direct_full.ep \
+    --out /out/av3-film --record-video --heartbeat 10
+docker logs -f av3                # heartbeat every 10 s; Ctrl-C leaves the run going

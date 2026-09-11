@@ -7,6 +7,7 @@ requires-python = ">=3.10,<3.11"
 dependencies = [
   "numpy>=1.26,<3",
   "pydantic>=2.8,<3",
+  "pyyaml>=6,<7",
   "structlog>=24,<26",
   "typer>=0.12,<1",
 ]

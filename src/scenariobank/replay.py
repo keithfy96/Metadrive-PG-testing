@@ -63,6 +63,7 @@ from scenariobank.bank import BankError, Manifest, RealWorldEntry
 from scenariobank.env import (
     Entry,
     Row,
+    budget_at,
     build_env,
     replay_config,
     seed_for,
@@ -256,6 +257,7 @@ def drive(
     record_video: Path | None = None,
     camera_rig: Path | None = None,
     ignore_rig_rate: bool = False,
+    step_hz: float | None = None,
 ) -> Episode:
     """Drive one scenario and report the drive. Builds an env, so it needs the simulator.
 
@@ -267,6 +269,8 @@ def drive(
     and with a rig, every camera beside it (`<name>.<camera>.mp4`, `<name>.rig.mp4`).
     `camera_rig` mounts that spec's cameras and reads them at every decision; its `tick_rate`
     must match the read interval unless `ignore_rig_rate`, and either way the report says both.
+    `step_hz` re-rates a procedural road (`env.build_config`), with the budget scaled to match;
+    a recording refuses any rate but its own.
     """
     # Every refusal first, and before the simulator is touched: a bank that pins an axis this
     # phase cannot run, an unknown scenario id and an impossible decision rate are all answerable
@@ -275,11 +279,12 @@ def drive(
     options = resolve_options(manifest)
     category, entry, row = select(manifest, scenario)
     kind: Kind = "recorded" if isinstance(entry, RealWorldEntry) else "pg"
-    step_hz = step_hz_for(entry)
+    step_hz_asked = step_hz
+    step_hz = step_hz_for(entry, step_hz_asked)
     stride = stride_for(
         step_hz, decision_hz, what="the recording" if kind == "recorded" else "the env"
     )
-    budget = entry.budget_for(row)
+    budget = budget_at(entry.budget_for(row), entry, step_hz_asked)
     cap = budget if steps is None else min(budget, steps)
     read_interval_s = stride / step_hz
     rig = None
@@ -301,7 +306,7 @@ def drive(
     else:
         from scenariobank.video import chain
     reader = None if rig is None else _RigReader(rig, stride)
-    env, prepare = build_env(bank_dir, entry, options, rig=rig)
+    env, prepare = build_env(bank_dir, entry, options, rig=rig, step_hz=step_hz_asked)
     try:
         run = run_episode(
             env,

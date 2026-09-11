@@ -15,6 +15,7 @@ import re
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from scenariobank.runner import COLLISION_FLAGS, count_rising_edges, run_episode
 
@@ -231,3 +232,91 @@ def test_the_loop_sums_reward_and_cost_and_keeps_every_action_it_issued():
     assert (drive.reward, drive.cost) == (12.0, 3.0)
     assert drive.issued_actions == [[0.1, 0.0], [0.2, 0.0]]
     assert drive.stopped is False
+
+
+# --- the heartbeat: a slow row tells itself apart from a hung one -----------------------------
+
+
+class _Body:
+    def __init__(self) -> None:
+        self.position = [0.0, 0.0]
+        self.speed = 0.0
+        self.navigation = type("Nav", (), {"route_completion": 0.0})()
+        self.last_current_action = [[0.0, 0.0], [0.1, 0.5]]
+
+
+class _HeartbeatEnv:
+    def __init__(self) -> None:
+        self.agent = _Body()
+
+
+def test_heartbeat_says_nothing_inside_its_interval_and_a_line_after(monkeypatch):
+    from scenariobank.runner import Heartbeat
+
+    clock = [100.0]
+    monkeypatch.setattr("scenariobank.runner.time.perf_counter", lambda: clock[0])
+    said: list[str] = []
+    beat = Heartbeat(said.append, every_s=10.0, stride=5)
+    env = _HeartbeatEnv()
+    beat(env)  # the reset call
+    for _ in range(12):
+        clock[0] += 0.5
+        env.agent.position[0] += 0.5
+        beat(env)
+    assert said == [], "6 s in: inside the interval, nothing said"
+    env.agent.speed = 3.2
+    env.agent.navigation.route_completion = 0.25
+    for _ in range(8):
+        clock[0] += 0.5
+        env.agent.position[0] += 0.5
+        beat(env)
+    assert len(said) == 1
+    line = said[0]
+    assert "step 20" in line and "decision 4" in line
+    assert "speed  3.2 m/s" in line
+    assert "moved  10.0 m" in line
+    assert "route  25.0%" in line
+    assert "action +0.10,+0.50" in line
+    assert beat.lines == 1
+
+
+def test_heartbeat_reports_a_stuck_car_as_zero_moved(monkeypatch):
+    from scenariobank.runner import Heartbeat
+
+    clock = [0.0]
+    monkeypatch.setattr("scenariobank.runner.time.perf_counter", lambda: clock[0])
+    said: list[str] = []
+    beat = Heartbeat(said.append, every_s=1.0, stride=1)
+    env = _HeartbeatEnv()
+    beat(env)
+    for _ in range(3):
+        clock[0] += 1.0
+        beat(env)
+    assert len(said) == 3
+    assert all("moved   0.0 m" in line and "speed  0.0 m/s" in line for line in said)
+
+
+def test_heartbeat_refuses_a_non_positive_interval():
+    from scenariobank.runner import Heartbeat
+
+    with pytest.raises(ValueError, match="positive"):
+        Heartbeat(print, every_s=0, stride=5)
+
+
+def test_run_bank_takes_heartbeat_s():
+    import inspect
+
+    from scenariobank.runner import run_bank
+
+    parameter = inspect.signature(run_bank).parameters["heartbeat_s"]
+    assert parameter.default == 10.0
+
+
+def test_run_help_names_heartbeat():
+    from typer.testing import CliRunner
+
+    from scenariobank.cli import app
+
+    result = CliRunner().invoke(app, ["run", "--help"])
+    assert result.exit_code == 0
+    assert "--heartbeat" in result.output

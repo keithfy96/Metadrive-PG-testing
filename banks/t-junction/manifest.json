@@ -1,0 +1,120 @@
+{
+  "schema_version": "1.1",
+  "bank_id": "t-junction",
+  "created_utc": "2026-09-02T05:52:06Z",
+  "metadrive": {
+    "edition": "MetaDrive v0.4.3",
+    "dist_version": "0.4.3",
+    "commit": "85e5dadc6c7436d324348f6e3d8f8e680c06b4db",
+    "asset_version": "0.4.3"
+  },
+  "base_config": {
+    "use_render": false,
+    "agent_observation": "metadrive.obs.state_obs.StateObservation",
+    "vehicle_config": {
+      "lidar": {
+        "num_lasers": 0,
+        "distance": 0,
+        "num_others": 0
+      },
+      "side_detector": {
+        "num_lasers": 0,
+        "distance": 50
+      },
+      "lane_line_detector": {
+        "num_lasers": 0,
+        "distance": 20
+      }
+    },
+    "traffic_density": 0.0,
+    "random_traffic": false,
+    "accident_prob": 0.0,
+    "random_spawn_lane_index": true,
+    "horizon": 1000,
+    "log_level": 30
+  },
+  "drive_side": "left",
+  "categories": {
+    "t_junction": {
+      "description": "Three-way junction, taking whichever turn the seed offers. The arm that exists alternates with the seed, so the direction varies and the turn does not.",
+      "block_seq": "T",
+      "exit_rule": "sharpest",
+      "max_steps": 320,
+      "scenarios": [
+        {
+          "scenario_id": "t_junction_0000",
+          "seed": 0,
+          "destination": "1T0_1_",
+          "spawn_lane_index": 0,
+          "route_length_m": 111.7,
+          "net_rotation_deg": 90.0,
+          "turn_pairs": "",
+          "thumbnail": "thumbs/t_junction_0000.png",
+          "exit_rule": null,
+          "exit_node": null,
+          "max_steps": null
+        },
+        {
+          "scenario_id": "t_junction_0002",
+          "seed": 2,
+          "destination": "1T2_1_",
+          "spawn_lane_index": 0,
+          "route_length_m": 117.2,
+          "net_rotation_deg": -90.0,
+          "turn_pairs": "",
+          "thumbnail": "thumbs/t_junction_0002.png",
+          "exit_rule": null,
+          "exit_node": null,
+          "max_steps": null
+        },
+        {
+          "scenario_id": "t_junction_0003",
+          "seed": 3,
+          "destination": "1T2_1_",
+          "spawn_lane_index": 1,
+          "route_length_m": 117.2,
+          "net_rotation_deg": -90.0,
+          "turn_pairs": "",
+          "thumbnail": "thumbs/t_junction_0003.png",
+          "exit_rule": null,
+          "exit_node": null,
+          "max_steps": null
+        },
+        {
+          "scenario_id": "t_junction_0004",
+          "seed": 4,
+          "destination": "1T0_1_",
+          "spawn_lane_index": 1,
+          "route_length_m": 111.7,
+          "net_rotation_deg": 90.0,
+          "turn_pairs": "",
+          "thumbnail": "thumbs/t_junction_0004.png",
+          "exit_rule": null,
+          "exit_node": null,
+          "max_steps": null
+        }
+      ]
+    },
+    "CCS_only": {
+      "description": "Composed by hand: CCS driven to the only exit.",
+      "block_seq": "CCS",
+      "exit_rule": "only",
+      "max_steps": 1320,
+      "scenarios": [
+        {
+          "scenario_id": "CCS_only_0000",
+          "seed": 0,
+          "destination": "3S0_0_",
+          "spawn_lane_index": 0,
+          "route_length_m": 527.64,
+          "net_rotation_deg": 239.54,
+          "turn_pairs": "LL",
+          "thumbnail": "thumbs/CCS_only_0000.png",
+          "exit_rule": null,
+          "exit_node": null,
+          "max_steps": null
+        }
+      ]
+    }
+  }
+}

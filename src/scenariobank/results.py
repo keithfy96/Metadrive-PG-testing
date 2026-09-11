@@ -178,7 +178,8 @@ class EnvInfo(BaseModel):
     #: is the claim, and Step 4's expert-leak check is that the two agree.
     observation_shape_before: tuple[int, ...] | None
     observation_shape_after: tuple[int, ...] | None
-    #: The rate one `env.step` advances at, from `env.step_hz_for`. One per run.
+    #: The rate one `env.step` advances at, from `env.step_hz_for`: the job's `step_hz` on a
+    #: road when it set one, else the kind's own rate. One per run.
     step_hz: float
     decision_hz: float | None
     #: Env steps per action, from `runner.stride_for`.
@@ -262,6 +263,14 @@ class Job(BaseModel):
     checkpoint_path: str | None = None
     #: The decision rate, as a stride in the loop. `None` decides at every step.
     decision_hz: float | None = None
+    #: The rate one `env.step` advances at, on a procedural road (`env.build_config`): `None` is
+    #: MetaDrive's 10 Hz. Set on a recording only to what the recording was sampled at. What
+    #: lets the AV3 rig be read at its own 0.05 s: `--step-hz 100 --decision-hz 20`.
+    step_hz: float | None = None
+    #: The submission's `model_dev.yml`, handed to a policy with a `setup` hook (Step 7's AV3
+    #: policy) beside `checkpoint_path`. `None` for a policy that reads no config. Named with
+    #: `_path` because pydantic reserves `model_config` for its own settings.
+    model_config_path: str | None = None
     #: Write each scenario's per-decision action stream beside its result. Off by default: it is
     #: the only artifact of a run whose size grows with the episode.
     save_trajectories: bool = False

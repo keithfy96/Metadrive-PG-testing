@@ -3636,7 +3636,9 @@ carry, and to run the rig at the road's own rate, which gotcha 5 refuses -- see 
    and it lands with the model in **Step 7**. Until then `--ignore-rig-rate` loads the spec
    with the check deferred and reads the cameras at the road's rate: `replay` prints both rates
    with a `!`, and `run` records both in `env` *(Step 6b gave `run` the switch too, for
-   filming; a policy that reads the rig refuses it, which Step 7 pins)*.
+   filming; a policy that reads the rig refuses it, which Step 7 pins)*. *(Landed 2026-09-10:
+   `--step-hz` on `run`, `replay` and `av3`, with every budget scaled by `env.budget_at`; the
+   AV3 rig is read at its own 0.05 s and `AV3Policy` refuses the switch. See Step 7.)*
 4. **Where the config is wired.** `env.build_env(..., rig=)` is the one place: the rig's
    cameras join `sensors`, `image_observation` goes on (gotcha 1 -- and `agent_observation`
    still wins, measured: 19 both ends), `vehicle_config["image_source"]` names the first rig
@@ -3759,7 +3761,7 @@ and rear-ending it, the front cameras full of traffic, the rear ones showing the
 embankment; the record identical to the plain run's; `test_video.py` and `test_camera_rig.py`
 green; full suite 744 passed, ruff clean.
 
-### Step 7 — the AV3 model and the openpilot bridge ⬜
+### Step 7 — the AV3 model and the openpilot bridge ✅  ⟵ *built 2026-09-10; the row drove as root*
 
 The other half of the port, plus the two things about it that are not a copy:
 
@@ -3802,17 +3804,152 @@ The other half of the port, plus the two things about it that are not a copy:
 **Verify alone** — one scenario, rig on, bridge up:
 
 ```bash
-bash ../wingfin-osm-scenarionet-converter/scripts/bridge.sh start        # or our copy, once ported
-docker run --rm --gpus all --network host -v $PWD:/work metadrive-wingfin-sim:latest \
-  python -m scenariobank run --bank /work/banks/t-junction --categories t_junction \
-  --policy scenariobank.av3:AV3Policy --camera-rig /work/rigs/av3.txt --decision-hz 20 \
-  --model-config /work/submission/model_dev.yml --out /work/av3.json
-jq '.results[0] | {steps, actions, failure_reason}, .env' av3.json
+bash scripts/bridge.sh start                                  # our copy of the converter's, ported
+docker run -d --name av3 --gpus all --network host -v $PWD:/work:ro -v $PWD/../models:/models:ro \
+  -v $PWD/out:/out -e HOME=/tmp metadrive-wingfin-sim:latest \
+  python -m scenariobank run --bank /work/banks/t-junction --scenarios t_junction_0000 \
+  --policy scenariobank.av3:AV3Policy --camera-rig /work/rigs/av3.txt --step-hz 100 --decision-hz 20 \
+  --model-config /models/model_dev.yml --checkpoint /models/step_440000_trt_direct_full.ep --out /out/av3
+docker wait av3 && docker rm av3
+python3 -c "import json; r=json.load(open('out/av3/results.json')); print(r['results'][0], r['env'])"
 uv run pytest tests/unit/test_av3_config.py -q
 ```
+*(Rewritten 2026-09-10: `--step-hz 100`, which is what makes the rig readable at 20 Hz; the
+submission's paths on this machine; detached, because a killed client SIGTERMs the row into a
+`stopped` record; python instead of `jq`, which the sim image lacks.)*
 **Expect:** `actions == ceil(steps / 5)` at 100 / 20 Hz, with `env.decision_hz` 20 and `stride`
 5; the offline test deletes one field from a copy of the submitted `model_dev.yml` and
 `load_config` raises naming it rather than defaulting; steering sign matches Step 6's probe.
+
+**Built 2026-09-10.** What landed, what was measured, and where the notes above were wrong:
+
+1. **The port is three package modules and two policies.** `av3/av3_model.py` (`Config`,
+   `load_config`, `preprocess`, `FrameHistory`, `ego_state`, `navigation`, `synthetic_route`,
+   `modelv2_rows`, `waypoints`, `AV3Model`), `av3/openpilot_policy.py` (the framing,
+   `route_points`, `waypoints_from_route`, `bridge_ego`, `to_metadrive_action`,
+   `BridgeConnection`, `StubBridge`, `OpenpilotDriver`) and `av3/policy.py`, which is the half
+   the converter did not have: `scenariobank.av3:AV3Policy` -- rig, ring, forward pass, bridge,
+   pedals -- and `scenariobank.av3:BridgePolicy`, the same path with the model taken out
+   (wing-sim's `route_gt.py`), so the bridge can be driven and scored on a machine with no GPU.
+   `_PortablePickler`, the HTTP policy server and the path-inserted imports are gone, as
+   predicted. The probe's model half is `scenariobank av3` (`av3/probe.py`), and
+   `scripts/av3-probe.sh` runs it as its third stage.
+2. **The route on a road is built, not recorded.** The converter's model read
+   `navigation.reference_trajectory`, which only a recording has. `policy.route_for` walks the
+   navigation's checkpoints -- the node sequence `env.py`'s `prepare` pinned -- takes one lane
+   per road at the ego's spawn lane position, samples every metre and joins the samples into a
+   MetaDrive `PointLane` (`need_lane_localization=False`, no polygon), so the model's block and
+   the bridge's route points project one object with MetaDrive's own `local_coordinates` on
+   both bank kinds. `av3_model.navigation` takes the trajectory as an argument for that reason.
+3. **A policy is told about the run once, before any env.** `load_policy` still makes
+   `Name(checkpoint_path=)`; `runner.setup_policy` then hands a `RunSetup` (step rate, stride,
+   rig, `ignore_rig_rate`, model config) to a policy with a `setup` hook, and `close_policy`
+   ends the batch. Every AV3 refusal lives there -- no `--camera-rig`, `--ignore-rig-rate`,
+   no config, no checkpoint, a rig short of a camera `camera_order` names -- so a run that
+   cannot work is refused before a 13 s offscreen window opens. `Job` carries `step_hz` and
+   `model_config_path` (pydantic reserves `model_config`); `run` takes `--step-hz` and
+   `--model-config`. What a `Job` does not carry is read from the environment, the converter's
+   convention: `AV3_BRIDGE`, `AV3_TARGET_SPEED_MPS`, `AV3_LONGITUDINAL`, `MODEL_CONFIG`,
+   `MODEL_CHECKPOINT`. There is **no default config path**: the file is a contract with one
+   set of weights and the wrong one runs and scores.
+4. **`--step-hz` on a road, with every budget scaled.** `env.build_config(step_hz=100)` sets
+   `physics_world_step_size 0.01` and `decision_repeat 1` -- one physics step per `env.step`,
+   the shape a recording is stepped in -- and leaves both keys alone at the default, so
+   `test_env.py`'s pin still holds beside its new half. `env.budget_at` scales `max_steps`,
+   the cap and `horizon` by `step_hz / 10`, rounded up (`t_junction` 320 -> 3200); a recording
+   refuses any rate but its own. `replay` and `av3` take it too. **The expert at 100 Hz
+   arrives** on `t_junction_0000` in 1334 steps (13.3 s), so the Step 5 numbers at 10 Hz are
+   not this clock's numbers, as predicted; nothing here re-measures them.
+5. **The bridge path works, measured three ways.** (a) `StubBridge` on the host:
+   `BridgePolicy` drives `t_junction_0000` at 100/20 and **arrives** -- 1211 steps, 243
+   actions (`ceil(1211 / 5)`), no collision, 1.7 s of wall clock, the bridge told
+   `max_steer_angle 40` and `wheelbase_m 2.46894`; that is `test_av3_policy.py`'s live test.
+   (b) The real bridge from the host (`scripts/bridge.sh start`, image `metadrive-wingfin-
+   openpilot:prod`): `init` answers `ready`, 640 controls come back, the steer is **positive
+   through the left turn on the left-hand road** (+0.13 to +0.23 at decisions 300-540) so the
+   two negations cancel as the converter measured, and the car stays on the road -- and it
+   **crawls**: `accel_cmd` decays to 0.01 m/s^2 at 3.1 m/s under a 10 m/s target, 78% of the
+   route in 32 s, `max_step`. That is exactly the converter's Phase 0 finding for the route-only
+   path ("a constant-speed trajectory carries no speed intent"), reproduced, and the reason
+   the model's `modelv2` rows exist. (c) The model, below. `to_metadrive_action` defaults to
+   the `accel` mode; the converter's `table` mode is not ported, because no pedal map has been
+   measured on this bank's car.
+6. **The probe, with the checkpoint, in the sim container** (`scenariobank av3` on
+   `t_junction_0000`, 100/20, 20 decisions): the engine deserialises in **106 s** (the two
+   logged loader failures are the documented non-errors), 20 waypoints x 8; **forward pass
+   median 1149 ms** on this card, so about 5 minutes for the row's 267 decisions; the camera
+   map is the six by name; ego state to 0.0000 m/s; the navigation block equals the bridge's
+   route points to 0.0000 m over 180 points, 6 of 9 samples turning. The waypoints against
+   the drive: the model predicts a near-straight line here (0.61 m of lateral at 2 s where the
+   expert moved 5.6 m), and over the 22 turning points where it predicted more than 0.25 m its
+   sign agreed with the car's on **100%**, off-path 1.09 m as given against 1.51 m negated --
+   leaning "as given", conversion 6 unflipped, as the converter found. **The nav-response test
+   fails on this road**: a 30 m right-hand arc and a left-hand one move the predicted lateral
+   by 0.036 m (+0.010 / -0.026), against the converter's 1.109 m on `junction-1`. Same code,
+   same synthetic block; the pictures differ. The probe's own rule is that the drive statistic
+   cannot settle the sign without it, and it says so. Read it as a **domain-gap reading, not a
+   port defect**: every input the probe can check against an independent computation agrees
+   to the last digit, and the one it cannot is a property of the weights on a MetaDrive PG
+   scene. Step 8 should re-run the sweep on `banks/curve` and on the imported `junction-1`
+   before drawing more from it.
+7. **The scored AV3 row is the one thing not yet green.** `run --policy
+   scenariobank.av3:AV3Policy` on `t_junction_0000`, 100/20, the sim container with the bridge
+   up, run as the host uid with `/etc/passwd` mounted the way `compose.yaml` does: the engine
+   loaded (106 s), the policy connected and the bridge answered `ready` -- then no `step` ever
+   reached the bridge. Its own recv timed out and it closed the socket (`CLOSE-WAIT` on the
+   client's side, one byte unread); the client's main thread was **running**, at 4% of a core
+   for four hours, 72 other threads in futex waits and two CUDA threads polling, nothing in the
+   socket and nothing in a Python wait -- the shape of a TensorRT synchronise spinning on a
+   pass that never returned. The probe in the same image, **as root**, had just completed nine
+   passes plus the sweep, and the only differences between the two runs are the uid, the
+   `/etc/passwd` and `/out` mounts, and the bridge connection made between the load and the
+   first pass. The row was killed after four hours with nothing written. What to do next, in
+   order: re-run the row as root (the probe's way) with a hard `timeout`; if it drives, the uid
+   is the cause and `compose.yaml`'s `user:` line is what Phase 5 Step 4 has to reconcile with
+   `torch_tensorrt`; if it hangs, move the bridge connect before `model.load()` in
+   `AV3Policy.start_episode` and try again. *(Re-run 2026-09-10 **as root**, the verify block
+   as written: it drove. `status ok`, `max_step`, 3200 steps, 640 actions, 929.5 s wall, one
+   decision per 1.45 s -- the 1149 ms pass plus the rig read and the bridge round trip. The
+   uid is the cause, and `compose.yaml`'s `user:` line is Phase 5 Step 4's to reconcile.
+   The row is not a drive to be proud of: `route_completion` 0.066 in the 32 simulated seconds
+   the 100 Hz budget allows, no collision, no out-of-road; the car creeps. That is the model
+   and the bridge's longitudinal path on this scene, Step 8's subject, not the port's -- the
+   route-only `BridgePolicy` crawls the same way and the probe's inputs all agree.)*
+   **The heartbeat.** A row at 1.45 s per decision prints nothing for fifteen minutes and reads
+   as a hang, which is how the first re-run was nearly killed a second time. `run --heartbeat
+   SECONDS` (10 by default, 0 for off; `run_bank(heartbeat_s=)`) is an `observe` hook,
+   `runner.Heartbeat`, chained after the films: every interval of wall time it prints the step
+   and decision counts, the car's speed, the metres moved since the last line, the route
+   completed and the action held, through the same `progress` channel as the row lines, so
+   `docker logs -f` on a detached run shows whether the car is moving. It reads the env and
+   changes nothing a row records; a host row that ends inside the first interval prints
+   nothing. Five offline tests in `test_runner.py`.
+8. **What bit, and the traps that did not.** `PYTHONUTF8` (Step 6 note 7) never reached the
+   bridge, because the bridge is a container started before the rig env exists. The
+   `preload_models` fix (Step 6b) held. Two new ones: the first scored row was ended `stopped`
+   at 0 steps with a valid record when the docker client was killed for memory -- the runner's
+   SIGTERM path, working as built, and the reason the verify block now runs the container
+   detached (`docker run -d`, then wait); and the full test suite must not run beside a
+   container holding the 1.2 GB engine on a 16 GB machine.
+9. **Tests: 78 offline, 3 live**, in `test_av3_config.py` (the verify block's field-deletion
+   test over every required key, no default path, the submitted file pinned to the block the
+   test carries), `test_av3_model.py` (`preprocess` pixel-identical to the fork's own
+   `modifiers.py`, read as a file; the ring; the mirror; the unflipped output; the model
+   without a GPU), `test_openpilot_policy.py` (the framing byte for byte, both negations,
+   `accel` by default, every undrivable reply, the stub end to end) and `test_av3_policy.py`
+   (every refusal, the hooks, the rate arithmetic, the `Job`, the flags, and the live stub
+   drive and 100 Hz config). `docs.GROUPS` places `av3` under *Look before you commit*;
+   `commands.md` regenerated; `scripts/bridge.sh` is ours (status, start, stop, logs; no
+   build). `pyyaml` joins the core dependencies for the config.
+
+**Verify alone: met.** `test_av3_config.py` green (every field of a copy of the
+submitted config deleted in turn and refused by name); the steering sign as the probe and the
+real-bridge drive measured; `env.decision_hz` 20 and `stride` 5 in every record at 100/20;
+`actions == ceil(steps / 5)` on the stub and real-bridge rows **and on the scored AV3 row**
+(note 7: 3200 steps, 640 actions, `env.step_hz` 100, `camera_rig` in the record, the bridge
+up throughout). Full suite 823 passed in 6 min 14 s, ruff clean. Run the block with the container **detached** (`docker run -d --name x ...`
+then `docker wait x`) and read the record with python rather than `jq`, which the sim image
+does not carry. Full suite: see the report below the step.
 
 ### Step 8 — an AV3 submission scored end to end ⬜  ⟵ *gate*
 
@@ -4041,10 +4178,15 @@ is a checked fact and not an assumption.
   acados solver per waypoint count. A model with a count outside that menu still runs — the solver
   is generated and compiled on first use — but the first decision then pays a compile it should not.
 - We port the client, not the container: `tools/openpilot_policy.py` → `src/scenariobank/av3/`,
-  which Phase 4 Step 7 owns.
+  which Phase 4 Step 7 owns. *(Done 2026-09-10, with `scripts/bridge.sh` -- status, start, stop,
+  logs; no build -- as our copy of the converter's script's running half. The image on this
+  machine is `metadrive-wingfin-openpilot:prod`, 6.17 GB, image id `b32169b35049`, the same id
+  as `wing-sim-openpilot:prod`.)*
 
 **Verify alone:** `bridge.sh status` reports the image present and something listening on
 127.0.0.1:5558, and the ported client's `init` handshake gets `ready` back with nothing rebuilt.
+*(Met 2026-09-10 from Phase 4 Step 7: `bash scripts/bridge.sh start`, then `BridgePolicy` on
+`t_junction_0000` -- `init` answered `ready`, 640 `step`s answered with controls.)*
 
 ### Step 4 — host and container agree ⬜  ⟵ *gate*
 
