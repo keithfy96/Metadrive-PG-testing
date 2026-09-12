@@ -41,6 +41,7 @@ film a drive 3d
 
 Using the actual model
 
+bash scripts/bridge.sh build
 bash scripts/bridge.sh start      # starts it; prints "already up" if it is
 bash scripts/bridge.sh status     # confirms it is listening on 127.0.0.1:5558
 bash scripts/bridge.sh logs       # one line per control tick; Ctrl-C leaves it running
