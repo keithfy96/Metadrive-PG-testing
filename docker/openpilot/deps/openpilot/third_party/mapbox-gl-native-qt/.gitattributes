@@ -1,0 +1,4 @@
+# vendored into wingfin-osm-scenarionet-converter: no LFS server here, these are ordinary files
+# x86_64 filter=lfs diff=lfs merge=lfs -text
+# vendored into wingfin-osm-scenarionet-converter: no LFS server here, these are ordinary files
+# larch64 filter=lfs diff=lfs merge=lfs -text

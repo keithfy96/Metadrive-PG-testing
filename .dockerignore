@@ -1,6 +1,11 @@
-# The studio image copies exactly two files (`pyproject.toml`, `uv.lock`); everything else in this
-# directory is context sent to the daemon for nothing. `.venv` alone is gigabytes, and `banks/`
-# grows without limit once real-world datasets are imported.
+# Two images build from this root. The studio image copies `pyproject.toml` and `uv.lock`; the
+# sim image (docker/Dockerfile) those two plus `README.md` and `src/`. Everything else is context
+# sent to the daemon for nothing: `.venv` alone is gigabytes, `banks/` grows without limit, and
+# `docker/openpilot/deps` is the 309 MB openpilot fork that belongs to the *bridge* image's own
+# context (docker/openpilot/), not this one.
 *
 !pyproject.toml
 !uv.lock
+!README.md
+!src
+src/**/__pycache__

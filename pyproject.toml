@@ -57,6 +57,30 @@ sim = [
   "metadrive-simulator @ git+https://github.com/metadriverse/metadrive.git@85e5dadc",
 ]
 
+# The three packages MetaDrive's `image_on_cuda` path imports (a rendered frame stays on the GPU
+# as a CuPy array). Opt-in beside `sim`: the sim image syncs `--group sim --group gpu --group
+# model`; `uv sync` on the host installs neither. **`cuda-python` must stay below 13**: 13.0
+# removed the `cuda.cudart` shim `base_camera.py` imports, and a missing import there does not
+# fall back to the CPU, it trips an assert naming cupy. `cupy-cuda12x` because torch is cu128
+# and the two share one process and one context.
+gpu = [
+  "cupy-cuda12x[ctk]>=14,<15",
+  "PyOpenGL>=3.1,<4",
+  "cuda-python>=12,<13",
+]
+
+# The AV3 model stack (Phase 4 Step 7). **Pinned to what compiled the engine**: the checkpoint's
+# `models/model.json` records `torch_version 2.8.0+cu128`, and its 1.275 GB constant is a
+# serialized TensorRT engine built against one TensorRT version and one SM architecture, so a
+# mismatched stack does not degrade -- it fails to deserialize. torch and torch-tensorrt come
+# from the cu128 index and tensorrt from NVIDIA's, both `explicit` (see `[tool.uv.sources]`).
+# numpy is deliberately not pinned here.
+model = [
+  "torch==2.8.0",
+  "torch-tensorrt==2.8.0",
+  "tensorrt==10.12.0.36",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -66,6 +90,23 @@ build-backend = "hatchling.build"
 # from environments nobody will run.
 [tool.uv]
 environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+
+# torch and torch-tensorrt come from the cu128 wheel index rather than PyPI, and tensorrt from
+# NVIDIA's own. `explicit = true` keeps every other dependency resolving from PyPI as before.
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[[tool.uv.index]]
+name = "nvidia"
+url = "https://pypi.nvidia.com"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torch-tensorrt = { index = "pytorch-cu128" }
+tensorrt = { index = "nvidia" }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/scenariobank"]

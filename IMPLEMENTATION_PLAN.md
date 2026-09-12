@@ -3597,7 +3597,7 @@ Six things that bite, in the order they will bite:
 **Verify alone** — in the sim image, because the cupy gate is only known open there:
 
 ```bash
-docker run --rm --gpus all -v $PWD:/work:ro metadrive-wingfin-sim:latest bash /work/scripts/av3-probe.sh
+docker run --rm --gpus all -v $PWD:/work:ro scenariobank-sim:latest bash /work/scripts/av3-probe.sh
 # the same two commands by hand, on the host:
 uv run scenariobank rig --camera-rig rigs/av3.txt --check-frame --bank banks/curve
 uv run scenariobank replay --bank banks/curve --camera-rig rigs/av3.txt --steps 20 --ignore-rig-rate --json \
@@ -3806,7 +3806,7 @@ The other half of the port, plus the two things about it that are not a copy:
 ```bash
 bash scripts/bridge.sh start                                  # our copy of the converter's, ported
 docker run -d --name av3 --gpus all --network host -v $PWD:/work:ro -v $PWD/../models:/models:ro \
-  -v $PWD/out:/out -e HOME=/tmp metadrive-wingfin-sim:latest \
+  -v $PWD/out:/out -e HOME=/tmp scenariobank-sim:latest \
   python -m scenariobank run --bank /work/banks/t-junction --scenarios t_junction_0000 \
   --policy scenariobank.av3:AV3Policy --camera-rig /work/rigs/av3.txt --step-hz 100 --decision-hz 20 \
   --model-config /models/model_dev.yml --checkpoint /models/step_440000_trt_direct_full.ep --out /out/av3
@@ -4042,7 +4042,7 @@ list the hard parts it already solves — `ubuntu:22.04`, `uv`, `UV_PROJECT_ENVI
 image those lines produce already runs this repo. **It does**, measured 2026-09-06:
 
 ```
-$ docker run --rm -v $PWD:/work:ro metadrive-wingfin-sim:latest python -m scenariobank doctor
+$ docker run --rm -v $PWD:/work:ro scenariobank-sim:latest python -m scenariobank doctor
 commit:        85e5dadc6c7436d324348f6e3d8f8e680c06b4db     requested: 85e5dadc
 asset_version: 0.4.3    python: 3.10.21    numpy: 2.2.6
 obs_space:     Box(-0.0, 1.0, (19,), float32)               drive_side: left
@@ -4107,6 +4107,27 @@ Two services over one image, plus `scripts/sim-image.sh`, which is the guard.
   unable to produce something under the tag `metadrive-wingfin-sim`; that is the failure the
   converter's own `wingfin.groups` label exists to catch, and the cheapest fix is to make it
   impossible here.
+  *(Reversed 2026-09-12: the runner now has a `build:` key -- `docker/Dockerfile`, the
+  converter's recipe ported minus the `ros` group, under our own tag `scenariobank-sim:latest`.
+  The trap above was two repos building one tag; a tag of our own removes it. Why: a rig has
+  this repo and not the converter, and "clone, build, run" is what a rig needs. The bridge came
+  along the same way: `docker/openpilot/` carried whole, the openpilot fork vendored under
+  `deps/` (309 MB, 3026 files, largest 46 MB, ten symlinks that `bridge.sh build` and
+  `test_images.py` both check), `scripts/bridge.sh build|save` ported. `pyproject.toml` gained
+  the `gpu` and `model` groups and the two explicit indexes; `uv lock` added 408 lines and
+  removed none; the host `.venv` is untouched because the groups are opt-in.)*
+  *(Verified 2026-09-12: `scenariobank-sim:latest` built in ~20 min, 13.1 GB, label `sim gpu
+  model`; `doctor` in it prints commit 85e5dadc and `drive_side: left`, the same as the host;
+  a `BridgePolicy` row of `t_junction_0000` at 100/20 ran inside it against the live bridge,
+  3200 steps / 640 actions, 7.2 s. The bridge image built from the vendored context in ~35 min,
+  5.53 GB, and a host row against it gives the converter's own numbers: 640 controls, route
+  0.78, `max_step`. **Not verified in the new sim image: the model on the GPU.** Mid-session an
+  unattended apt upgrade moved the NVIDIA user-space libraries to 595.91 under the running
+  595.84 kernel module, and from then on `--gpus all` fails with `nvml error: driver/library
+  version mismatch` for every image, the converter's included, until a reboot. The probe
+  command in Step 7's verify block is the check to run after it. Trap for the record: a driver
+  upgrade lands silently and breaks every GPU container on the machine; `nvidia-smi` on the
+  host is the one-line diagnosis.)*
 - **The runner mounts `.:/work:ro`.** Read-only *is* the test: a runner that can rewrite the bank
   it is scoring makes "the same numbers everywhere" uncheckable. `${OUT_DIR:-./out}:/out` is the
   only writable path.
@@ -4126,6 +4147,8 @@ Two services over one image, plus `scripts/sim-image.sh`, which is the guard.
   repo's own `sim.sh` does, and — the whole reason it exists — replaces compose's `pull access
   denied for metadrive-wingfin-sim`, which names a registry that was never involved. An image with
   *no* label is reported as silent, not as stale: the label was added after the groups were.
+  *(Since 2026-09-12 it also has `build`, and its label check compares the image against
+  `docker/Dockerfile`'s own `uv sync` line rather than a hard-coded list.)*
 
 **Verify alone:** `doctor` in the container prints the same commit and `drive_side: left` as the
 host; a `generate --out /work/banks/x` inside the runner fails on the read-only mount; the guard
@@ -4133,7 +4156,7 @@ names the build command on a machine without the image.
 
 ### Step 2 — `docker/studio.Dockerfile`: the one image built here ⬜
 
-`FROM metadrive-wingfin-sim:latest`, then the web group. Nothing else — no `pull_asset`, no EGL
+`FROM scenariobank-sim:latest`, then the web group. Nothing else — no `pull_asset`, no EGL
 patch, no glvnd manifest, all inherited.
 
 - **`uv pip install`, never `uv sync`.** A sync makes the environment match the lock *exactly*, so

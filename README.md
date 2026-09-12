@@ -465,7 +465,7 @@ uv run scenariobank av3 --bank banks/t-junction --camera-rig rigs/av3.txt \
 uv run scenariobank run --bank banks/t-junction --policy scenariobank.av3:BridgePolicy \
   --step-hz 100 --decision-hz 20 --out bridge                # the bridge alone, no model, no GPU
 docker run --rm --gpus all --network host -v $PWD:/work:ro -v $PWD/../models:/models:ro \
-  -e HOME=/tmp metadrive-wingfin-sim:latest python -m scenariobank run \
+  -e HOME=/tmp scenariobank-sim:latest python -m scenariobank run \
   --bank /work/banks/t-junction --policy scenariobank.av3:AV3Policy --camera-rig /work/rigs/av3.txt \
   --step-hz 100 --decision-hz 20 --model-config /models/model_dev.yml \
   --checkpoint /models/step_440000_trt_direct_full.ep --out /tmp/av3   # the submission
@@ -499,6 +499,35 @@ required and none defaulted; `--checkpoint` its `.ep`. `MODEL_CONFIG`, `MODEL_CH
 `AV3_BRIDGE` (`host:port`) in the environment stand in for the flags.
 
 **Writes:** `av3` nothing; `bridge.sh start` a container named `metadrive-wingfin-openpilot-bridge`.
+
+### The two images, built here
+
+```bash
+bash scripts/sim-image.sh build     # scenariobank-sim:latest from docker/Dockerfile, 10-15 min
+bash scripts/bridge.sh build        # metadrive-wingfin-openpilot:prod from docker/openpilot/, ~30 min
+bash scripts/sim-image.sh           # is the sim image here, and does its label match the Dockerfile
+```
+
+Since 2026-09-12 both recipes live in this repo, so a clone builds both with nothing else
+checked out: the sim image from our own `pyproject.toml` and `uv.lock` (groups `sim`, `gpu`,
+`model`; torch 2.8.0+cu128 and TensorRT pinned to what compiled the checkpoint), the bridge from
+the converter's Dockerfile with the openpilot fork **vendored** under `docker/openpilot/deps/`
+(309 MB of tracked files, so no SSH access to a private org is needed on a rig). Neither image
+holds the checkpoint, a bank or a result; those are mounted.
+
+**On a new machine**, in order:
+
+1. NVIDIA driver and the NVIDIA container toolkit, so `docker run --gpus all` works; docker
+   compose v2. `uv` for the host-side commands.
+2. `git clone` this repo -- clone, not rsync or a zip: ten paths in the vendored fork are
+   symlinks and a flattening transport makes the bridge build die on a missing SConscript.
+   `bash scripts/bridge.sh build` checks for exactly that first.
+3. `../models/` beside the repo, holding `model_dev.yml` and `step_440000_trt_direct_full.ep`.
+   The engine inside the `.ep` is compiled for one GPU architecture; on a different one it
+   fails to deserialize, and rebuilding it is the converter's job, not this repo's.
+4. Build both images (above), regenerate a bank (`scenariobank generate`, below), and run the
+   sim container **as root** -- the default for `docker run`; `compose.yaml` sets `user:` to
+   the host uid, and under that uid `torch_tensorrt` hung a scored row for four hours.
 
 ## What gets generated, and where
 

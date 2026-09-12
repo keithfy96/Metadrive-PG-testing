@@ -21,7 +21,7 @@
 # already unpacked. What the studio actually pays at boot is `import scenariobank.cli`, 204 ms. It
 # never imports MetaDrive itself: the engine is one per process, so a server holding one could
 # serve exactly one simulator request and would die with it.
-FROM metadrive-wingfin-sim:latest
+FROM scenariobank-sim:latest
 
 # `uv pip install` and NOT `uv sync`. A sync makes the environment match the lock *exactly* --
 # it would strip MetaDrive, torch, TensorRT and CuPy back out of /opt/venv, which is the entire

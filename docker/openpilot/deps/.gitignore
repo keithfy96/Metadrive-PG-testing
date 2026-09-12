@@ -1,0 +1,17 @@
+# The openpilot fork is VENDORED here, not ignored -- deps/openpilot/ is 309 MB of tracked files
+# and deps/openpilot/VENDORED.md records which commit it is a copy of.
+#
+# It used to be ignored and fetched by ../pull.sh. That made every machine need SSH access to
+# the private zapetaai org before it could build the bridge, which is exactly what stopped a rig
+# from running tier 4. Carrying it costs a bigger clone once; fetching it cost access nobody
+# could grant remotely.
+#
+# Build leftovers only. scons writes .o/.os beside the sources and .scon* at the root, and a
+# `docker build` context that carries them is both bigger and stale.
+*.o
+*.os
+*.pyc
+__pycache__/
+.sconsign.dblite
+.sconf_temp/
+config.log
