@@ -9,7 +9,7 @@
 #   MODEL_CHECKPOINT=../models/step_440000_trt_direct_full.ep \
 #   docker run --rm --gpus all --network host -v $PWD:/work -v $PWD/../models:/models:ro \
 #       -e MODEL_CONFIG=/models/model_dev.yml -e MODEL_CHECKPOINT=/models/step_440000_trt_direct_full.ep \
-#       scenariobank-sim:latest bash /work/scripts/av3-probe.sh
+#       metadrive-wingfin-sim:latest bash /work/scripts/av3-probe.sh
 #
 # Six conversions stand between the AV3 model and the car and not one of them raises when it
 # is wrong. Stage one measures the ones the RIG rests on -- which way is forward, right, left

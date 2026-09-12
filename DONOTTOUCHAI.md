@@ -47,6 +47,8 @@ bash scripts/bridge.sh status     # confirms it is listening on 127.0.0.1:5558
 bash scripts/bridge.sh logs       # one line per control tick; Ctrl-C leaves it running
 bash scripts/bridge.sh stop       # only when you are done for the day
 
+bash scripts/sim-image.sh build
+
 docker rm av3 2>/dev/null         # a finished run still holds the name
 docker run -d --name av3 --gpus all --network host \
   -v $PWD:/work:ro -v $PWD/../models:/models:ro -v $PWD/out:/out \

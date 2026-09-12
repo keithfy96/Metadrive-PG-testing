@@ -7,7 +7,8 @@
 # GLX so there is no X server to find, the glvnd ICD manifest without which every EGL context
 # lands silently on llvmpipe, HOME=/tmp, and a /opt/venv outside /work that a bind mount cannot
 # shadow. Re-deriving any of that here would be a 13 GB build to arrive back where we started; see
-# `compose.yaml` for why the base is an image from the converter repo and what that does not cost.
+# `compose.yaml` for why the base is the converter's image and what that does not cost. The base
+# is an ARG so `SIM_IMAGE=scenariobank-sim:latest` (this repo's fallback) works here too.
 #
 # **Why the studio image needs the whole simulator.** It does not serve the work, it spawns it:
 # `web/invoke.py` launches every job as `sys.executable -m scenariobank <cmd>`, a subprocess of
@@ -21,7 +22,8 @@
 # already unpacked. What the studio actually pays at boot is `import scenariobank.cli`, 204 ms. It
 # never imports MetaDrive itself: the engine is one per process, so a server holding one could
 # serve exactly one simulator request and would die with it.
-FROM scenariobank-sim:latest
+ARG SIM_IMAGE=metadrive-wingfin-sim:latest
+FROM ${SIM_IMAGE}
 
 # `uv pip install` and NOT `uv sync`. A sync makes the environment match the lock *exactly* --
 # it would strip MetaDrive, torch, TensorRT and CuPy back out of /opt/venv, which is the entire

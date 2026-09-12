@@ -34,6 +34,11 @@ VENDORED_SYMLINKS = [
 ]
 
 
+def _code_lines(text: str) -> str:
+    """The file without its full-line comments, which discuss the very strings tested for."""
+    return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+
+
 def _uv_sync_groups(dockerfile: Path) -> set[str]:
     """The groups every non-comment `uv sync` line names, unioned."""
     groups: set[str] = set()
@@ -102,40 +107,33 @@ def test_lock_resolves_torch_from_the_cu128_index():
     assert 'name = "torch-tensorrt"\nversion = "2.8.0+cu128"' in lock
 
 
-def test_compose_builds_the_runner_from_the_sim_dockerfile():
+def test_compose_runs_the_converters_image_and_does_not_build_it():
+    # One sim image for both projects, the converter's. A `build:` on `run` would let a compose
+    # build here put our smaller fallback under that tag, which fails a run minutes in on an
+    # import; so the runner has no build key and the studio's is the only one in the file.
     compose = (ROOT / "compose.yaml").read_text()
-    assert "dockerfile: docker/Dockerfile" in compose
-    assert "image: scenariobank-sim:latest" in compose
-    assert "metadrive-wingfin-sim:latest" not in compose, "the converter's tag is not ours to build"
+    code = _code_lines(compose)
+    assert code.count("build:") == 1, "only the studio builds; the runner's image is theirs"
+    assert "dockerfile: docker/Dockerfile" not in code
+    assert 'image: "${SIM_IMAGE:-metadrive-wingfin-sim:latest}"' in code
+    assert 'SIM_IMAGE: "${SIM_IMAGE:-metadrive-wingfin-sim:latest}"' in code, "studio base arg"
     studio = (ROOT / "docker" / "studio.Dockerfile").read_text()
-    assert "FROM scenariobank-sim:latest" in studio
+    assert "ARG SIM_IMAGE=metadrive-wingfin-sim:latest\nFROM ${SIM_IMAGE}\n" in studio
 
 
-# --- the bridge image -------------------------------------------------------------------------
-
-
-def test_bridge_context_is_complete():
-    assert (BRIDGE / "Dockerfile").is_file()
-    assert (BRIDGE / "bridge" / "zapeta" / "server.py").is_file()
-    assert (FORK / "SConstruct").is_file(), "not vendored; bridge.sh build would need SSH"
-    assert any((FORK / "cereal").iterdir()), "cereal/ is empty -- a submodule that did not vendor"
-    assert (FORK / "VENDORED.md").is_file()
-
-
-@pytest.mark.parametrize("path", VENDORED_SYMLINKS)
-def test_vendored_fork_kept_its_symlinks(path: str):
-    # A transport that flattens symlinks makes scons die on a missing SConscript, which reads
-    # like a broken Dockerfile and is not.
-    assert (FORK / path).is_symlink(), f"{path} is not a symlink; the tree was copied, not cloned"
-
-
-def test_bridge_dockerfile_copies_what_the_context_holds():
-    text = (BRIDGE / "Dockerfile").read_text()
-    assert "COPY deps/openpilot/ " in text
-    assert "COPY bridge/ /opt/bridge/" in text
-
-
-def test_bridge_script_checks_the_same_symlinks_the_test_does():
-    script = (ROOT / "scripts" / "bridge.sh").read_text()
-    for path in VENDORED_SYMLINKS:
-        assert path in script
+def test_build_pairs_each_tag_with_its_own_recipe():
+    # `build` delegates to the converter checkout beside this repo when it is there, so one
+    # command makes the shared image on every machine; else it makes our fallback. Either way
+    # the converter's tag may come only from the converter's Dockerfile and the fallback's only
+    # from ours -- a build under SIM_IMAGE could put the smaller image under the shared name.
+    script = (ROOT / "scripts" / "sim-image.sh").read_text()
+    code = _code_lines(script)
+    assert 'CONVERTER_DIR="${CONVERTER_DIR:-../wingfin-osm-scenarionet-converter}"' in code
+    assert "CONVERTER_IMAGE=metadrive-wingfin-sim:latest" in code
+    assert 'CONVERTER_DOCKERFILE="$CONVERTER_DIR/docker/Dockerfile"' in code
+    assert "FALLBACK_IMAGE=scenariobank-sim:latest" in code
+    assert 'tag="$CONVERTER_IMAGE"; recipe="$CONVERTER_DOCKERFILE"; context="$CONVERTER_DIR"' in code
+    assert 'tag="$FALLBACK_IMAGE"; recipe="$DOCKERFILE"; context=.' in code
+    assert code.count("docker build ") == 1 and 'docker build -t "$tag" -f "$recipe" "$context"' in code
+    assert 'docker build -t "$IMAGE"' not in code
+    assert 'IMAGE="${SIM_IMAGE:-metadrive-wingfin-sim:latest}"' in code

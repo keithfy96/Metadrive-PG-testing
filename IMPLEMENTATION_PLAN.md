@@ -3597,7 +3597,7 @@ Six things that bite, in the order they will bite:
 **Verify alone** — in the sim image, because the cupy gate is only known open there:
 
 ```bash
-docker run --rm --gpus all -v $PWD:/work:ro scenariobank-sim:latest bash /work/scripts/av3-probe.sh
+docker run --rm --gpus all -v $PWD:/work:ro metadrive-wingfin-sim:latest bash /work/scripts/av3-probe.sh
 # the same two commands by hand, on the host:
 uv run scenariobank rig --camera-rig rigs/av3.txt --check-frame --bank banks/curve
 uv run scenariobank replay --bank banks/curve --camera-rig rigs/av3.txt --steps 20 --ignore-rig-rate --json \
@@ -3806,7 +3806,7 @@ The other half of the port, plus the two things about it that are not a copy:
 ```bash
 bash scripts/bridge.sh start                                  # our copy of the converter's, ported
 docker run -d --name av3 --gpus all --network host -v $PWD:/work:ro -v $PWD/../models:/models:ro \
-  -v $PWD/out:/out -e HOME=/tmp scenariobank-sim:latest \
+  -v $PWD/out:/out -e HOME=/tmp metadrive-wingfin-sim:latest \
   python -m scenariobank run --bank /work/banks/t-junction --scenarios t_junction_0000 \
   --policy scenariobank.av3:AV3Policy --camera-rig /work/rigs/av3.txt --step-hz 100 --decision-hz 20 \
   --model-config /models/model_dev.yml --checkpoint /models/step_440000_trt_direct_full.ep --out /out/av3
@@ -4034,7 +4034,7 @@ and `av3-2.json`; the verify block above was run on them as written.
   and `rigs/` were `docker cp`'d into it at `/tmp/pg` and the two runs made with `docker exec` and
   `PYTHONPATH=/tmp/pg/src`. Same image, same lock, same checkpoint as the documented command; only
   the mount path differs, which is why `bank.path` reads `/tmp/pg/banks/t-junction`. After a reboot
-  the README's `docker run --gpus all … scenariobank-sim:latest` form is the one to use.
+  the README's `docker run --gpus all … metadrive-wingfin-sim:latest` form is the one to use.
 - **Two things seen on the rig that are not this step's but will bite the next one:** its root
   filesystem is 100 % full (867 G of 915 G, 1.9 G free — docker's data root is on `/mnt/secondary`,
   which is why builds still work), and the checkout there,
@@ -4092,7 +4092,7 @@ list the hard parts it already solves — `ubuntu:22.04`, `uv`, `UV_PROJECT_ENVI
 image those lines produce already runs this repo. **It does**, measured 2026-09-06:
 
 ```
-$ docker run --rm -v $PWD:/work:ro scenariobank-sim:latest python -m scenariobank doctor
+$ docker run --rm -v $PWD:/work:ro metadrive-wingfin-sim:latest python -m scenariobank doctor
 commit:        85e5dadc6c7436d324348f6e3d8f8e680c06b4db     requested: 85e5dadc
 asset_version: 0.4.3    python: 3.10.21    numpy: 2.2.6
 obs_space:     Box(-0.0, 1.0, (19,), float32)               drive_side: left
@@ -4166,6 +4166,21 @@ Two services over one image, plus `scripts/sim-image.sh`, which is the guard.
   `test_images.py` both check), `scripts/bridge.sh build|save` ported. `pyproject.toml` gained
   the `gpu` and `model` groups and the two explicit indexes; `uv lock` added 408 lines and
   removed none; the host `.venv` is untouched because the groups are opt-in.)*
+  *(Reversed again, the same day, and this is where it rests: **the runner's image is the
+  converter's `metadrive-wingfin-sim:latest`, one sim container for both projects, and `run`
+  has no `build:` key** -- the bullet above is right after all. Keith's call, 2026-09-12: he
+  wants the same container to serve the converter too, and only one direction of sharing is
+  safe -- the converter's image is a strict superset (its own libraries and `ros` on top of
+  everything we need), ours is not, so the shared tag has to be the one built there, with
+  `docker compose build` in that checkout. What stays from the morning: `docker/Dockerfile` as
+  the **fallback** for a machine with no converter checkout, built by `sim-image.sh build`
+  under a fixed tag of its own, `scenariobank-sim:latest`, never the converter's;
+  `SIM_IMAGE=scenariobank-sim:latest` selects it in compose, the studio's `ARG`, and the
+  script. The label check is what makes the shared tag safe, on both sides. `test_images.py`
+  pins that `run` has no build key and that the fallback build cannot take the shared tag.
+  And `sim-image.sh build` **delegates**: with the converter checkout beside this repo
+  (`CONVERTER_DIR`) it runs the converter's own `docker build` under the converter's tag, so one
+  command makes the shared image on any machine that has both; without it, the fallback.)*
   *(Verified 2026-09-12: `scenariobank-sim:latest` built in ~20 min, 13.1 GB, label `sim gpu
   model`; `doctor` in it prints commit 85e5dadc and `drive_side: left`, the same as the host;
   a `BridgePolicy` row of `t_junction_0000` at 100/20 ran inside it against the live bridge,

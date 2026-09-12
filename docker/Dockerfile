@@ -1,7 +1,12 @@
-# The sim image: MetaDrive, scenariobank, and the AV3 model stack, in one environment.
+# The FALLBACK sim image: MetaDrive, scenariobank, and the AV3 model stack, in one environment.
 #
 #   bash scripts/sim-image.sh build      # -> scenariobank-sim:latest, 10-15 min, ~4 GB of wheels
-#   docker compose run --rm run ...      # compose.yaml builds it too, from this file
+#   SIM_IMAGE=scenariobank-sim:latest docker compose run --rm run ...     # then select it
+#
+# The image this repo runs on by default is the converter's, `metadrive-wingfin-sim:latest`,
+# built in that repo with `docker compose build`; it is a superset of this one and serves both
+# projects (compose.yaml says why). This file exists for a machine that has no converter checkout.
+# It never writes the converter's tag: an image built from here lacks that repo's libraries.
 #
 # Ported 2026-09-12 from ../wingfin-osm-scenarionet-converter/docker/Dockerfile, which built
 # `metadrive-wingfin-sim` for that repo; this one builds from *this* repo's pyproject.toml and

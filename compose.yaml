@@ -1,4 +1,4 @@
-# Running scenariobank in a container, on an image this repo does not build.
+# Running scenariobank in a container, on the converter's sim image.
 #
 #   docker compose run --rm run doctor
 #   docker compose run --rm run generate --category curve --count 3 --out /out/curve
@@ -8,12 +8,15 @@
 # image built by the converter repo, and compose's own error for a missing image says only "pull
 # access denied", which is wrong and sends people looking for a registry.
 #
-# **The runner's image is this repo's own since 2026-09-12** (docker/Dockerfile, tag
-# `scenariobank-sim`). Until then it reused `metadrive-wingfin-sim`, built by the converter repo:
-# that image ran `python -m scenariobank doctor` unmodified at the same MetaDrive commit our lock
-# pins, so a second 13 GB build bought nothing -- on a machine that had the converter. A rig does
-# not, and "clone, build, run" is the property a rig needs. R1 is still untouched: we import none
-# of that repo's code; we now carry its Dockerfile.
+# **One sim image for both projects: `metadrive-wingfin-sim:latest`, built in the converter repo
+# with `docker compose build` there.** It is a strict superset of what this repo needs (same base,
+# same MetaDrive commit, the `gpu` and `model` groups; plus the converter's own libraries and the
+# `ros` group), so it runs `python -m scenariobank` unmodified, and one image on a machine is one
+# image to keep current. Decided 2026-09-12, reversing that morning's retag to a tag of our own.
+# `docker/Dockerfile` stays as the **fallback** for a machine with no converter checkout: it
+# builds `scenariobank-sim:latest`, a subset that runs this repo and not the converter, and
+# `SIM_IMAGE=scenariobank-sim:latest` selects it here and in `scripts/sim-image.sh`. R1 is
+# untouched: we import none of that repo's code; we name one of its build products.
 #
 name: scenariobank
 
@@ -48,15 +51,12 @@ services:
   # `metadrive-wingfin-sim` is a name that already means something else on this machine.
   run:
     <<: *common
-    # Built here, from docker/Dockerfile, since 2026-09-12. Before that the runner reused the
-    # converter's `metadrive-wingfin-sim` and this file carried no `build:` key on purpose, so a
-    # build in this repo could not put a *different* image under that repo's tag. The tag is now
-    # our own, which is what makes a `build:` key safe: `bash scripts/sim-image.sh build` and
-    # `docker compose build run` make the same thing.
-    build:
-      context: .
-      dockerfile: docker/Dockerfile
-    image: scenariobank-sim:latest
+    # **NO `build:` KEY, DELIBERATELY.** The tag is the converter's, and a `docker compose build`
+    # in this repo must be unable to put a *different*, smaller image under it -- our fallback
+    # `docker/Dockerfile` lacks the converter's libraries and the `ros` group, and an image that
+    # is missing a group fails a run minutes in on an import. `bash scripts/sim-image.sh build`
+    # builds that fallback under its own tag, `scenariobank-sim:latest`, and never this one.
+    image: "${SIM_IMAGE:-metadrive-wingfin-sim:latest}"
     # The camera rig (Phase 4 Step 6) and the AV3 model (Step 7) need it; `generate` does not --
     # top-down rendering is pygame on the CPU. Comment this out on a machine with no NVIDIA
     # runtime and everything except those two steps still works.
@@ -86,6 +86,9 @@ services:
     build:
       context: .
       dockerfile: docker/studio.Dockerfile
+      args:
+        # The base the studio layers on: the same image `run` uses, so the two never disagree.
+        SIM_IMAGE: "${SIM_IMAGE:-metadrive-wingfin-sim:latest}"
     image: scenariobank-studio:85e5dad
     volumes:
       - !reset null

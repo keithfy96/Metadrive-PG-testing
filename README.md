@@ -467,7 +467,7 @@ uv run scenariobank av3 --bank banks/t-junction --camera-rig rigs/av3.txt \
 uv run scenariobank run --bank banks/t-junction --policy scenariobank.av3:BridgePolicy \
   --step-hz 100 --decision-hz 20 --out bridge                # the bridge alone, no model, no GPU
 docker run --rm --gpus all --network host -v $PWD:/work:ro -v $PWD/../models:/models:ro \
-  -e HOME=/tmp scenariobank-sim:latest python -m scenariobank run \
+  -e HOME=/tmp metadrive-wingfin-sim:latest python -m scenariobank run \
   --bank /work/banks/t-junction --policy scenariobank.av3:AV3Policy --camera-rig /work/rigs/av3.txt \
   --step-hz 100 --decision-hz 20 --model-config /models/model_dev.yml \
   --checkpoint /models/step_440000_trt_direct_full.ep --out /tmp/av3   # the submission
@@ -502,20 +502,30 @@ required and none defaulted; `--checkpoint` its `.ep`. `MODEL_CONFIG`, `MODEL_CH
 
 **Writes:** `av3` nothing; `bridge.sh start` a container named `metadrive-wingfin-openpilot-bridge`.
 
-### The two images, built here
+### The two images
 
 ```bash
-bash scripts/sim-image.sh build     # scenariobank-sim:latest from docker/Dockerfile, 10-15 min
+bash scripts/sim-image.sh build     # metadrive-wingfin-sim:latest via the converter checkout beside this repo, else the fallback; ~20 min
 bash scripts/bridge.sh build        # metadrive-wingfin-openpilot:prod from docker/openpilot/, ~30 min
-bash scripts/sim-image.sh           # is the sim image here, and does its label match the Dockerfile
+bash scripts/sim-image.sh           # is the sim image here, and does its label cover what we need
 ```
 
-Since 2026-09-12 both recipes live in this repo, so a clone builds both with nothing else
-checked out: the sim image from our own `pyproject.toml` and `uv.lock` (groups `sim`, `gpu`,
-`model`; torch 2.8.0+cu128 and TensorRT pinned to what compiled the checkpoint), the bridge from
-the converter's Dockerfile with the openpilot fork **vendored** under `docker/openpilot/deps/`
-(309 MB of tracked files, so no SSH access to a private org is needed on a rig). Neither image
-holds the checkpoint, a bank or a result; those are mounted.
+**The sim image is the converter's, and it serves both projects.** `metadrive-wingfin-sim:latest`
+is built in that repo and is a strict superset of what this one needs -- the same base, the same
+MetaDrive commit, the `gpu` and `model` groups (torch 2.8.0+cu128 and TensorRT pinned to what
+compiled the checkpoint), plus the converter's own libraries and its `ros` group -- so it runs
+`python -m scenariobank` unmodified, and a machine keeps one image current instead of two.
+`sim-image.sh build` makes it here by running the converter's own `docker build` against the
+checkout beside this repo (`CONVERTER_DIR`, default `../wingfin-osm-scenarionet-converter`; the
+rig has the same layout), so one command gives the same image on every machine. With no
+converter checkout it builds `docker/Dockerfile` instead: the same thing minus the converter's
+parts, under its own tag `scenariobank-sim:latest`, the fallback, which
+`SIM_IMAGE=scenariobank-sim:latest` then selects for compose and the scripts. It cannot run the
+converter, which is why it never takes the converter's tag.
+
+The bridge is built here, from the converter's Dockerfile with the openpilot fork **vendored**
+under `docker/openpilot/deps/` (309 MB of tracked files, so no SSH access to a private org is
+needed on a rig). Neither image holds the checkpoint, a bank or a result; those are mounted.
 
 **On a new machine**, in order:
 
