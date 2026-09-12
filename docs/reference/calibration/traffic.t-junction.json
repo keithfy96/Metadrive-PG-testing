@@ -1,0 +1,291 @@
+{
+  "axis": "traffic",
+  "bank_id": "t-junction",
+  "bank_path": "banks/t-junction",
+  "categories": [
+    "t_junction",
+    "CCS_only"
+  ],
+  "held": {
+    "barriers": "none",
+    "cones": "none",
+    "cyclists": "none",
+    "lights": "none",
+    "pedestrians": "none"
+  },
+  "measured_utc": "2026-09-12T21:05:07Z",
+  "metadrive_commit": "85e5dadc6c7436d324348f6e3d8f8e680c06b4db",
+  "points": [
+    {
+      "by_failure_reason": {},
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 5,
+      "out": "out/calibrate/traffic/t-junction/traffic=0",
+      "placed": {
+        "DefaultVehicle": 5
+      },
+      "reward_mean": 205.182,
+      "steps_mean": 204.2,
+      "success_rate": 1.0,
+      "successes": 5,
+      "value": 0.0,
+      "wall_time_s": 4.29
+    },
+    {
+      "by_failure_reason": {},
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 5,
+      "out": "out/calibrate/traffic/t-junction/traffic=0.05",
+      "placed": {
+        "DefaultVehicle": 5,
+        "LVehicle": 1,
+        "MVehicle": 5,
+        "SVehicle": 2,
+        "XLVehicle": 2
+      },
+      "reward_mean": 205.207,
+      "steps_mean": 227.2,
+      "success_rate": 1.0,
+      "successes": 5,
+      "value": 0.05,
+      "wall_time_s": 6.09
+    },
+    {
+      "by_failure_reason": {
+        "out_of_road": 1
+      },
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 5,
+      "out": "out/calibrate/traffic/t-junction/traffic=0.1",
+      "placed": {
+        "DefaultVehicle": 5,
+        "LVehicle": 1,
+        "MVehicle": 8,
+        "SVehicle": 6,
+        "XLVehicle": 6
+      },
+      "reward_mean": 175.187,
+      "steps_mean": 203.4,
+      "success_rate": 0.8,
+      "successes": 4,
+      "value": 0.1,
+      "wall_time_s": 6.53
+    },
+    {
+      "by_failure_reason": {
+        "crash_vehicle": 1
+      },
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 1
+      },
+      "n": 5,
+      "out": "out/calibrate/traffic/t-junction/traffic=0.15",
+      "placed": {
+        "DefaultVehicle": 5,
+        "LVehicle": 7,
+        "MVehicle": 13,
+        "SVehicle": 6,
+        "XLVehicle": 6
+      },
+      "reward_mean": 157.111,
+      "steps_mean": 222.4,
+      "success_rate": 0.8,
+      "successes": 4,
+      "value": 0.15,
+      "wall_time_s": 9.01
+    },
+    {
+      "by_failure_reason": {
+        "crash_vehicle": 2
+      },
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 2
+      },
+      "n": 5,
+      "out": "out/calibrate/traffic/t-junction/traffic=0.2",
+      "placed": {
+        "DefaultVehicle": 5,
+        "LVehicle": 9,
+        "MVehicle": 17,
+        "SVehicle": 5,
+        "XLVehicle": 12
+      },
+      "reward_mean": 132.628,
+      "steps_mean": 203.4,
+      "success_rate": 0.6,
+      "successes": 3,
+      "value": 0.2,
+      "wall_time_s": 9.06
+    },
+    {
+      "by_failure_reason": {
+        "crash_vehicle": 3
+      },
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 3
+      },
+      "n": 5,
+      "out": "out/calibrate/traffic/t-junction/traffic=0.3",
+      "placed": {
+        "DefaultVehicle": 5,
+        "LVehicle": 15,
+        "MVehicle": 23,
+        "SVehicle": 9,
+        "XLVehicle": 17
+      },
+      "reward_mean": 109.601,
+      "steps_mean": 208.4,
+      "success_rate": 0.4,
+      "successes": 2,
+      "value": 0.3,
+      "wall_time_s": 11.92
+    },
+    {
+      "by_failure_reason": {
+        "crash_vehicle": 2
+      },
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 2
+      },
+      "n": 5,
+      "out": "out/calibrate/traffic/t-junction/traffic=0.35",
+      "placed": {
+        "DefaultVehicle": 5,
+        "LVehicle": 20,
+        "MVehicle": 22,
+        "SVehicle": 16,
+        "XLVehicle": 17
+      },
+      "reward_mean": 114.754,
+      "steps_mean": 191.4,
+      "success_rate": 0.6,
+      "successes": 3,
+      "value": 0.35,
+      "wall_time_s": 9.19
+    },
+    {
+      "by_failure_reason": {
+        "crash_vehicle": 3
+      },
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 3
+      },
+      "n": 5,
+      "out": "out/calibrate/traffic/t-junction/traffic=0.4",
+      "placed": {
+        "DefaultVehicle": 5,
+        "LVehicle": 25,
+        "MVehicle": 24,
+        "SVehicle": 16,
+        "XLVehicle": 21
+      },
+      "reward_mean": 81.773,
+      "steps_mean": 144.8,
+      "success_rate": 0.4,
+      "successes": 2,
+      "value": 0.4,
+      "wall_time_s": 6.24
+    },
+    {
+      "by_failure_reason": {
+        "crash_vehicle": 4
+      },
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 4
+      },
+      "n": 5,
+      "out": "out/calibrate/traffic/t-junction/traffic=0.5",
+      "placed": {
+        "DefaultVehicle": 5,
+        "LVehicle": 35,
+        "MVehicle": 33,
+        "SVehicle": 18,
+        "XLVehicle": 22
+      },
+      "reward_mean": 72.425,
+      "steps_mean": 195.0,
+      "success_rate": 0.2,
+      "successes": 1,
+      "value": 0.5,
+      "wall_time_s": 15.21
+    }
+  ],
+  "policy": "scenariobank.policies:ExpertPolicy",
+  "scenarios": [
+    "t_junction_0000",
+    "t_junction_0002",
+    "t_junction_0003",
+    "t_junction_0004",
+    "CCS_only_0000"
+  ],
+  "schema_version": 1
+}

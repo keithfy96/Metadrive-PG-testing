@@ -21,6 +21,9 @@ that one lists every flag and every value they accept.
 workspace in as a bank — which rate to choose, and what `import` refuses.
 [`docs/reward-phase4-metadrive.md`](docs/reward-phase4-metadrive.md) is what the `reward` field
 in a result is — MetaDrive's own training reward, summed — and why it is not a score.
+[`docs/calibrating-levels.md`](docs/calibrating-levels.md) is what `calibrate` does, when it has
+to be re-run (a MetaDrive bump, not a new bank) and how; the measured tables it explains are
+[`docs/reference/level-calibration.md`](docs/reference/level-calibration.md).
 
 All scenarios are **left-side traffic** (right-hand-drive market). See
 [Which side of the road](#which-side-of-the-road) — it is not a MetaDrive setting, and it is the
@@ -406,6 +409,40 @@ The pin is a **default, not a lock**: a run flag still overrides it, and the res
 levels actually used, so an override stays visible in the artifact afterwards.
 
 **Writes:** `<bank>/manifest.json`. Nothing else.
+
+### `calibrate` — measure the number behind each level
+
+Flags: [`docs/reference/commands.md`](docs/reference/commands.md#calibrate).
+
+```bash
+uv run scenariobank calibrate --bank ./banks/t-junction-left-intersection \
+    --axis traffic --values 0,0.05,0.1,0.15,0.2,0.3,0.35,0.4,0.5
+uv run scenariobank calibrate --bank ./banks/curve --axis cones --values 0,1,2,3,4,6,8
+```
+
+A level is a name; the number behind it is a measurement, and this is the measurement. One axis
+is swept over raw values with **every other axis held at `none`**, and the bundled expert drives
+every scenario of the bank once per value — `run` once per value, the same loop and the same
+record, so a calibration point is exactly what a `run --traffic-density 0.2` would have scored.
+Each value's run lands under `out/calibrate/<axis>/<bank>/<axis>=<value>/`; the sweep itself is
+one JSON record under `docs/reference/calibration/`, and
+[`docs/reference/level-calibration.md`](docs/reference/level-calibration.md) is re-rendered from
+every record there.
+
+It prints the table and the four values the spread suggests. Baking them into
+`options.LEVELS` is a person's edit, and two tests keep it honest: the checked-in page must be
+the render of the checked-in records, and every level of a swept axis must be a value some
+sweep actually ran. A bank pins level *names*, so re-measuring moves the numbers without
+touching a bank on disk.
+
+Three things to read the tables with. Traffic under `0.01` is refused rather than measured,
+because the traffic manager places nothing there. The collisions column is the **ego's own**:
+a traffic car hitting another traffic car is not in it, and shows instead as a `max_step` row
+with the ego stuck behind the wreck. And `placed` is read off the scene, so cones and barriers
+on an `X`, `T` or `O` road show as nothing placed — the axis cannot move the rate there.
+
+**Writes:** `docs/reference/calibration/<axis>.<bank_id>.json` and
+`docs/reference/level-calibration.md`, plus the runs under `out/`.
 
 ### `scripts/bank-check.sh` — the one command CI and a human both run
 

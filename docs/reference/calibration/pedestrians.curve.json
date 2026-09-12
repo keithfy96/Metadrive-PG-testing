@@ -1,0 +1,214 @@
+{
+  "axis": "pedestrians",
+  "bank_id": "curve",
+  "bank_path": "banks/curve",
+  "categories": [
+    "curve"
+  ],
+  "held": {
+    "barriers": "none",
+    "cones": "none",
+    "cyclists": "none",
+    "lights": "none",
+    "traffic": "none"
+  },
+  "measured_utc": "2026-09-12T21:10:00Z",
+  "metadrive_commit": "85e5dadc6c7436d324348f6e3d8f8e680c06b4db",
+  "points": [
+    {
+      "by_failure_reason": {},
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 5,
+      "out": "out/calibrate/pedestrians/curve/pedestrians=0",
+      "placed": {
+        "DefaultVehicle": 5
+      },
+      "reward_mean": 336.075,
+      "steps_mean": 301.8,
+      "success_rate": 1.0,
+      "successes": 5,
+      "value": 0.0,
+      "wall_time_s": 6.4
+    },
+    {
+      "by_failure_reason": {
+        "crash_human": 2
+      },
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 2,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 5,
+      "out": "out/calibrate/pedestrians/curve/pedestrians=1",
+      "placed": {
+        "DefaultVehicle": 5,
+        "Pedestrian": 5
+      },
+      "reward_mean": 297.023,
+      "steps_mean": 269.4,
+      "success_rate": 0.6,
+      "successes": 3,
+      "value": 1.0,
+      "wall_time_s": 5.7
+    },
+    {
+      "by_failure_reason": {
+        "crash_human": 3
+      },
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 3,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 5,
+      "out": "out/calibrate/pedestrians/curve/pedestrians=2",
+      "placed": {
+        "DefaultVehicle": 5,
+        "Pedestrian": 10
+      },
+      "reward_mean": 291.102,
+      "steps_mean": 267.4,
+      "success_rate": 0.4,
+      "successes": 2,
+      "value": 2.0,
+      "wall_time_s": 5.74
+    },
+    {
+      "by_failure_reason": {
+        "crash_human": 3
+      },
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 3,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 5,
+      "out": "out/calibrate/pedestrians/curve/pedestrians=3",
+      "placed": {
+        "DefaultVehicle": 5,
+        "Pedestrian": 15
+      },
+      "reward_mean": 291.015,
+      "steps_mean": 267.4,
+      "success_rate": 0.4,
+      "successes": 2,
+      "value": 3.0,
+      "wall_time_s": 5.82
+    },
+    {
+      "by_failure_reason": {
+        "crash_human": 4
+      },
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 4,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 5,
+      "out": "out/calibrate/pedestrians/curve/pedestrians=4",
+      "placed": {
+        "DefaultVehicle": 5,
+        "Pedestrian": 20
+      },
+      "reward_mean": 195.662,
+      "steps_mean": 185.0,
+      "success_rate": 0.2,
+      "successes": 1,
+      "value": 4.0,
+      "wall_time_s": 4.04
+    },
+    {
+      "by_failure_reason": {
+        "crash_human": 5
+      },
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 5,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 5,
+      "out": "out/calibrate/pedestrians/curve/pedestrians=6",
+      "placed": {
+        "DefaultVehicle": 5,
+        "Pedestrian": 30
+      },
+      "reward_mean": 143.453,
+      "steps_mean": 146.8,
+      "success_rate": 0.0,
+      "successes": 0,
+      "value": 6.0,
+      "wall_time_s": 3.28
+    },
+    {
+      "by_failure_reason": {
+        "crash_human": 5
+      },
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 5,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 5,
+      "out": "out/calibrate/pedestrians/curve/pedestrians=8",
+      "placed": {
+        "DefaultVehicle": 5,
+        "Pedestrian": 40
+      },
+      "reward_mean": 143.498,
+      "steps_mean": 147.2,
+      "success_rate": 0.0,
+      "successes": 0,
+      "value": 8.0,
+      "wall_time_s": 3.37
+    }
+  ],
+  "policy": "scenariobank.policies:ExpertPolicy",
+  "scenarios": [
+    "curve_0000",
+    "curve_0001",
+    "curve_0002",
+    "curve_0003",
+    "curve_0004"
+  ],
+  "schema_version": 1
+}

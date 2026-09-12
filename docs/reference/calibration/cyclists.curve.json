@@ -1,0 +1,214 @@
+{
+  "axis": "cyclists",
+  "bank_id": "curve",
+  "bank_path": "banks/curve",
+  "categories": [
+    "curve"
+  ],
+  "held": {
+    "barriers": "none",
+    "cones": "none",
+    "lights": "none",
+    "pedestrians": "none",
+    "traffic": "none"
+  },
+  "measured_utc": "2026-09-12T21:11:28Z",
+  "metadrive_commit": "85e5dadc6c7436d324348f6e3d8f8e680c06b4db",
+  "points": [
+    {
+      "by_failure_reason": {},
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 5,
+      "out": "out/calibrate/cyclists/curve/cyclists=0",
+      "placed": {
+        "DefaultVehicle": 5
+      },
+      "reward_mean": 336.075,
+      "steps_mean": 301.8,
+      "success_rate": 1.0,
+      "successes": 5,
+      "value": 0.0,
+      "wall_time_s": 7.01
+    },
+    {
+      "by_failure_reason": {
+        "crash_human": 1
+      },
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 1,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 5,
+      "out": "out/calibrate/cyclists/curve/cyclists=1",
+      "placed": {
+        "Cyclist": 5,
+        "DefaultVehicle": 5
+      },
+      "reward_mean": 317.577,
+      "steps_mean": 322.2,
+      "success_rate": 0.8,
+      "successes": 4,
+      "value": 1.0,
+      "wall_time_s": 7.75
+    },
+    {
+      "by_failure_reason": {
+        "crash_human": 1
+      },
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 1,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 5,
+      "out": "out/calibrate/cyclists/curve/cyclists=2",
+      "placed": {
+        "Cyclist": 10,
+        "DefaultVehicle": 5
+      },
+      "reward_mean": 286.578,
+      "steps_mean": 273.0,
+      "success_rate": 0.8,
+      "successes": 4,
+      "value": 2.0,
+      "wall_time_s": 6.18
+    },
+    {
+      "by_failure_reason": {
+        "crash_human": 1
+      },
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 1,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 5,
+      "out": "out/calibrate/cyclists/curve/cyclists=3",
+      "placed": {
+        "Cyclist": 15,
+        "DefaultVehicle": 5
+      },
+      "reward_mean": 286.637,
+      "steps_mean": 277.4,
+      "success_rate": 0.8,
+      "successes": 4,
+      "value": 3.0,
+      "wall_time_s": 6.33
+    },
+    {
+      "by_failure_reason": {
+        "crash_human": 1
+      },
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 1,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 5,
+      "out": "out/calibrate/cyclists/curve/cyclists=4",
+      "placed": {
+        "Cyclist": 20,
+        "DefaultVehicle": 5
+      },
+      "reward_mean": 286.595,
+      "steps_mean": 280.8,
+      "success_rate": 0.8,
+      "successes": 4,
+      "value": 4.0,
+      "wall_time_s": 6.7
+    },
+    {
+      "by_failure_reason": {
+        "crash_human": 1
+      },
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 1,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 5,
+      "out": "out/calibrate/cyclists/curve/cyclists=6",
+      "placed": {
+        "Cyclist": 30,
+        "DefaultVehicle": 5
+      },
+      "reward_mean": 261.805,
+      "steps_mean": 274.8,
+      "success_rate": 0.8,
+      "successes": 4,
+      "value": 6.0,
+      "wall_time_s": 6.51
+    },
+    {
+      "by_failure_reason": {
+        "crash_human": 1
+      },
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 1,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 5,
+      "out": "out/calibrate/cyclists/curve/cyclists=8",
+      "placed": {
+        "Cyclist": 40,
+        "DefaultVehicle": 5
+      },
+      "reward_mean": 256.819,
+      "steps_mean": 277.6,
+      "success_rate": 0.8,
+      "successes": 4,
+      "value": 8.0,
+      "wall_time_s": 6.78
+    }
+  ],
+  "policy": "scenariobank.policies:ExpertPolicy",
+  "scenarios": [
+    "curve_0000",
+    "curve_0001",
+    "curve_0002",
+    "curve_0003",
+    "curve_0004"
+  ],
+  "schema_version": 1
+}

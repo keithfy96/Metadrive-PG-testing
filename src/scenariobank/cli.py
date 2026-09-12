@@ -1697,6 +1697,157 @@ def run(
     )
 
 
+def _parse_values(raw: list[str]) -> list[float]:
+    """`--values 0,0.05 --values 0.1` -> `[0.0, 0.05, 0.1]`, failing on the flag, not mid-sweep."""
+    values: list[float] = []
+    for chunk in raw:
+        for item in chunk.split(","):
+            if not item.strip():
+                continue
+            try:
+                values.append(float(item))
+            except ValueError as error:
+                raise typer.BadParameter(
+                    f"values must be numbers: {item.strip()!r}", param_hint="--values"
+                ) from error
+    return values
+
+
+@app.command()
+def calibrate(
+    bank: Annotated[
+        Path | None,
+        typer.Option("--bank", help="Procedural bank whose scenarios the sweep drives."),
+    ] = None,
+    axis: Annotated[
+        str | None,
+        typer.Option("--axis", help="The axis to sweep; every other axis is held at none."),
+    ] = None,
+    values: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--values",
+            help="The raw values to run the axis at, comma-separated or repeated. 0 is none.",
+        ),
+    ] = None,
+    render_only: Annotated[
+        bool,
+        typer.Option(
+            "--render-only",
+            help="Run nothing; rewrite the page from the records already in --record. For "
+            "after an edit to options.LEVELS, which the page quotes.",
+        ),
+    ] = False,
+    categories: Annotated[
+        list[str] | None,
+        typer.Option("--categories", help="Only these categories of the bank; default all."),
+    ] = None,
+    policy: Annotated[
+        str, typer.Option("--policy", help="What drives, as `pkg.mod:Name`.")
+    ] = "scenariobank.policies:ExpertPolicy",
+    out: Annotated[
+        Path,
+        typer.Option(
+            "--out",
+            "-o",
+            help="Where each value's run lands; a relative path goes under out/. One "
+            "`<axis>/<bank>/<axis>=<value>/results.json` per value.",
+        ),
+    ] = Path("calibrate"),
+    record: Annotated[
+        Path,
+        typer.Option("--record", help="Directory the sweep's JSON record is written into."),
+    ] = Path("docs/reference/calibration"),
+    doc: Annotated[
+        Path, typer.Option("--doc", help="The reference page re-rendered from every record.")
+    ] = Path("docs/reference/level-calibration.md"),
+) -> None:
+    """Sweep one axis over raw values and write the level-calibration reference.
+
+    Phase 4b's measurement. One `run` per value -- the same loop, the same record, one env per
+    row -- with the four other numeric axes and lights held at `none`, so the success rate per
+    value answers to this axis alone. Every value is resolved against the bank before the first
+    env is built, so a traffic value under the floor or a fractional count is refused up front.
+
+    Prints one line per value as it lands, then the table, then the four values the spread
+    suggests (`none` is always 0) -- a suggestion, for a person to bake into `options.LEVELS`;
+    the page records what `LEVELS` says next to what was measured, and
+    `tests/unit/test_calibration.py` fails if a level is a number no sweep ran. After that
+    edit, `--render-only` rewrites the page from the records without driving anything.
+
+    Needs the simulator, except with `--render-only`. About a second per scenario per value on
+    a `T` or `X` road with the expert; a six-value sweep of a nine-row bank is a few minutes.
+    """
+    from scenariobank.bank import BankError
+    from scenariobank.calibration import CalibrationError, levels_match, load_records, render
+    from scenariobank.calibration import suggest as suggest_levels
+    from scenariobank.calibration import sweep as run_sweep
+    from scenariobank.calibration import write as write_record
+    from scenariobank.options import OptionError
+    from scenariobank.policies import PolicyError
+    from scenariobank.runner import RunError
+
+    if render_only:
+        given = [name for name, value in (("--bank", bank), ("--axis", axis), ("--values", values))
+                 if value]
+        if given:
+            raise typer.BadParameter(
+                f"--render-only runs nothing; drop {', '.join(given)}", param_hint="--render-only"
+            )
+        try:
+            records = load_records(record) if record.exists() else []
+        except CalibrationError as error:
+            typer.echo(f"calibrate failed: {error}", err=True)
+            raise typer.Exit(code=1) from error
+        doc.parent.mkdir(parents=True, exist_ok=True)
+        doc.write_text(render(records))
+        gaps = levels_match(records)
+        for name, missing in gaps.items():
+            typer.echo(f"options.LEVELS[{name!r}] has {', '.join(missing)} at a value no sweep ran")
+        typer.echo(f"reference written: {doc}  ({len(records)} records)")
+        return
+    for name, value in (("--bank", bank), ("--axis", axis), ("--values", values)):
+        if not value:
+            raise typer.BadParameter(f"{name} is required for a sweep", param_hint=name)
+    assert bank is not None and axis is not None and values is not None
+    _require_simulator()
+    numbers = _parse_values(values)
+    try:
+        result = run_sweep(
+            bank,
+            axis,
+            numbers,
+            categories=_parse_ids(categories),
+            policy=policy,
+            out=under_out(out),
+            progress=lambda line: typer.echo(line, err=True),
+        )
+        record_file, page = write_record(record, doc, result)
+    except (BankError, CalibrationError, OptionError, PolicyError, RunError) as error:
+        typer.echo(f"calibrate failed: {error}", err=True)
+        raise typer.Exit(code=1) from error
+
+    typer.echo(f"{axis} on {result.bank_id}: {len(result.scenarios)} scenarios per value")
+    typer.echo(f"{'value':>8}  {'level':<7}  {'success':>8}  {'rate':>5}  ended by")
+    for point in result.points:
+        ended = ", ".join(f"{k} {n}" for k, n in point.by_failure_reason.items()) or "arrived"
+        typer.echo(
+            f"{point.value:>8g}  {point.nearest_level:<7}  "
+            f"{point.successes:>4}/{point.n:<3}  {point.success_rate:>5.2f}  {ended}"
+        )
+    picked = suggest_levels(result.points)
+    if picked is None:
+        typer.echo("no spread of four in this sweep: the rate does not fall, or too few values "
+                   "sit between 0 and the first value at the floor")
+    else:
+        typer.echo("spread suggests: " + ", ".join(f"{k}={v:g}" for k, v in picked.items()))
+    gaps = levels_match(load_records(record)).get(axis)
+    if gaps:
+        typer.echo(f"options.LEVELS[{axis!r}] has {', '.join(gaps)} at a value no sweep ran")
+    typer.echo(f"record written: {record_file}")
+    typer.echo(f"reference written: {page}")
+
+
 @app.command()
 def commands(
     out: Annotated[

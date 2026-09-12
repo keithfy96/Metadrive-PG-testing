@@ -143,19 +143,19 @@ def test_an_explicit_level_without_a_tier_leaves_the_other_axes_pinned():
 
 
 def test_a_raw_value_is_the_number_the_env_gets_and_the_nearest_name_is_recorded_beside_it():
-    resolved = resolve_options(_curve(), raw={"traffic": 0.15})
-    assert resolved.values["traffic"] == 0.15
-    assert resolved.levels["traffic"] == "medium"
+    resolved = resolve_options(_curve(), raw={"traffic": 0.25})
+    assert resolved.values["traffic"] == 0.25
+    assert resolved.levels["traffic"] == "medium"  # 0.05 from medium (0.3), 0.15 from low (0.1)
     assert resolved.origin["traffic"] == "raw"
-    assert resolved.raw == {"traffic": 0.15}
+    assert resolved.raw == {"traffic": 0.25}
 
 
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
         (0.0, "none"),
-        (0.12, "medium"),  # 0.03 from medium, 0.07 from low
-        (0.10, "low"),  # exactly between low and medium: the weaker wins
+        (0.27, "medium"),  # 0.03 from medium (0.3), 0.17 from low (0.1)
+        (0.20, "low"),  # exactly between low and medium: the weaker wins
         (0.9, "high"),
     ],
 )
@@ -164,9 +164,10 @@ def test_nearest_level_rounds_a_raw_traffic_density_to_the_closest_name(value, e
 
 
 def test_a_raw_count_resolves_the_same_way():
-    resolved = resolve_options(_curve(), raw={"cones": 5})
-    assert resolved.levels["cones"] == "high"  # 1 from high, 2 from medium
-    assert resolved.values["cones"] == 5
+    resolved = resolve_options(_curve(), raw={"cones": 3})
+    assert resolved.levels["cones"] == "medium"  # 1 from medium (4), 2 from low (1)
+    assert resolved.values["cones"] == 3
+    assert resolve_options(_curve(), raw={"cones": 5}).levels["cones"] == "medium"  # tie: weaker
 
 
 # --- refusals -----------------------------------------------------------------------------------

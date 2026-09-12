@@ -1,0 +1,217 @@
+{
+  "axis": "cones",
+  "bank_id": "curve",
+  "bank_path": "banks/curve",
+  "categories": [
+    "curve"
+  ],
+  "held": {
+    "barriers": "none",
+    "cyclists": "none",
+    "lights": "none",
+    "pedestrians": "none",
+    "traffic": "none"
+  },
+  "measured_utc": "2026-09-12T21:06:32Z",
+  "metadrive_commit": "85e5dadc6c7436d324348f6e3d8f8e680c06b4db",
+  "points": [
+    {
+      "by_failure_reason": {},
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 5,
+      "out": "out/calibrate/cones/curve/cones=0",
+      "placed": {
+        "DefaultVehicle": 5
+      },
+      "reward_mean": 336.075,
+      "steps_mean": 301.8,
+      "success_rate": 1.0,
+      "successes": 5,
+      "value": 0.0,
+      "wall_time_s": 6.64
+    },
+    {
+      "by_failure_reason": {
+        "crash_object": 1
+      },
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 1,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 5,
+      "out": "out/calibrate/cones/curve/cones=1",
+      "placed": {
+        "DefaultVehicle": 5,
+        "TrafficCone": 60
+      },
+      "reward_mean": 306.078,
+      "steps_mean": 283.0,
+      "success_rate": 0.8,
+      "successes": 4,
+      "value": 1.0,
+      "wall_time_s": 5.96
+    },
+    {
+      "by_failure_reason": {
+        "crash_object": 1
+      },
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 1,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 5,
+      "out": "out/calibrate/cones/curve/cones=2",
+      "placed": {
+        "DefaultVehicle": 5,
+        "TrafficCone": 120
+      },
+      "reward_mean": 306.062,
+      "steps_mean": 294.0,
+      "success_rate": 0.8,
+      "successes": 4,
+      "value": 2.0,
+      "wall_time_s": 6.25
+    },
+    {
+      "by_failure_reason": {
+        "crash_object": 4
+      },
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 4,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 5,
+      "out": "out/calibrate/cones/curve/cones=3",
+      "placed": {
+        "DefaultVehicle": 5,
+        "TrafficCone": 180
+      },
+      "reward_mean": 238.282,
+      "steps_mean": 248.4,
+      "success_rate": 0.2,
+      "successes": 1,
+      "value": 3.0,
+      "wall_time_s": 5.34
+    },
+    {
+      "by_failure_reason": {
+        "crash_object": 2,
+        "max_step": 1
+      },
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 2,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 5,
+      "out": "out/calibrate/cones/curve/cones=4",
+      "placed": {
+        "DefaultVehicle": 5,
+        "TrafficCone": 240
+      },
+      "reward_mean": 246.468,
+      "steps_mean": 466.0,
+      "success_rate": 0.4,
+      "successes": 2,
+      "value": 4.0,
+      "wall_time_s": 10.59
+    },
+    {
+      "by_failure_reason": {
+        "crash_object": 4,
+        "max_step": 1
+      },
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 4,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 5,
+      "out": "out/calibrate/cones/curve/cones=6",
+      "placed": {
+        "DefaultVehicle": 5,
+        "TrafficCone": 360
+      },
+      "reward_mean": 217.288,
+      "steps_mean": 443.6,
+      "success_rate": 0.0,
+      "successes": 0,
+      "value": 6.0,
+      "wall_time_s": 10.34
+    },
+    {
+      "by_failure_reason": {
+        "crash_object": 3,
+        "max_step": 2
+      },
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 3,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 5,
+      "out": "out/calibrate/cones/curve/cones=8",
+      "placed": {
+        "DefaultVehicle": 5,
+        "TrafficCone": 480
+      },
+      "reward_mean": 216.577,
+      "steps_mean": 624.4,
+      "success_rate": 0.0,
+      "successes": 0,
+      "value": 8.0,
+      "wall_time_s": 15.27
+    }
+  ],
+  "policy": "scenariobank.policies:ExpertPolicy",
+  "scenarios": [
+    "curve_0000",
+    "curve_0001",
+    "curve_0002",
+    "curve_0003",
+    "curve_0004"
+  ],
+  "schema_version": 1
+}

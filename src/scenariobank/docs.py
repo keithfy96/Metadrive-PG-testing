@@ -59,9 +59,11 @@ GROUPS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ),
     (
         "Run it",
-        "Score a policy against a bank. The one command that writes a result record, and the "
-        "record is the same whether the run was started here, from the studio or from the queue.",
-        ("run",),
+        "Score a policy against a bank. `run` is the one command that writes a result record, "
+        "and the record is the same whether the run was started here, from the studio or from "
+        "the queue; `calibrate` is `run` once per value of one option axis, and writes the "
+        "level-calibration reference from what it measured.",
+        ("run", "calibrate"),
     ),
     (
         "Do all of it in a page",
@@ -160,6 +162,18 @@ EXAMPLES: dict[str, tuple[tuple[str, str], ...]] = {
             "--checkpoint ../models/step_440000_trt_direct_full.ep --out ./runs/av3",
             "the AV3 submission, with the bridge up; as `python -m scenariobank` in the sim "
             "container, which is where the checkpoint can load",
+        ),
+    ),
+    "calibrate": (
+        (
+            "uv run scenariobank calibrate --bank ./banks/t-junction-left-intersection "
+            "--axis traffic --values 0,0.05,0.1,0.2,0.3,0.4",
+            "the traffic axis on both categories of the bank, the expert driving",
+        ),
+        (
+            "uv run scenariobank calibrate --bank ./banks/curve --axis cones "
+            "--values 0,1,2,3,4,6,8",
+            "cones on the one road that can place them",
         ),
     ),
     "replay": (
@@ -435,6 +449,16 @@ def _value_notes() -> dict[str, str]:
             "A directory. Created if absent; `results.json` and `results/` are written into it."
         ),
         "--job": "A `Job` JSON file, the same record the queue carries.",
+        "--axis": (
+            f"One of: {', '.join(f'`{axis}`' for axis in NUMERIC_AXES)}. "
+            "`lights` has no number behind it and is Phase 8."
+        ),
+        "--values": (
+            f"Raw numbers for the axis: a density for traffic (0, or at least {TRAFFIC_FLOOR}), "
+            "whole numbers for a count. Each is run once."
+        ),
+        "--record": "A directory; one `<axis>.<bank_id>.json` per sweep is written into it.",
+        "--doc": "A markdown file, rewritten from every record in `--record`.",
     }
 
 

@@ -1,0 +1,286 @@
+{
+  "axis": "traffic",
+  "bank_id": "curve",
+  "bank_path": "banks/curve",
+  "categories": [
+    "curve"
+  ],
+  "held": {
+    "barriers": "none",
+    "cones": "none",
+    "cyclists": "none",
+    "lights": "none",
+    "pedestrians": "none"
+  },
+  "measured_utc": "2026-09-12T21:00:48Z",
+  "metadrive_commit": "85e5dadc6c7436d324348f6e3d8f8e680c06b4db",
+  "points": [
+    {
+      "by_failure_reason": {},
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 5,
+      "out": "out/calibrate/traffic/curve/traffic=0",
+      "placed": {
+        "DefaultVehicle": 5
+      },
+      "reward_mean": 336.075,
+      "steps_mean": 301.8,
+      "success_rate": 1.0,
+      "successes": 5,
+      "value": 0.0,
+      "wall_time_s": 6.49
+    },
+    {
+      "by_failure_reason": {
+        "out_of_road": 1
+      },
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 5,
+      "out": "out/calibrate/traffic/curve/traffic=0.05",
+      "placed": {
+        "DefaultVehicle": 5,
+        "LVehicle": 8,
+        "MVehicle": 6,
+        "SVehicle": 2,
+        "XLVehicle": 1
+      },
+      "reward_mean": 298.915,
+      "steps_mean": 303.8,
+      "success_rate": 0.8,
+      "successes": 4,
+      "value": 0.05,
+      "wall_time_s": 8.38
+    },
+    {
+      "by_failure_reason": {},
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 5,
+      "out": "out/calibrate/traffic/curve/traffic=0.1",
+      "placed": {
+        "DefaultVehicle": 5,
+        "LVehicle": 10,
+        "MVehicle": 14,
+        "SVehicle": 7,
+        "XLVehicle": 6
+      },
+      "reward_mean": 335.986,
+      "steps_mean": 359.6,
+      "success_rate": 1.0,
+      "successes": 5,
+      "value": 0.1,
+      "wall_time_s": 11.82
+    },
+    {
+      "by_failure_reason": {},
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 5,
+      "out": "out/calibrate/traffic/curve/traffic=0.15",
+      "placed": {
+        "DefaultVehicle": 5,
+        "LVehicle": 18,
+        "MVehicle": 24,
+        "SVehicle": 9,
+        "XLVehicle": 7
+      },
+      "reward_mean": 336.242,
+      "steps_mean": 402.6,
+      "success_rate": 1.0,
+      "successes": 5,
+      "value": 0.15,
+      "wall_time_s": 16.01
+    },
+    {
+      "by_failure_reason": {},
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 5,
+      "out": "out/calibrate/traffic/curve/traffic=0.2",
+      "placed": {
+        "DefaultVehicle": 5,
+        "LVehicle": 21,
+        "MVehicle": 27,
+        "SVehicle": 20,
+        "XLVehicle": 12
+      },
+      "reward_mean": 336.101,
+      "steps_mean": 430.6,
+      "success_rate": 1.0,
+      "successes": 5,
+      "value": 0.2,
+      "wall_time_s": 19.86
+    },
+    {
+      "by_failure_reason": {},
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 5,
+      "out": "out/calibrate/traffic/curve/traffic=0.3",
+      "placed": {
+        "DefaultVehicle": 5,
+        "LVehicle": 36,
+        "MVehicle": 41,
+        "SVehicle": 19,
+        "XLVehicle": 23
+      },
+      "reward_mean": 336.136,
+      "steps_mean": 659.8,
+      "success_rate": 1.0,
+      "successes": 5,
+      "value": 0.3,
+      "wall_time_s": 41.67
+    },
+    {
+      "by_failure_reason": {
+        "crash_vehicle": 3
+      },
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 3
+      },
+      "n": 5,
+      "out": "out/calibrate/traffic/curve/traffic=0.35",
+      "placed": {
+        "DefaultVehicle": 5,
+        "LVehicle": 41,
+        "MVehicle": 44,
+        "SVehicle": 28,
+        "XLVehicle": 28
+      },
+      "reward_mean": 211.239,
+      "steps_mean": 453.8,
+      "success_rate": 0.4,
+      "successes": 2,
+      "value": 0.35,
+      "wall_time_s": 34.93
+    },
+    {
+      "by_failure_reason": {
+        "crash_vehicle": 3
+      },
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 3
+      },
+      "n": 5,
+      "out": "out/calibrate/traffic/curve/traffic=0.4",
+      "placed": {
+        "DefaultVehicle": 5,
+        "LVehicle": 43,
+        "MVehicle": 58,
+        "SVehicle": 21,
+        "XLVehicle": 39
+      },
+      "reward_mean": 182.499,
+      "steps_mean": 428.4,
+      "success_rate": 0.4,
+      "successes": 2,
+      "value": 0.4,
+      "wall_time_s": 33.38
+    },
+    {
+      "by_failure_reason": {
+        "crash_vehicle": 3,
+        "max_step": 1,
+        "out_of_road": 1
+      },
+      "by_status": {
+        "ok": 5
+      },
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 3
+      },
+      "n": 5,
+      "out": "out/calibrate/traffic/curve/traffic=0.5",
+      "placed": {
+        "DefaultVehicle": 5,
+        "LVehicle": 59,
+        "MVehicle": 69,
+        "SVehicle": 31,
+        "XLVehicle": 45
+      },
+      "reward_mean": 111.388,
+      "steps_mean": 630.0,
+      "success_rate": 0.0,
+      "successes": 0,
+      "value": 0.5,
+      "wall_time_s": 76.7
+    }
+  ],
+  "policy": "scenariobank.policies:ExpertPolicy",
+  "scenarios": [
+    "curve_0000",
+    "curve_0001",
+    "curve_0002",
+    "curve_0003",
+    "curve_0004"
+  ],
+  "schema_version": 1
+}

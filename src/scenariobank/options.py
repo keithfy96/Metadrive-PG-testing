@@ -4,8 +4,8 @@
 run resolves that level to a number the simulator understands. A level name is written into a
 manifest and read back months later, so it moves only with a version bump. The number behind it
 is a measurement: it changes whenever Phase 4b redoes the calibration, and no bank on disk has to
-be touched when it does. `LEVELS` below is the table that measurement will overwrite, and it is
-marked provisional for that reason.
+be touched when it does. `LEVELS` below is that measurement, made 2026-09-13 and recorded in
+`docs/reference/level-calibration.md`; re-measuring rewrites the numbers here and nothing else.
 
 **Two shapes of the table are not provisional**, because they are traps rather than calibration:
 `traffic none` is exactly `0.0`, and every other traffic numeric is at or above `TRAFFIC_FLOOR` --
@@ -80,21 +80,31 @@ NUMERIC_AXES: tuple[str, ...] = ("traffic", "cones", "barriers", "pedestrians", 
 #: table check and the raw-value refusal cannot disagree about where the trap is.
 TRAFFIC_FLOOR = 0.01
 
-#: The number behind each level. **PROVISIONAL -- Phase 4b measures these.** Everything in this
-#: table except the two shapes named in the module docstring is a placeholder waiting for the
-#: sweep that replaces it, which is why nothing else in this module reads a value out of it by
+#: The number behind each level. **Measured, 2026-09-13 (Phase 4b)**: each of the five numeric
+#: axes was swept with `scenariobank calibrate` -- every other axis at `none`, the bundled expert
+#: driving -- and the four values were picked where the success rates sit apart. The sweeps are
+#: in `docs/reference/level-calibration.md`, and `tests/unit/test_calibration.py` fails if a
+#: number here is one no sweep ran. Nothing else in this module reads a value out of the table by
 #: number: the resolver looks names up, and the tests pin shapes rather than figures.
+#:
+#: What the tables say, in one line each. `traffic` separates cleanly on the `T` road (1.00, 0.80,
+#: 0.40, 0.20) and only at `high` on the `X`; `cones` and `barriers` land only on `Straight` and
+#: `Curve` blocks, so they were measured on `curve` -- cones 1.00, 0.80, 0.40, 0.00, while a
+#: single barrier scene already holds the expert to 0.20 (it waits behind the breakdown to the
+#: step cap), so `barriers` is a count with one real step in it; `pedestrians` fall 1.00, 0.60,
+#: 0.40, 0.00 on `curve` and only bite at `high` on the `X`; `cyclists` are the reverse, flat on
+#: `curve` and 1.00, 0.89, 0.78, 0.44 on the `X`. Re-measure after a MetaDrive bump.
 #:
 #: `traffic` is `traffic_density`; the four counts are how many of that thing `obstacles.py` and
 #: `actors.py` (Phase 4 Step 4b) place along the ego's route. `lights` is the phase schedule
 #: Phase 8's `PGTrafficLightManager` will read -- kept in the shape that plan gives it so the
-#: record's field does not change shape when the axis arrives.
+#: record's field does not change shape when the axis arrives; it is not measured yet.
 LEVELS: dict[str, dict[str, Any]] = {
-    "traffic": {"none": 0.0, "low": 0.05, "medium": 0.15, "high": 0.35},
-    "cones": {"none": 0, "low": 1, "medium": 3, "high": 6},
-    "barriers": {"none": 0, "low": 1, "medium": 2, "high": 4},
+    "traffic": {"none": 0.0, "low": 0.1, "medium": 0.3, "high": 0.5},
+    "cones": {"none": 0, "low": 1, "medium": 4, "high": 6},
+    "barriers": {"none": 0, "low": 1, "medium": 2, "high": 3},
     "pedestrians": {"none": 0, "low": 1, "medium": 3, "high": 6},
-    "cyclists": {"none": 0, "low": 1, "medium": 2, "high": 4},
+    "cyclists": {"none": 0, "low": 2, "medium": 3, "high": 6},
     "lights": {
         "none": None,
         "low": {"cycle": 60, "green": 40},

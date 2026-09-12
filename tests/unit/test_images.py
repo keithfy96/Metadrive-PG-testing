@@ -12,8 +12,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import pytest
-
 ROOT = Path(__file__).resolve().parents[2]
 SIM_DOCKERFILE = ROOT / "docker" / "Dockerfile"
 BRIDGE = ROOT / "docker" / "openpilot"
@@ -132,8 +130,12 @@ def test_build_pairs_each_tag_with_its_own_recipe():
     assert "CONVERTER_IMAGE=metadrive-wingfin-sim:latest" in code
     assert 'CONVERTER_DOCKERFILE="$CONVERTER_DIR/docker/Dockerfile"' in code
     assert "FALLBACK_IMAGE=scenariobank-sim:latest" in code
-    assert 'tag="$CONVERTER_IMAGE"; recipe="$CONVERTER_DOCKERFILE"; context="$CONVERTER_DIR"' in code
+    converter_route = (
+        'tag="$CONVERTER_IMAGE"; recipe="$CONVERTER_DOCKERFILE"; context="$CONVERTER_DIR"'
+    )
+    assert converter_route in code
     assert 'tag="$FALLBACK_IMAGE"; recipe="$DOCKERFILE"; context=.' in code
-    assert code.count("docker build ") == 1 and 'docker build -t "$tag" -f "$recipe" "$context"' in code
+    assert code.count("docker build ") == 1
+    assert 'docker build -t "$tag" -f "$recipe" "$context"' in code
     assert 'docker build -t "$IMAGE"' not in code
     assert 'IMAGE="${SIM_IMAGE:-metadrive-wingfin-sim:latest}"' in code

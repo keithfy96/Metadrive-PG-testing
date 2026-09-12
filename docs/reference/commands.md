@@ -620,7 +620,7 @@ uv run scenariobank commands  # rewrite this page
 
 ## Run it
 
-Score a policy against a bank. The one command that writes a result record, and the record is the same whether the run was started here, from the studio or from the queue.
+Score a policy against a bank. `run` is the one command that writes a result record, and the record is the same whether the run was started here, from the studio or from the queue; `calibrate` is `run` once per value of one option axis, and writes the level-calibration reference from what it measured.
 
 ### `run`
 
@@ -713,6 +713,41 @@ uv run scenariobank run --bank ./banks/curve --scenarios curve_0000,curve_0003 -
 uv run scenariobank run --bank ./banks/curve --tier hard --policy scenariobank.policies:ExpertPolicy --out film --camera-rig ./rigs/av3.txt --ignore-rig-rate --record-video                                                                                    # a film of the drive from all six cameras, out/film/hard/videos/
 uv run scenariobank run --bank ./banks/t-junction --policy scenariobank.av3:BridgePolicy --step-hz 100 --decision-hz 20 --out ./runs/bridge                                                                                                                     # the openpilot bridge driving the bank's route, no model: the controller alone
 uv run scenariobank run --bank ./banks/t-junction --policy scenariobank.av3:AV3Policy --camera-rig ./rigs/av3.txt --step-hz 100 --decision-hz 20 --model-config ../models/model_dev.yml --checkpoint ../models/step_440000_trt_direct_full.ep --out ./runs/av3  # the AV3 submission, with the bridge up; as `python -m scenariobank` in the sim container, which is where the checkpoint can load
+```
+
+### `calibrate`
+
+Sweep one axis over raw values and write the level-calibration reference.
+
+Phase 4b's measurement. One `run` per value -- the same loop, the same record, one env per
+row -- with the four other numeric axes and lights held at `none`, so the success rate per
+value answers to this axis alone. Every value is resolved against the bank before the first
+env is built, so a traffic value under the floor or a fractional count is refused up front.
+
+Prints one line per value as it lands, then the table, then the four values the spread
+suggests (`none` is always 0) -- a suggestion, for a person to bake into `options.LEVELS`;
+the page records what `LEVELS` says next to what was measured, and
+`tests/unit/test_calibration.py` fails if a level is a number no sweep ran. After that
+edit, `--render-only` rewrites the page from the records without driving anything.
+
+Needs the simulator, except with `--render-only`. About a second per scenario per value on
+a `T` or `X` road with the expert; a six-value sweep of a nine-row bank is a few minutes.
+
+| flag | | repeats | meaning |
+|---|---|---|---|
+| `--bank <path>` | optional |  | Procedural bank whose scenarios the sweep drives. |
+| `--axis <str>` | optional |  | The axis to sweep; every other axis is held at none. One of: `traffic`, `cones`, `barriers`, `pedestrians`, `cyclists`. `lights` has no number behind it and is Phase 8. |
+| `--values <str>` | optional | yes | The raw values to run the axis at, comma-separated or repeated. 0 is none. Raw numbers for the axis: a density for traffic (0, or at least 0.01), whole numbers for a count. Each is run once. |
+| `--render-only` | default `false` |  | Run nothing; rewrite the page from the records already in --record. For after an edit to options.LEVELS, which the page quotes. |
+| `--categories <str>` | optional | yes | Only these categories of the bank; default all. Category names from the bank's manifest, comma-separated or repeated. |
+| `--policy <str>` | default `scenariobank.policies:ExpertPolicy` |  | What drives, as `pkg.mod:Name`. `pkg.mod:Name`, instantiated once per run and called with each observation; one with a `bind(env)` method is handed each env first. `scenariobank.policies:ConstantPolicy` is the floor and `scenariobank.policies:ExpertPolicy` the ceiling: MetaDrive's bundled PPO expert, deterministic, seeing a left-side bank in a mirror. |
+| `--out/-o <path>` | default `calibrate` |  | Where each value's run lands; a relative path goes under out/. One `<axis>/<bank>/<axis>=<value>/results.json` per value. A directory. Created if absent; `results.json` and `results/` are written into it. |
+| `--record <path>` | default `docs/reference/calibration` |  | Directory the sweep's JSON record is written into. A directory; one `<axis>.<bank_id>.json` per sweep is written into it. |
+| `--doc <path>` | default `docs/reference/level-calibration.md` |  | The reference page re-rendered from every record. A markdown file, rewritten from every record in `--record`. |
+
+```bash
+uv run scenariobank calibrate --bank ./banks/t-junction-left-intersection --axis traffic --values 0,0.05,0.1,0.2,0.3,0.4  # the traffic axis on both categories of the bank, the expert driving
+uv run scenariobank calibrate --bank ./banks/curve --axis cones --values 0,1,2,3,4,6,8                                    # cones on the one road that can place them
 ```
 
 ## Do all of it in a page

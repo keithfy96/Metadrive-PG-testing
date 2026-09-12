@@ -381,12 +381,12 @@ the full survey.
 ### The levels
 
 ```python
-LEVELS = {                       # PROVISIONAL — calibrated in Phase 4b
-    "traffic":     {"none": 0.0, "low": 0.05, "medium": 0.15, "high": 0.35},
-    "cones":       {"none": 0,   "low": 1,    "medium": 3,    "high": 6},
-    "barriers":    {"none": 0,   "low": 1,    "medium": 2,    "high": 4},
+LEVELS = {                       # measured in Phase 4b, 2026-09-13 — see level-calibration.md
+    "traffic":     {"none": 0.0, "low": 0.1,  "medium": 0.3,  "high": 0.5},
+    "cones":       {"none": 0,   "low": 1,    "medium": 4,    "high": 6},
+    "barriers":    {"none": 0,   "low": 1,    "medium": 2,    "high": 3},
     "pedestrians": {"none": 0,   "low": 1,    "medium": 3,    "high": 6},
-    "cyclists":    {"none": 0,   "low": 1,    "medium": 2,    "high": 4},
+    "cyclists":    {"none": 0,   "low": 2,    "medium": 3,    "high": 6},
     "lights":      {"none":   None,                      # no lights spawned
                     "low":    dict(cycle=60, green=40),  # mostly green
                     "medium": dict(cycle=40, green=20),
@@ -4043,7 +4043,7 @@ and `av3-2.json`; the verify block above was run on them as written.
 
 ---
 
-# Phase 4b — Calibrate the levels ⬜
+# Phase 4b — Calibrate the levels ✅  ⟵ *measured 2026-09-13 on the laptop*
 
 > **Machine-run.** `calibrate` is a measurement tool; its product is
 > `docs/reference/level-calibration.md`, not a screen. See **What a person actually uses**.
@@ -4054,11 +4054,15 @@ The `LEVELS` table is a guess. A `high` traffic setting that makes every interse
 not a test point, it is a broken scenario.
 
 ```bash
-uv run scenariobank calibrate --axis traffic --values 0 0.05 0.1 0.2 0.3 0.4 \
-  --category intersection_left --policy scenariobank.policies:ExpertPolicy
+uv run scenariobank calibrate --bank banks/t-junction-left-intersection --axis traffic \
+  --values 0,0.05,0.1,0.15,0.2,0.3,0.35,0.4,0.5      # --policy defaults to the expert
 ```
 Pick four values that spread success rate apart; bake them into `options.py`; record the sweep in
-`docs/reference/level-calibration.md`. Repeat per axis.
+`docs/reference/level-calibration.md`. Repeat per axis. *(Built 2026-09-13: `calibration.py`.
+The sweep runs `run_bank` once per value with every other axis at `none`, writes one JSON record
+per axis and bank under `docs/reference/calibration/`, re-renders the page from every record
+there, and prints the four values the spread suggests. `tests/unit/test_calibration.py` holds
+the page to the records and `LEVELS` to the swept values.)*
 
 **The floor: usable traffic values are `0`, or `0.01` and up — nothing in between.**
 `traffic_manager.py:65-67` short-circuits on `abs(density) < 1e-2`, so anything smaller is silently
@@ -4074,6 +4078,31 @@ calibrating; the total is context.
 
 **Done when:** `docs/reference/level-calibration.md` shows, per axis, four levels with visibly
 separated success rates, measured rather than guessed, and `options.py` matches it.
+
+**Measured 2026-09-13.** Nine sweeps, the expert driving, every other axis at `none`: traffic on
+`t-junction-left-intersection`, `curve` and `t-junction`; cones and barriers on `curve` (the one
+bank whose blocks can hold them); pedestrians and cyclists on `curve` and the left-intersection
+bank. About a second per row; the whole set took 14 minutes. What went into `options.py`:
+
+| axis | none / low / medium / high | success at the four, where it separates |
+|---|---|---|
+| traffic | 0 / 0.1 / 0.3 / 0.5 | `t-junction` 1.00, 0.80, 0.40, 0.20; `curve` flat to 0.3 then 0.40 at 0.35, 0.00 at 0.5; the `X` bank 1.00 down to 0.78 |
+| cones | 0 / 1 / 4 / 6 | `curve` 1.00, 0.80, 0.40, 0.00 |
+| barriers | 0 / 1 / 2 / 3 | `curve` 1.00, 0.20, 0.20, 0.00 |
+| pedestrians | 0 / 1 / 3 / 6 | `curve` 1.00, 0.60, 0.40, 0.00; the `X` bank only moves at `high` (0.78) |
+| cyclists | 0 / 2 / 3 / 6 | the `X` bank 1.00, 0.89, 0.78, 0.44; `curve` sits at 0.80 from 1 to 8 |
+
+Two things the tables settle. **Barriers cannot be spread into four**: one barrier scene already
+holds the expert to 0.20 on `curve` (it waits behind the breakdown vehicle to the step cap,
+`max_step`, rather than overtaking), and no count above it can fall further than 0.00; the axis
+has one real step and the gate test asks for never-rising rates with a real drop rather than
+strictly falling ones, so that is recorded rather than faked. And **the expert is not the
+policy under test**: it arrives on the `X` at traffic 0.5 seven times in nine, so `high` there
+is a load, not a wall — the intersection levels were chosen off the `T` road where the same
+numbers separate cleanly. `tests/unit/test_calibration.py` holds the page to the records under
+`docs/reference/calibration/`, every level to a swept value, and every axis to a separating
+record; `calibrate --render-only` rewrites the page after an edit to `LEVELS`. What the
+command is for, when it is re-run and how is `docs/calibrating-levels.md`.
 
 ---
 

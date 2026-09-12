@@ -43,7 +43,7 @@ from scenariobank.env import (
     seed_for,
     step_hz_for,
 )
-from scenariobank.options import resolve_options
+from scenariobank.options import LEVELS, resolve_options
 from scenariobank.replay import BUDGETED, MAX_STEP_PHRASE, drive
 from scenariobank.workspace import Provenance
 
@@ -208,7 +208,7 @@ def test_the_traffic_axis_is_the_one_option_knob_stock_metadrive_reads():
     """The pinned level's number, from `LEVELS`, into `traffic_density`; nothing else moves."""
     entry = pg_entry([0])
     config = build_config(Path("."), entry, resolve_options(pg_manifest(entry, traffic="low")))
-    assert config["traffic_density"] == 0.05
+    assert config["traffic_density"] == LEVELS["traffic"]["low"] == 0.1  # measured, Phase 4b
     assert config["random_traffic"] is False
     unpinned = build_config(Path("."), entry, resolve_options(pg_manifest(entry)))
     assert unpinned["traffic_density"] == 0.0
@@ -221,7 +221,7 @@ def test_the_four_count_axes_ride_into_the_config_under_their_own_names():
     pinned = resolve_options(pg_manifest(entry, cones="high", pedestrians="low"))
     config = build_config(Path("."), entry, pinned)
     assert {axis: config[axis] for axis in COUNT_AXES} == {
-        "cones": 6, "barriers": 0, "pedestrians": 1, "cyclists": 0
+        "cones": LEVELS["cones"]["high"], "barriers": 0, "pedestrians": 1, "cyclists": 0
     }
     assert all(type(config[axis]) is int for axis in COUNT_AXES)
     unpinned = build_config(Path("."), entry, resolve_options(pg_manifest(entry)))

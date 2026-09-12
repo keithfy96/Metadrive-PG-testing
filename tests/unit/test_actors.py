@@ -65,11 +65,18 @@ STEP_S = 0.1
 
 
 @contextmanager
-def scene(bank: Path, category: str, index: int = 0, **levels: str):
+def scene(
+    bank: Path, category: str, index: int = 0, raw: dict[str, float] | None = None, **levels: str
+):
+    """One env at one row, every axis at `none` unless named. `raw` pins numbers rather than
+    level names, for a test written against a particular scene: the numbers behind the names
+    moved when Phase 4b measured them, and a test of the managers should not move with them."""
     manifest = read_manifest(bank)
     entry = manifest.categories[category]
     row = entry.scenarios[index]
-    env, prepare = build_env(bank, entry, resolve_options(manifest, levels={**NONE, **levels}))
+    raw = raw or {}
+    named = {axis: level for axis, level in {**NONE, **levels}.items() if axis not in raw}
+    env, prepare = build_env(bank, entry, resolve_options(manifest, levels=named, raw=raw))
     try:
         env.reset(seed=seed_for(row))
         prepare(env, row)
@@ -85,16 +92,17 @@ def rng_state(manager):
 
 @needs_left
 def test_two_envs_at_one_seed_and_level_lay_the_actors_out_identically_and_another_seed_does_not():
-    with scene(LEFT, "intersection_left", pedestrians="high", cyclists="high") as env:
+    counts = {"pedestrians": 6, "cyclists": 4}
+    with scene(LEFT, "intersection_left", raw=counts) as env:
         manager = env.engine.vru_manager
         assert isinstance(manager, VRUManager)
         first = (manager.layout(), manager.layout_digest())
         assert len(first[0]) == 6 + 4
         assert first[1] == sha256_hex("\n".join(first[0])) == actor_layout_digest(env)
         assert placed_counts(env) == {"Cyclist": 4, "DefaultVehicle": 1, "Pedestrian": 6}
-    with scene(LEFT, "intersection_left", pedestrians="high", cyclists="high") as env:
+    with scene(LEFT, "intersection_left", raw=counts) as env:
         second = (env.engine.vru_manager.layout(), env.engine.vru_manager.layout_digest())
-    with scene(LEFT, "intersection_left", index=1, pedestrians="high", cyclists="high") as env:
+    with scene(LEFT, "intersection_left", index=1, raw=counts) as env:
         other = env.engine.vru_manager.layout_digest()
     assert first == second
     assert other != first[1], "a digest that cannot differ measures nothing"
@@ -186,9 +194,10 @@ def test_cyclists_drawn_onto_one_lane_get_disjoint_stretches_in_draw_order():
 @needs_curve
 def test_an_actor_a_vehicle_touches_is_not_driven_and_traffic_keeps_its_lane():
     """The first film's finding: cars knocked off the road by a pedestrian that would not
-    stop walking into them. Traffic high with people and no obstacles, the ego idle. Before the
-    fix four of forty vehicles were more than a lane off their centreline by step 300."""
-    with scene(CURVE, "curve", traffic="high", pedestrians="medium", cyclists="low") as env:
+    stop walking into them. Traffic at 0.35 with three people and one cyclist, no obstacles,
+    the ego idle -- the scene the finding was made in, pinned as numbers. Before the fix four
+    of forty vehicles were more than a lane off their centreline by step 300."""
+    with scene(CURVE, "curve", raw={"traffic": 0.35, "pedestrians": 3, "cyclists": 1}) as env:
         vru = env.engine.vru_manager
         traffic = env.engine.traffic_manager
         worst = 0.0
@@ -208,14 +217,16 @@ def test_actors_carry_the_lane_they_are_on_so_traffic_brakes_instead_of_going_bl
     """`IDMPolicy.act` reads `obj.lane` off everything its lidar sees inside a bare `except`
     whose fallback is no front object. Actors without a lane made every car near them drive
     blind: thirty-one of forty traffic cars crashed with actors alone on this row. With the
-    lane set, the expert drives the row at `hard` and the traffic neither crashes nor leaves
-    the road."""
+    lane set, the expert drives the row in the scene the finding was made in -- traffic 0.35,
+    three cones, two barriers, three people, one cyclist, what `hard` meant before Phase 4b
+    measured the levels -- and the traffic neither crashes nor leaves the road. Pinned as
+    numbers: at the measured `high` of 0.5 traffic cars do hit each other on this road (the
+    confound Phase 4b names), which is the density, not the managers."""
     from scenariobank.policies import load_policy
     from scenariobank.runner import bind_policy
 
-    levels = dict(traffic="high", cones="medium", barriers="medium", pedestrians="medium",
-                  cyclists="low")
-    with scene(CURVE, "curve", **levels) as env:
+    numbers = {"traffic": 0.35, "cones": 3, "barriers": 2, "pedestrians": 3, "cyclists": 1}
+    with scene(CURVE, "curve", raw=numbers) as env:
         act = load_policy("scenariobank.policies:ExpertPolicy")
         bind_policy(act, env)
         vru = env.engine.vru_manager

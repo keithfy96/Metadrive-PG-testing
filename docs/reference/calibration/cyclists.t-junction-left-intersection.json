@@ -1,0 +1,217 @@
+{
+  "axis": "cyclists",
+  "bank_id": "t-junction-left-intersection",
+  "bank_path": "banks/t-junction-left-intersection",
+  "categories": [
+    "intersection_left",
+    "t_junction"
+  ],
+  "held": {
+    "barriers": "none",
+    "cones": "none",
+    "lights": "none",
+    "pedestrians": "none",
+    "traffic": "none"
+  },
+  "measured_utc": "2026-09-12T21:12:21Z",
+  "metadrive_commit": "85e5dadc6c7436d324348f6e3d8f8e680c06b4db",
+  "points": [
+    {
+      "by_failure_reason": {},
+      "by_status": {
+        "ok": 9
+      },
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 9,
+      "out": "out/calibrate/cyclists/t-junction-left-intersection/cyclists=0",
+      "placed": {
+        "DefaultVehicle": 9
+      },
+      "reward_mean": 112.646,
+      "steps_mean": 138.9,
+      "success_rate": 1.0,
+      "successes": 9,
+      "value": 0.0,
+      "wall_time_s": 5.43
+    },
+    {
+      "by_failure_reason": {},
+      "by_status": {
+        "ok": 9
+      },
+      "collisions": {
+        "building": 0,
+        "human": 0,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 9,
+      "out": "out/calibrate/cyclists/t-junction-left-intersection/cyclists=1",
+      "placed": {
+        "Cyclist": 9,
+        "DefaultVehicle": 9
+      },
+      "reward_mean": 112.681,
+      "steps_mean": 142.0,
+      "success_rate": 1.0,
+      "successes": 9,
+      "value": 1.0,
+      "wall_time_s": 5.7
+    },
+    {
+      "by_failure_reason": {
+        "crash_human": 1
+      },
+      "by_status": {
+        "ok": 9
+      },
+      "collisions": {
+        "building": 0,
+        "human": 1,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 9,
+      "out": "out/calibrate/cyclists/t-junction-left-intersection/cyclists=2",
+      "placed": {
+        "Cyclist": 18,
+        "DefaultVehicle": 9
+      },
+      "reward_mean": 106.096,
+      "steps_mean": 138.7,
+      "success_rate": 0.888889,
+      "successes": 8,
+      "value": 2.0,
+      "wall_time_s": 5.59
+    },
+    {
+      "by_failure_reason": {
+        "crash_human": 2
+      },
+      "by_status": {
+        "ok": 9
+      },
+      "collisions": {
+        "building": 0,
+        "human": 2,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 9,
+      "out": "out/calibrate/cyclists/t-junction-left-intersection/cyclists=3",
+      "placed": {
+        "Cyclist": 27,
+        "DefaultVehicle": 9
+      },
+      "reward_mean": 99.721,
+      "steps_mean": 137.3,
+      "success_rate": 0.777778,
+      "successes": 7,
+      "value": 3.0,
+      "wall_time_s": 5.65
+    },
+    {
+      "by_failure_reason": {
+        "crash_human": 2
+      },
+      "by_status": {
+        "ok": 9
+      },
+      "collisions": {
+        "building": 0,
+        "human": 2,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 9,
+      "out": "out/calibrate/cyclists/t-junction-left-intersection/cyclists=4",
+      "placed": {
+        "Cyclist": 36,
+        "DefaultVehicle": 9
+      },
+      "reward_mean": 99.654,
+      "steps_mean": 141.4,
+      "success_rate": 0.777778,
+      "successes": 7,
+      "value": 4.0,
+      "wall_time_s": 6.67
+    },
+    {
+      "by_failure_reason": {
+        "crash_human": 5
+      },
+      "by_status": {
+        "ok": 9
+      },
+      "collisions": {
+        "building": 0,
+        "human": 5,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 9,
+      "out": "out/calibrate/cyclists/t-junction-left-intersection/cyclists=6",
+      "placed": {
+        "Cyclist": 54,
+        "DefaultVehicle": 9
+      },
+      "reward_mean": 82.541,
+      "steps_mean": 126.4,
+      "success_rate": 0.444444,
+      "successes": 4,
+      "value": 6.0,
+      "wall_time_s": 5.72
+    },
+    {
+      "by_failure_reason": {
+        "crash_human": 5
+      },
+      "by_status": {
+        "ok": 9
+      },
+      "collisions": {
+        "building": 0,
+        "human": 5,
+        "object": 0,
+        "sidewalk": 0,
+        "vehicle": 0
+      },
+      "n": 9,
+      "out": "out/calibrate/cyclists/t-junction-left-intersection/cyclists=8",
+      "placed": {
+        "Cyclist": 72,
+        "DefaultVehicle": 9
+      },
+      "reward_mean": 82.751,
+      "steps_mean": 139.9,
+      "success_rate": 0.444444,
+      "successes": 4,
+      "value": 8.0,
+      "wall_time_s": 6.19
+    }
+  ],
+  "policy": "scenariobank.policies:ExpertPolicy",
+  "scenarios": [
+    "intersection_left_0000",
+    "intersection_left_0001",
+    "intersection_left_0002",
+    "intersection_left_0003",
+    "intersection_left_0004",
+    "t_junction_0000",
+    "t_junction_0001",
+    "t_junction_0002",
+    "t_junction_0004"
+  ],
+  "schema_version": 1
+}
