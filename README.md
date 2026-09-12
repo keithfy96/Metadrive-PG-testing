@@ -19,6 +19,8 @@ generated from the CLI, so it cannot drift. This file explains *why* each comman
 that one lists every flag and every value they accept.
 [`docs/importing-scenarionet.md`](docs/importing-scenarionet.md) is how to bring a converter
 workspace in as a bank — which rate to choose, and what `import` refuses.
+[`docs/reward-phase4-metadrive.md`](docs/reward-phase4-metadrive.md) is what the `reward` field
+in a result is — MetaDrive's own training reward, summed — and why it is not a score.
 
 All scenarios are **left-side traffic** (right-hand-drive market). See
 [Which side of the road](#which-side-of-the-road) — it is not a MetaDrive setting, and it is the

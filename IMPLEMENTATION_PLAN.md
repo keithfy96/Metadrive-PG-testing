@@ -2578,7 +2578,7 @@ the reader. **Met** — 546 tests pass, `uv run scenariobank importing` leaves t
 
 ---
 
-# Phase 4 — Runner, results schema, reference policies ⬜
+# Phase 4 — Runner, results schema, reference policies ✅  ⟵ *Step 8's gate met 2026-09-12*
 
 > **The commands in this phase are machine-run.** `run`, `calibrate`, `validate` and `selftest`
 > are executed by the container's entrypoint, by the orchestrator, and by CI — never typed by a
@@ -3951,14 +3951,24 @@ up throughout). Full suite 823 passed in 6 min 14 s, ruff clean. Run the block w
 then `docker wait x`) and read the record with python rather than `jq`, which the sim image
 does not carry. Full suite: see the report below the step.
 
-### Step 8 — an AV3 submission scored end to end ⬜  ⟵ *gate*
+### Step 8 — an AV3 submission scored end to end ✅  ⟵ *gate, met 2026-09-12 on the rig*
 
 Steps 1-5 with Step 7's policy in place of `ExpertPolicy`. Nothing new is built here; this is the
 step that says the two halves are one runner.
 
-Cost, and it drives the ETA model in Phase 7 Step 8: **the AV3 forward pass is ~1 s**, about 20x a
-50 ms decision. Price a 35-scenario bank before quoting anyone a runtime — and record the measured
-per-scenario wall time here, because Phase 7 Step 8 reads it rather than re-measuring it.
+Cost, and it drives the ETA model in Phase 7 Step 8. **Measured per-scenario wall time, `t_junction_0000`,
+3200 steps / 640 decisions, no video** (Phase 7 Step 8 reads these rather than re-measuring):
+
+| machine | GPU | wall time | per decision | per simulated second |
+|---|---|---|---|---|
+| the rig (`sim`, 116.12.220.99) | RTX 5080 | **100.0 s, 102.2 s** (two runs) | 0.16 s | 3.2 s |
+| the rig, same row with `--record-video` | RTX 5080 | 154.9 s (Keith, 2026-09-11) | 0.24 s | 4.8 s |
+| this laptop | RTX 4050 Laptop 6 GB | 912.5 s (`out/av3/`, 2026-09-10) | 1.43 s | 28.5 s |
+
+The decision is one forward pass every 0.05 s of *simulated* time, so a 32 s row is 640 passes
+whatever the hardware; what the hardware sets is the wall clock per pass. Price a 35-scenario bank
+from the rig row: ~35 × 100 s ≈ 1 hour without video, and the estimate is per rig or it is wrong on
+the slower one. (The "~1 s forward pass" this paragraph used to quote was the laptop's number.)
 
 **Two claims, not one.** This step used to ask for Step 5's reproducibility diff to be empty
 against the AV3 policy. The AV3 path runs through the openpilot bridge — a real-time control
@@ -3971,8 +3981,8 @@ deterministic *given the same actions*, which is Step 5's and is checked through
 
 ```bash
 diff <(jq '.results[].actions_digest' av3-1.json) <(jq '.results[].actions_digest' av3-2.json)
-diff <(jq 'del(.started_utc) | del(.results[].wall_time_s)' av3-1.json) \
-     <(jq 'del(.started_utc) | del(.results[].wall_time_s)' av3-2.json)
+diff <(jq 'del(.started_utc, .finished_utc) | del(.results[].wall_time_s)' av3-1.json) \
+     <(jq 'del(.started_utc, .finished_utc) | del(.results[].wall_time_s)' av3-2.json)
 jq '.results[] | {scenario_id, wall_time_s}, .bank.path, .options' av3-1.json
 ```
 **Expect:** if the digests match, the second diff **must** be empty — that is the runner's claim.
@@ -3990,6 +4000,46 @@ copied to Phase 7 Step 8.
 - `replay` and `run` are two callers of one loop: `grep -n "= env.step(" src/` returns one site,
   in `runner.py` (`test_runner.py` pins it).
 - Phase 3 Step 6 and Phase 4 Step 3 say the same thing about `horizon`.
+
+**Done note, 2026-09-12.** Two scored runs of `t_junction_0000` with `scenariobank.av3:AV3Policy`,
+`--step-hz 100 --decision-hz 20`, back to back on the rig, the bridge (`metadrive-wingfin-openpilot:prod`)
+up throughout. Both files and their heartbeat logs are in `out/av3-rig/` (git-ignored) as `av3-1.json`
+and `av3-2.json`; the verify block above was run on them as written.
+
+- **The digests differ** — `3b87f3e1…` against `73ffca67…` — so the second diff is not empty, and
+  the plan said what that means: it is the *policy's* measurement, with the runner's claim resting on
+  Step 5. How much: the two drives are the same shape (throttle +0.54 at reset, ~1.9 m travelled by
+  t+20 s, a stop, then the brake at −0.58 for the rest of the 32 s), and differ by 0.08 percentage
+  points of route (`0.06689` against `0.066066`) and 0.13 of reward (`3.63` against `3.50`). Every
+  other field — bank path, resolved options, `env` (commit `85e5dad`, stride 5, rig tick 0.05 s),
+  steps 3200, actions 640, `max_step` — is identical, and `finished_utc` differs, which the verify
+  block's filter now drops alongside `started_utc`.
+- **Where the difference comes from is not established** and is not this step's to establish: two
+  candidates are the bridge (a real-time stack with its own clocks, over TCP) and the TensorRT
+  engine itself (bf16, and `torch_tensorrt` makes no determinism promise). Separating them is one
+  more run with `BridgePolicy` (the model taken out) against itself — recorded here as the next
+  measurement if the ETA or a leaderboard ever needs the policy's noise floor.
+- **The runner's half stands** with no new work: `grep -n "= env.step(" src/` is one site,
+  `runner.py`; `uv run scenariobank commands` regenerates `docs/reference/commands.md` unchanged
+  with `run` grouped; ruff clean; the suite green (`env -u FORCE_COLOR`, the harness's
+  `FORCE_COLOR=3` being the one thing that fails the five typer-help tests); Phase 3 Step 6 and
+  Phase 4 Step 3 agree on `horizon` (both: the entry's `max_steps`, set by `replay_config`, with the
+  loop cap kept as the second belt).
+- **How the runs were made, because it was not the documented way.** An unattended apt upgrade on
+  2026-09-12 put NVIDIA's 595.91 user-space libraries under the 595.84 kernel module on *both*
+  machines, so `docker run --gpus all` fails (`nvml error: driver/library version mismatch`) on the
+  laptop and on the rig alike until each reboots. A container started before the upgrade keeps the
+  old libraries bind-mounted, and the rig had one — `metadrive-wingfin-sim-run-a92feea2ca1a`, the
+  converter's image, up 6 days, host networking, CUDA still live — so `src/`, `banks/t-junction`
+  and `rigs/` were `docker cp`'d into it at `/tmp/pg` and the two runs made with `docker exec` and
+  `PYTHONPATH=/tmp/pg/src`. Same image, same lock, same checkpoint as the documented command; only
+  the mount path differs, which is why `bank.path` reads `/tmp/pg/banks/t-junction`. After a reboot
+  the README's `docker run --gpus all … scenariobank-sim:latest` form is the one to use.
+- **Two things seen on the rig that are not this step's but will bite the next one:** its root
+  filesystem is 100 % full (867 G of 915 G, 1.9 G free — docker's data root is on `/mnt/secondary`,
+  which is why builds still work), and the checkout there,
+  `~/dev-container/workspace-new/metadrive-complete/Metadrive-PG-testing`, is at `9aeb019`, this
+  commit.
 
 ---
 
@@ -4572,8 +4622,9 @@ bank nothing can run**, and here it also proves the routing before either side i
   way a run gets enqueued.
 - **The ETA.** Bootstrap from measured per-category wall time — Phase 4b's calibration runs produce
   it for free — keyed on `(category, tier)`, then replace it with a **median** of the last N real
-  runs. Median, not mean: one degraded run is a 5x outlier that poisons a mean for weeks. With a
-  ~1 s AV3 forward pass a 35-scenario run is long enough that an absent estimate is a visible gap.
+  runs. Median, not mean: one degraded run is a 5x outlier that poisons a mean for weeks. At the
+  measured 100 s per 32 s scenario on the rig (Phase 4 Step 8's table; 9x that on the laptop) a
+  35-scenario run is an hour, long enough that an absent estimate is a visible gap.
   Two rigs means the estimate is per rig, or it is wrong on the slower one.
 
 ---
