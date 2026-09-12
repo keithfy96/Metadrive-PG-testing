@@ -48,7 +48,9 @@ RUN pip install cantools
 # stub so the import resolves without a mount; compose overrides with the eval snapshot at runtime
 RUN mkdir -p /opt/project/common && \
     printf 'class InferenceConfig:\n    o_flag = False\n' > /opt/project/common/inference_config.py
-ENV PYTHONPATH=/opt/project/common:${PYTHONPATH}
+# Plain assignments, not appends: ubuntu:20.04 defines neither variable, so `:${PYTHONPATH}`
+# only added a trailing colon and a BuildKit UndefinedVar warning. (The converter's copy still appends.)
+ENV PYTHONPATH=/opt/project/common
 
 # ---------- app ----------
 FROM base AS app
@@ -82,7 +84,7 @@ ENV AV3_MPC_MENU=${AV3_MPC_MENU}
 ENV ACADOS_SOURCE_DIR=/opt/acados_root
 ENV ACADOS_PYTHON_INTERFACE_PATH=${OPENPILOT_PATH}/third_party/acados/acados_template
 ENV TERA_PATH=${OPENPILOT_PATH}/third_party/acados/x86_64/t_renderer
-ENV LD_LIBRARY_PATH=${OPENPILOT_PATH}/third_party/acados/x86_64/lib:${LD_LIBRARY_PATH}
+ENV LD_LIBRARY_PATH=${OPENPILOT_PATH}/third_party/acados/x86_64/lib
 
 WORKDIR ${OPENPILOT_PATH}
 
