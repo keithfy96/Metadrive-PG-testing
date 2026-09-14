@@ -167,6 +167,81 @@ The container then dies with `torch.AcceleratorError: CUDA error: unspecified la
 `nvidia-smi` says `No devices were found`, and only a reboot brings the card back. Close what is
 not needed before an AV3 run. A rig has the memory; this is the laptop's problem.
 
+## The queue replica
+
+The real queue, `wfqueue`, runs on the NAS and is not routable from a development machine, so
+this repo carries a double of it: `tests/support/fake_wfqueue.py`, a stdlib HTTP server over
+SQLite that answers the contract in `docs/queue-docs/queue-doc-v0.json`. It exists to exercise
+our code. **When the real server disagrees with it, the replica is wrong**, and where the
+documentation is silent the replica had to guess. Its docstring lists every guess.
+
+Nothing runs it by default. The contract tests build their own copy in memory on a random port:
+
+```bash
+uv run pytest tests/unit/test_queue_contract.py -q            # 9 passed, 9 skipped
+```
+
+The nine skips are the same assertions aimed at a real server. They need `WFQUEUE_URL`, so to
+run all eighteen, start the replica in one terminal:
+
+```bash
+uv run python -m tests.support.fake_wfqueue --port 9090       # from the repo root
+```
+
+and in another:
+
+```bash
+WFQUEUE_URL=http://127.0.0.1:9090 uv run pytest tests/unit/test_queue_contract.py -q
+```
+
+### Driving it by hand
+
+A full round trip. **Take both the message id and the lease id from the `lease` reply**, never
+from the `put`: a queue hands out the oldest ready message, which is not necessarily the one you
+just enqueued, and an ack that names the wrong message is refused with `409`.
+
+```bash
+Q=http://127.0.0.1:9090
+
+# start clean: drop every message in the topic
+curl -s -X POST $Q/topics/metadrive/purge -H 'Content-Type: application/json' -d '{}'
+
+# put one
+curl -s -X POST $Q/topics/metadrive/messages -H 'Content-Type: application/json' \
+  -d '{"payload": {"job_id": "j2"}}'
+
+# lease it, and keep the reply: the id and the lease_id both come from HERE
+curl -s -X POST $Q/topics/metadrive/lease -H 'Content-Type: application/json' \
+  -d '{"visibility_timeout": 30, "consumer": "laptop"}' | tee /tmp/lease.json
+
+ID=$(python3 -c 'import json; print(json.load(open("/tmp/lease.json"))["messages"][0]["id"])')
+LEASE=$(python3 -c 'import json; print(json.load(open("/tmp/lease.json"))["messages"][0]["lease_id"])')
+
+curl -s -X POST $Q/messages/$ID/ack -H 'Content-Type: application/json' -d "{\"lease_id\": \"$LEASE\"}"
+curl -s $Q/topics
+```
+
+The last line ends at `ready: 0, leased: 0, done: 1`.
+
+`GET /topics` is names and per-state counts, which is all the queue's own documentation promises
+of it. The fifteen-field record of a message is on `GET /topics/metadrive/messages`, and
+`GET /topics/metadrive/stats` adds the visible depth and the age of the oldest backlog. The
+`consumer` label survives the ack, so a `done` message still records which rig and which card ran
+it; that is the field Phase 7 Step 6 reads when it writes the results notes.
+
+**Three things that will catch you out.**
+
+- **The database persists.** It is `.studio/fake-wfqueue.sqlite` by default, already ignored by
+  git, and it keeps its messages across a restart on purpose, because the studio and the agent
+  are developed against it. Ids therefore keep climbing and never restart at 1. Reset with the
+  `purge` call above, or stop the server and delete the file.
+- **A running server holds the code it started with.** After editing the replica, stop it and
+  start it again, or you are testing yesterday's copy.
+- **An unacked lease comes back by itself.** That is the point of a visibility timeout, and it is
+  the queue's at-least-once delivery working. The message returns to `ready` with `attempts`
+  incremented and is handed out again, so a leftover from an earlier session is the message your
+  next `lease` receives.
+
 ## On a rig
 
 Today a rig runs the laptop's commands with the fallback image. Phase 7's agent, which will lease

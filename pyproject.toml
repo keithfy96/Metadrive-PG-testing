@@ -114,6 +114,9 @@ packages = ["src/scenariobank"]
 [tool.pytest.ini_options]
 addopts = "-ra"
 testpaths = ["tests"]
+# The repo root, so a test can import `tests.support.fake_wfqueue` the same way the terminal runs
+# it (`python -m tests.support.fake_wfqueue`). Nothing else under the root is a package.
+pythonpath = ["."]
 
 [tool.ruff]
 line-length = 100

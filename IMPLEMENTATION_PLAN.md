@@ -4885,7 +4885,7 @@ first**, because `scenariobank agent --once job.json` drives it from a file long
 involved; **the real queue last**, at Step 7, because there is no access to it yet. Step 0 comes
 first only because the loop in Step 5 cannot be tested on a laptop without it.
 
-### Step 0 — a local `wfqueue` replica ⬜  *(added 2026-09-08; made runnable 2026-09-13)*
+### Step 0 — a local `wfqueue` replica ✅  *(added 2026-09-08; made runnable 2026-09-13; built 2026-09-14)*
 
 The NAS is not routable from the development machine (`No route to host` on
 `192.168.1.90:9090`, measured 2026-09-08), `wfqueue` is not installed here, and the colleague
@@ -4918,6 +4918,67 @@ shared the client, not the server. So before the agent's loop can be tested at a
 with `WFQUEUE_URL` pointing at the colleague's server (or at the NAS, from a machine that can
 route to it) green with the marker taking effect. Step 7's round trip stays the gate and stays
 on the real NAS — and is the **first and only** step that touches it.
+
+**Done 2026-09-14.** Items 2 and 3 are built; item 1 (the colleague's server) is still to ask for,
+and until it arrives every "real" assertion below has only ever run against the fake.
+
+- `tests/support/fake_wfqueue.py` (700 lines, more than the ~250 guessed: half of it is the
+  input validation the doc's `400` row implies). `FakeQueueServer` is a `ThreadingHTTPServer`
+  with a `Store` behind it — one SQLite connection, one lock, one `Condition` that a long-polling
+  `lease` waits on and every `put`/`nack`/`requeue`/expiry notifies. Expired leases are swept
+  lazily on every read and write (`_reap`), so no timer thread. **Eighteen of the doc's
+  twenty-four endpoints**, including `GET /`, `/health`, `/topics`, `/source/client.py`, topic
+  delete with `?purge=true`, batch put, and `/admin/reap`; errors are the doc's
+  `{"error", "status"}` shape. The six left out are the human-facing ones — the HTML console at
+  `/admin` and `/admin/list`, its form posts `/admin/delete` and `/admin/compact`, and key
+  management at `/admin/keys` and `/admin/keys/revoke` — which the doc itself calls "for humans,
+  not for code" and nothing of ours will call. `python -m
+  tests.support.fake_wfqueue --port 9090` serves on a file (default `.studio/fake-wfqueue.sqlite`,
+  already ignored); `port=0, db=":memory:"` is what the test uses. `pyproject.toml` gained
+  `pythonpath = ["."]` under pytest so the test imports `tests.support` the way the terminal
+  runs it.
+- `tests/unit/test_queue_contract.py`: nine assertions, each parametrised `[fake]` and `[real]`,
+  the `real` half behind `needs_queue` (skips without `WFQUEUE_URL`). Driven through
+  `docs/queue-docs/queue-client-v0.py`, loaded by path so the copy stays byte-identical. Each
+  test makes and deletes its own `contract-test-<hex>` topic, so a shared server is left as
+  found. The four the step asked for (expired lease → `attempts == 2`; stale `lease_id` ack →
+  409, and a done message acks 409 too; `nack(dead=True)` → `dead` with `last_error`, `requeue`
+  brings it back; same `dedupe_key` → `duplicate: true`, one message, first payload stands) plus
+  four the agent's loop rests on: `retry_after` hides the message until then; `extend` outlives
+  the original timeout; `list(state="leased")` carries the `consumer` label; a `wait=5` lease
+  returns the moment a `put` lands (0.3 s, not 5). The ninth *(added 2026-09-15)* fetches
+  `/source/client.py` and executes it, asserting it defines the `QueueClient` this file drives —
+  not asserting it byte-identical to ours, because the real server stamps a served copy with its
+  own address. Against the real server that is the check that catches our vendored copy having
+  drifted from theirs.
+- **Where the doc is silent, the fake's choice is a guess**, listed in its docstring for Step 7
+  to check against the real server: `attempts` counts every lease including the re-lease after
+  expiry; nack backoff `2 ** (attempts - 1)` s capped at an hour; an expired lease with
+  `attempts >= max_attempts` goes to `dead`; `requeue` resets `attempts` to 0; the label's key is
+  `consumer`; `stats` is `{"topic", "counts", "depth", "oldest_ready_age", "next_available_at"}`;
+  **`created_at` and `updated_at` are on every message row and are named nowhere in the doc**, so
+  nothing of ours may read them until the real server is seen to send them (the other thirteen
+  field names are the doc's own, and the client reads five of them off a leased message);
+  and **`lease`/`list`/`stats` on a topic nobody has created answer 404**, the doc's error table
+  read literally. That last one reaches Step 5 and Phase 2c Step 12: the agent and the studio
+  each call `create_topic("metadrive")` once at startup (idempotent) rather than assume the
+  other side went first.
+
+| check | result |
+|---|---|
+| `uv run pytest tests/unit/test_queue_contract.py -q`, offline | 9 passed, 9 skipped (`needs_queue`), 2.33 s |
+| the same with `WFQUEUE_URL` at the standalone fake on a file DB | 18 passed, 4.13 s |
+| `GET /source/client.py`, saved and diffed against the vendored copy | `text/x-python`, 15,152 bytes, identical |
+| put on `metadrive`, kill the server, restart on the same file | topic and message still there; leased with `attempts == 1`; acked → `done` |
+| `lease` on a topic never created | `404 {"error": "no such topic: …"}` — the guess above, so the agent creates its topic first |
+| `ruff check` on both files | clean |
+| the by-hand round trip, on a database already holding a stale `ready` message | `purge`, `put`, `lease`, `ack` → `done: 1` |
+
+The worked round trip is written up in `docs/running-the-application.md`, "The queue replica",
+with the trap that cost a session: **a lease returns the oldest `ready` message, not the one just
+enqueued**, so both the id and the `lease_id` must come from the lease reply. An ack naming any
+other message is `409`. This is at-least-once delivery seen from the outside, and it is what
+Step 5's loop has to be written against.
 
 ### Step 1 — the container image and entrypoint ⬜
 
