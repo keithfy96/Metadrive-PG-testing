@@ -620,7 +620,7 @@ uv run scenariobank commands  # rewrite this page
 
 ## Run it
 
-Score a policy against a bank. `run` is the one command that writes a result record, and the record is the same whether the run was started here, from the studio or from the queue; `calibrate` is `run` once per value of one option axis, and writes the level-calibration reference from what it measured.
+Score a policy against a bank. `run` is the one command that writes a result record, and the record is the same whether the run was started here, from the studio or from the queue; `calibrate` is `run` once per value of one option axis, and writes the level-calibration reference from what it measured. `agent` is what a rig runs: it holds one card's lock and drives `run` inside a container of its own.
 
 ### `run`
 
@@ -757,6 +757,59 @@ a `T` or `X` road with the expert; a six-value sweep of a nine-row bank is a few
 ```bash
 uv run scenariobank calibrate --bank ./banks/t-junction-left-intersection --axis traffic --values 0,0.05,0.1,0.2,0.3,0.4  # the traffic axis on both categories of the bank, the expert driving
 uv run scenariobank calibrate --bank ./banks/curve --axis cones --values 0,1,2,3,4,6,8                                    # cones on the one road that can place them
+```
+
+### `agent`
+
+The rig agent: hold a card, run one job in a container, deliver the result.
+
+**One agent per rig, one worker per card, and the worker holding the card is the only thing
+that asks for work** (Phase 7). Nothing on the NAS dispatches and nothing on a rig listens:
+the queue knows messages and has no word for a GPU, so the only process that can know a card
+is free is the one holding it. `--once` is that worker with a file where the queue will be,
+and it is the whole run session -- lock, bridge, container, supervision, delivery, teardown
+-- with the loop left out.
+
+**Validation happens before the card is taken.** A job whose bank is not on this share, whose
+manifest disagrees about which bank it is, or whose checkpoint name matches two files can
+never run here or on the other rig, so it is refused with exit **3** and no GPU is touched.
+The queue's worker (Step 5) dead-letters exactly these rather than spending the job's
+attempts on them.
+
+**The card is a lock and never a wait.** `.wing-sim.gpu.lock` shared for the rig and
+`.wing-sim.gpu<N>.lock` exclusive for the card, both non-blocking: held by CARLA, by a
+hand-run script or by another worker of ours is exit **4**, which is not a failure -- nothing
+was taken, so there is nothing to release and nothing to report. A worker that waited on a
+lock would be a second queue, one that is not FIFO and that the real queue cannot see.
+
+**The run is a sibling container, not a child**, so restarting the agent cannot kill a
+twenty-minute drive, and a run already going on this card for this job is **adopted** rather
+than started a second time. Ctrl-C stops the container with a 30 s grace: the row it lands in
+ends `stopped`, every row already scored is kept, and the partial result is still delivered.
+
+**A job carries names and this rig supplies the paths.** `bank.id` is looked up under
+`SCENARIOBANK_BANKS`, a checkpoint name under `SCENARIOBANK_MODELS`, and the run writes to
+`SCENARIOBANK_OUT/<job_id>` on local disk before being copied to `SCENARIOBANK_RESULTS`.
+Set `SCENARIOBANK_SHARE` and the first three default to `banks/`, `models/` and `results/`
+under it; set none of them and they are this checkout's own `banks/`, `../models` and
+`out/`, which is what makes a laptop clone able to run this with nothing mounted.
+
+Exit codes: **0** ran (a stopped run included), **1** the run or the rig failed, **2** the
+command line was wrong, **3** the job is refused and must be dead-lettered, **4** the card
+is busy.
+
+| flag | | repeats | meaning |
+|---|---|---|---|
+| `--once <path>` | optional |  | Run one job from this file and stop: take the card, start its bridge if the job needs one, run it as a sibling container, deliver the results, release. No queue is involved. |
+| `--gpu <int>` | default `0` |  | Which card to take and run on. Names its lock, its bridge port (5600 + this) and its container. |
+| `--no-gpu` | default `false` |  | Take the card's lock but give the container no GPU. The laptop, and any check that only needs ExpertPolicy. |
+| `--no-bridge` | default `false` |  | Never start the openpilot bridge, even for a policy that talks to one. For a machine where it is already up, or has no image for it. |
+| `--deliver/--no-deliver` | default `true` |  | Copy the run's directory to the results root and rename it into place. --no-deliver leaves it on local disk, for a look before it goes anywhere. |
+| `--json` | default `false` |  | Print the report as JSON instead of aligned text. |
+
+```bash
+uv run scenariobank agent --once out/j7/job.json --gpu 0 --no-gpu  # one job, no queue, no card needed
+uv run scenariobank agent --once out/j7/job.json --gpu 1 --json    # on a rig: card 1, its own bridge on 5601
 ```
 
 ## Do all of it in a page

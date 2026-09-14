@@ -244,10 +244,11 @@ it; that is the field Phase 7 Step 6 reads when it writes the results notes.
 
 ## On a rig
 
-Today a rig runs the laptop's commands with the fallback image. Phase 7's agent, which will lease
-jobs from the queue and run them without a person, is declared in `compose.yaml` as the `agent`
-service but its code does not exist yet (`IMPLEMENTATION_PLAN.md`, Phase 7 Step 5); `docker
-compose --profile rig up -d agent` will be the rig's one line when it does.
+Today a rig runs the laptop's commands with the fallback image, plus `scenariobank agent --once`
+for a whole job at a time (below). What does not exist yet is the **loop**: leasing from the
+queue without a person (`IMPLEMENTATION_PLAN.md`, Phase 7 Step 5). `docker compose --profile rig
+up -d agent` will be the rig's one line when it does; until then the `agent` service starts and
+refuses, naming that step.
 
 ```bash
 git clone <this repo> && cd metadrive-PG            # and ../models/ beside it
@@ -320,7 +321,8 @@ directory must be local disk: on an NFS or SMB mount `flock(2)` is emulated and 
 
 ## One job, one container
 
-The line a rig's agent will issue (Phase 7 Step 5) is the line you can issue by hand today. The
+This is the line the agent issues for you, and the one to issue by hand when you want to watch a
+single container rather than a whole session. The
 container reads a `Job` file -- the same JSON the studio submits and the queue carries -- runs
 it, and writes everything a supervisor needs into `--out`. Nobody parses a printed line.
 
@@ -402,6 +404,108 @@ first one used keeps both streams, and every line carries its `attempt`. And **a
 tier writes its batch into a subdirectory** (`--out out/j7` with `"tier": "hard"` writes
 `out/j7/hard/results.json`), while `events.jsonl` and `exit_code` stay in the directory you
 named: they belong to the process, not to the batch.
+
+## One job, start to finish: `agent --once`
+
+Everything above, as one command: take the card, start that card's bridge if the job needs one,
+run the container, follow it, deliver the results, release. No queue is involved -- the job comes
+from a file -- which is how the rig half is provable long before there is a queue to prove it
+against (Phase 7 Step 3).
+
+```bash
+cat > /tmp/job.json <<'JSON'
+{
+  "schema_version": 1,
+  "job_id": "j7",
+  "attempt": 1,
+  "bank": {"id": "t-junction", "path": "ignored on a rig"},
+  "scenarios": ["t_junction_0000"],
+  "policy": "scenariobank.policies:ExpertPolicy"
+}
+JSON
+
+uv run scenariobank agent --once /tmp/job.json --gpu 0 --no-gpu     # laptop: a card's lock, no card
+uv run scenariobank agent --once /tmp/job.json --gpu 0              # a rig: card 0, bridge on 5600
+```
+
+**A job carries names and the rig supplies the paths.** `bank.id` is looked up under
+`SCENARIOBANK_BANKS`, a checkpoint *file name* under `SCENARIOBANK_MODELS`, and `bank.path` as
+submitted is the submitter's own machine's and is never read -- the agent rewrites it to `/bank`,
+the one bank it bind-mounts into the container. That is what lets one job run on either rig
+whatever each has mounted where.
+
+| variable | what it is | with none of them set |
+|---|---|---|
+| `SCENARIOBANK_SHARE` | the NAS share; the three below default to `banks/`, `models/`, `results/` under it | — |
+| `SCENARIOBANK_BANKS` | where `bank.id` is looked up | this checkout's `banks/` |
+| `SCENARIOBANK_MODELS` | where a checkpoint name is looked up | `../models`, beside the repo |
+| `SCENARIOBANK_RESULTS` | where finished jobs are delivered | `out/results/` |
+| `SCENARIOBANK_OUT` | this rig's local disk, where the container writes | `out/` |
+
+So a fresh clone runs the command above with nothing mounted at all, and a rig sets one variable.
+
+**Refused, busy and failed are three different answers**, and the exit code says which:
+
+| exit | meaning | what a queue worker does with it (Step 5) |
+|---|---|---|
+| 0 | ran -- a stopped run included | ack |
+| 1 | the run failed, or the rig could not start it | nack, retry |
+| 2 | the command line was wrong | — |
+| 3 | the job can never run here or anywhere | nack, **dead-letter** |
+| 4 | the card is busy | nothing: no job was taken |
+
+**Everything that can refuse a job happens before the card is taken.** A bank id that is not on
+this share, a manifest that disagrees about which bank it is, a scenario id the bank does not
+hold, a checkpoint name that matches two files -- each is exit 3 with the GPU still free, because
+taking a card to find that out is a card idle for the length of a docker pull and, on the queue,
+an attempt spent for nothing.
+
+**The run is a sibling container and outlives the agent.** Restarting the agent -- or killing it
+outright -- leaves the run driving, and running the same command again **adopts** it rather than
+starting a second: the container carries `scenariobank.job-id` and `scenariobank.gpu` labels, and
+that query is the recovery path. Measured on the laptop, both ways: killed while the run was on
+its first row, the restarted agent picked it up at 3/5 and delivered at 5/5; killed and restarted
+after the run had already finished, it read the exited container's exit code and delivered that.
+Exactly one `run.started` event in both, which is the thing to check -- it is one per container.
+
+**Ctrl-C is a scored partial run, not a lost one.** SIGINT or SIGTERM to the agent stops the
+container with a 30-second grace rather than dying and leaving it driving; the row it lands in
+ends `failure_reason: "stopped"`, every row already scored is kept, and the partial result is
+delivered like any other. The outcome says `stopped`, so nobody has to infer it from an exit code
+of 0.
+
+**Delivery is a copy and a rename.** The container writes to `SCENARIOBANK_OUT/<job_id>` on local
+disk; the agent copies that to `<results>/<job_id>.partial` and renames it into
+`<results>/<job_id>`. So a directory without `.partial` is always complete, and a
+`results/<job_id>` that already exists means *done* -- running the same job again prints
+`already delivered` and exits 0 without touching a card. Delete that directory to run it again. A
+**failed** run is delivered too: the evidence is worth more than the disk.
+
+What one finished job looks like -- the run's own seven files, plus two the agent adds:
+
+```
+out/results/j7/job.json          <- the job as the container was given it, paths and all
+out/results/j7/container.log     <- the container's stdout, kept before it was removed
+out/results/j7/events.jsonl      <- the process's stream
+out/results/j7/exit_code         <- 0
+out/results/j7/batch.json  starts/  results/  results.json
+```
+
+A job that names a tier puts the last four under it (`out/results/j7/hard/results.json`) and
+leaves `events.jsonl` and `exit_code` where they are: those two belong to the process, not the
+batch.
+
+**The bridge is one per card, on 5600 + the card index** -- gpu0 on 5600, gpu1 on 5601 -- and is
+started only for the two policies that talk to one (`scenariobank.av3:AV3Policy` and
+`:BridgePolicy`). It is deliberately **not** 5558: wing-sim's zapeta bridge listens there on the
+same rig with the same host networking, so a collision with theirs is an error rather than our
+simulator driving against their planner. A bridge already up is reused, and it is left running
+when the job ends -- it is the card's, not the job's. `BRIDGE_IMAGE` picks the tag if this
+machine built it under another name.
+
+**Two cards run at once.** Two `agent --once` on `--gpu 0` and `--gpu 1` hold both cards
+together, run two containers, and deliver two results -- which is the shared rig lock working
+(above). A third on either card exits 4.
 
 ## Did it work?
 

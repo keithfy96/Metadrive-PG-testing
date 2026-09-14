@@ -2075,3 +2075,218 @@ def studio(
     )
     typer.echo(f"studio on http://{host}:{port}/  (banks: {banks_root})")
     uvicorn.run(application, host=host, port=port, log_level="warning")
+
+
+@app.command()
+def agent(
+    once: Annotated[
+        Path | None,
+        typer.Option(
+            "--once",
+            help="Run one job from this file and stop: take the card, start its bridge if the "
+            "job needs one, run it as a sibling container, deliver the results, release. No "
+            "queue is involved.",
+        ),
+    ] = None,
+    gpu: Annotated[
+        int, typer.Option("--gpu", help="Which card to take and run on. Names its lock, its "
+                          "bridge port (5600 + this) and its container.")
+    ] = 0,
+    no_gpu: Annotated[
+        bool,
+        typer.Option(
+            "--no-gpu",
+            help="Take the card's lock but give the container no GPU. The laptop, and any "
+            "check that only needs ExpertPolicy.",
+        ),
+    ] = False,
+    no_bridge: Annotated[
+        bool,
+        typer.Option(
+            "--no-bridge",
+            help="Never start the openpilot bridge, even for a policy that talks to one. For a "
+            "machine where it is already up, or has no image for it.",
+        ),
+    ] = False,
+    deliver: Annotated[
+        bool,
+        typer.Option(
+            "--deliver/--no-deliver",
+            help="Copy the run's directory to the results root and rename it into place. "
+            "--no-deliver leaves it on local disk, for a look before it goes anywhere.",
+        ),
+    ] = True,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Print the report as JSON instead of aligned text.")
+    ] = False,
+) -> None:
+    """The rig agent: hold a card, run one job in a container, deliver the result.
+
+    **One agent per rig, one worker per card, and the worker holding the card is the only thing
+    that asks for work** (Phase 7). Nothing on the NAS dispatches and nothing on a rig listens:
+    the queue knows messages and has no word for a GPU, so the only process that can know a card
+    is free is the one holding it. `--once` is that worker with a file where the queue will be,
+    and it is the whole run session -- lock, bridge, container, supervision, delivery, teardown
+    -- with the loop left out.
+
+    **Validation happens before the card is taken.** A job whose bank is not on this share, whose
+    manifest disagrees about which bank it is, or whose checkpoint name matches two files can
+    never run here or on the other rig, so it is refused with exit **3** and no GPU is touched.
+    The queue's worker (Step 5) dead-letters exactly these rather than spending the job's
+    attempts on them.
+
+    **The card is a lock and never a wait.** `.wing-sim.gpu.lock` shared for the rig and
+    `.wing-sim.gpu<N>.lock` exclusive for the card, both non-blocking: held by CARLA, by a
+    hand-run script or by another worker of ours is exit **4**, which is not a failure -- nothing
+    was taken, so there is nothing to release and nothing to report. A worker that waited on a
+    lock would be a second queue, one that is not FIFO and that the real queue cannot see.
+
+    **The run is a sibling container, not a child**, so restarting the agent cannot kill a
+    twenty-minute drive, and a run already going on this card for this job is **adopted** rather
+    than started a second time. Ctrl-C stops the container with a 30 s grace: the row it lands in
+    ends `stopped`, every row already scored is kept, and the partial result is still delivered.
+
+    **A job carries names and this rig supplies the paths.** `bank.id` is looked up under
+    `SCENARIOBANK_BANKS`, a checkpoint name under `SCENARIOBANK_MODELS`, and the run writes to
+    `SCENARIOBANK_OUT/<job_id>` on local disk before being copied to `SCENARIOBANK_RESULTS`.
+    Set `SCENARIOBANK_SHARE` and the first three default to `banks/`, `models/` and `results/`
+    under it; set none of them and they are this checkout's own `banks/`, `../models` and
+    `out/`, which is what makes a laptop clone able to run this with nothing mounted.
+
+    Exit codes: **0** ran (a stopped run included), **1** the run or the rig failed, **2** the
+    command line was wrong, **3** the job is refused and must be dead-lettered, **4** the card
+    is busy.
+    """
+    import signal
+
+    from scenariobank.agent.jobs import JobRefused, Roots, read_job, resolve
+    from scenariobank.agent.lock import Busy, CardLock, LockError
+    from scenariobank.agent.session import OnceReport, Outcome, RunSession, SessionError
+
+    if once is None:
+        raise typer.BadParameter(
+            "the polling loop is Phase 7 Step 5 and is not built yet; name a job file with "
+            "--once, which runs the whole session without a queue",
+            param_hint="--once",
+        )
+
+    roots = Roots.from_environment()
+    # Everything that can refuse this job happens here, with the card still free.
+    try:
+        job = read_job(once)
+        resolved = resolve(job, roots, gpu=gpu)
+    except JobRefused as error:
+        typer.echo(f"refused: {error}", err=True)
+        raise typer.Exit(code=3) from error
+
+    lock = CardLock(gpu)
+    session = RunSession(
+        resolved, roots, no_gpu=no_gpu, bridge=not no_bridge
+    )
+    report = OnceReport(
+        job_id=resolved.job_id,
+        gpu=gpu,
+        outcome="",
+        out=str(resolved.out_dir),
+        container=session.name,
+        bridge=session.bridge_name if session.needs_bridge else None,
+    )
+
+    def finish(code: int) -> None:
+        typer.echo(report.as_json() if as_json else _agent_lines(report), err=not as_json)
+        raise typer.Exit(code=code)
+
+    if deliver and session.already_delivered():
+        # The redelivery guard, and it is an answer rather than a refusal: the queue is
+        # at-least-once, so a message can arrive after another rig has already finished it.
+        report.outcome = "already delivered"
+        report.delivered = str(roots.delivered(resolved.job_id))
+        finish(0)
+
+    try:
+        held = lock.acquire(
+            job_id=resolved.job_id,
+            attempt=resolved.attempt,
+            container=session.name,
+            out=str(resolved.out_dir),
+        )
+    except Busy as busy:
+        typer.echo(f"gpu{gpu} is busy: {busy.holding.sentence()}", err=True)
+        report.outcome = "busy"
+        report.detail = busy.holding.sentence()
+        finish(4)
+    except LockError as error:
+        typer.echo(f"the lock is unusable: {error}", err=True)
+        raise typer.Exit(code=1) from error
+
+    if not held.confirmed:
+        typer.echo(f"note: {held.note}", err=True)
+    seen = ""
+
+    def tick(progress) -> None:
+        nonlocal seen
+        line = progress.sentence()
+        if line != seen:
+            seen = line
+            typer.echo(f"gpu{gpu} {resolved.job_id}: {line}", err=True)
+
+    def interrupted(number, _frame) -> None:
+        # Not `raise`: the container is a sibling and killing this process would leave it
+        # driving. Ask it to stop, let supervise() see the exit code, and deliver what was
+        # scored -- which is the same path `docker stop` on the agent container takes.
+        typer.echo(f"\nsignal {number}: stopping {session.name}", err=True)
+        session.stop()
+
+    previous = {number: signal.getsignal(number) for number in (signal.SIGINT, signal.SIGTERM)}
+    for number in previous:
+        signal.signal(number, interrupted)
+    try:
+        result = session.run(on_tick=tick, deliver=deliver)
+    except SessionError as error:
+        typer.echo(f"the rig could not run this job: {error}", err=True)
+        report.outcome = Outcome.LAUNCH_FAILED.value
+        report.detail = str(error)
+        report.holder = None if held.holder is None else held.holder.model_dump(mode="json")
+        held.release()
+        finish(1)
+    finally:
+        for number, handler in previous.items():
+            signal.signal(number, handler)
+
+    report.outcome = result.outcome.value
+    report.exit_code = result.exit_code
+    report.permanent = result.permanent
+    report.delivered = None if result.delivered is None else str(result.delivered)
+    report.detail = result.detail
+    report.done = result.progress.done
+    report.n = result.progress.n
+    report.holder = None if held.holder is None else held.holder.model_dump(mode="json")
+    held.release()
+
+    if as_json:
+        typer.echo(report.as_json())
+    else:
+        typer.echo(_agent_lines(report), err=True)
+        typer.echo(str(result.delivered or resolved.out_dir))
+    if result.outcome is Outcome.REFUSED:
+        raise typer.Exit(code=3)
+    if not result.ok:
+        raise typer.Exit(code=1)
+
+
+def _agent_lines(report) -> str:
+    """The report as aligned text: the same fields the JSON carries, for a person."""
+    rows = [
+        ("job", report.job_id),
+        ("gpu", str(report.gpu)),
+        ("outcome", report.outcome),
+        ("scored", f"{report.done}/{report.n if report.n is not None else '?'}"),
+        ("exit code", "none" if report.exit_code is None else str(report.exit_code)),
+        ("out", report.out or ""),
+        ("delivered", report.delivered or "not delivered"),
+    ]
+    if report.detail:
+        rows.append(("detail", report.detail))
+    width = max(len(name) for name, _ in rows)
+    return "\n".join(f"{name:<{width}}  {value}" for name, value in rows)
+

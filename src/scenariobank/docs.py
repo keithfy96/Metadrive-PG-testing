@@ -62,8 +62,9 @@ GROUPS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
         "Score a policy against a bank. `run` is the one command that writes a result record, "
         "and the record is the same whether the run was started here, from the studio or from "
         "the queue; `calibrate` is `run` once per value of one option axis, and writes the "
-        "level-calibration reference from what it measured.",
-        ("run", "calibrate"),
+        "level-calibration reference from what it measured. `agent` is what a rig runs: it "
+        "holds one card's lock and drives `run` inside a container of its own.",
+        ("run", "calibrate", "agent"),
     ),
     (
         "Do all of it in a page",
@@ -311,6 +312,16 @@ EXAMPLES: dict[str, tuple[tuple[str, str], ...]] = {
         ),
     ),
     "commands": (("uv run scenariobank commands", "rewrite this page"),),
+    "agent": (
+        (
+            "uv run scenariobank agent --once out/j7/job.json --gpu 0 --no-gpu",
+            "one job, no queue, no card needed",
+        ),
+        (
+            "uv run scenariobank agent --once out/j7/job.json --gpu 1 --json",
+            "on a rig: card 1, its own bridge on 5601",
+        ),
+    ),
     "studio": (
         ("uv run --group web scenariobank studio", "then open http://127.0.0.1:8770/"),
         (

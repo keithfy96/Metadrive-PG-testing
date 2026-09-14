@@ -175,6 +175,20 @@ def test_compose_runs_the_sim_as_root_and_only_the_studio_as_the_host_uid():
     assert "pid: host" in by_name["agent"]
     assert 'profiles: ["rig"]' in by_name["agent"]
     assert "build:" not in by_name["agent"]
+    # Phase 7 Step 3. The share and the run directory are mounted AT THEIR OWN HOST PATHS: the
+    # agent hands those paths to the daemon for a sibling's bind mounts AND reads them itself to
+    # validate a bank and copy the results, and one mount at the same path either side is what
+    # makes both true with one variable. The repo is the exception -- /work, because the image's
+    # editable install is the single path line /work/src and without it this container has no
+    # scenariobank at all -- so the host's path to it travels in the environment instead.
+    same_path = (
+        "SCENARIOBANK_SHARE:-/mnt/scenariobank",
+        "SCENARIOBANK_OUT:-$HOME/scenariobank/out",
+    )
+    for root in same_path:
+        assert f'"${{{root}}}:${{{root}}}"' in by_name["agent"], root
+    assert '"${SCENARIOBANK_REPO:-$PWD}:/work:ro"' in by_name["agent"]
+    assert 'SCENARIOBANK_REPO: "${SCENARIOBANK_REPO:-$PWD}"' in by_name["agent"]
     script = _code_lines((ROOT / "scripts" / "sim-run.sh").read_text())
     assert 'IMAGE="${SIM_IMAGE:-metadrive-wingfin-sim:latest}"' in script
     assert '-v "$REPO:/work:ro"' in script
@@ -188,3 +202,18 @@ def test_compose_runs_the_sim_as_root_and_only_the_studio_as_the_host_uid():
     # The guard comes before the run: sim-image.sh's status check is invoked, and earlier in
     # the file than docker run.
     assert script.index("sim-image.sh status") < script.index("exec docker run")
+    # Phase 7 Step 3, the agent's four extra inputs. REPO_DIR is the one that matters most:
+    # the agent runs this script from inside a container where `pwd` is /work, and a `-v` the
+    # daemon cannot resolve creates an empty directory and fails four minutes into a drive.
+    assert 'REPO="${REPO_DIR:-$CHECKOUT}"' in script
+    assert '-v "$BANK_DIR:/bank:ro"' in script
+    assert 'labels=(--label "scenariobank.managed-by=scenariobank")' in script
+    for label, variable in (("job-id", "JOB_ID"), ("attempt", "ATTEMPT"), ("gpu", "GPU")):
+        assert f'--label "scenariobank.{label}=${variable}"' in script
+    # Detached means the daemon owns the run -- restarting the agent cannot kill a twenty-minute
+    # drive -- and it must NOT be `--rm`: an exited container is how an agent that was down when
+    # the run ended finds out that it ended, and where its log still is.
+    assert "exec docker run --detach" in script
+    detached = script.index("exec docker run --detach")
+    assert "--rm" not in script[detached:script.index("exec docker run --rm")]
+    assert script.count("--rm") == 1

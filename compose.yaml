@@ -131,12 +131,20 @@ services:
   # Under the `rig` profile so `docker compose up` on the laptop or the NAS never starts it:
   # `docker compose --profile rig up -d agent` on a rig, and nowhere else.
   #
-  # **The three roots are HOST paths.** The agent starts siblings through the docker socket,
-  # and a sibling's bind mounts are resolved by the daemon on the host -- so the agent must
-  # hand `docker run` the host's directories, never its own mount points. It reads the share
-  # through /share for itself (validation, the results copy) and passes SCENARIOBANK_* to the
-  # sibling. The socket mount is acceptable here where it was rejected for the studio: the agent
-  # serves no HTTP.
+  # **The share and the run directory are mounted AT THEIR OWN HOST PATHS**, and that is the
+  # trick the whole service turns on (Phase 7 Step 3). The agent starts siblings through the
+  # docker socket, and a sibling's bind mounts are resolved by the daemon on the host -- so the
+  # agent must hand `docker run` the host's directories and never its own mount points. It also
+  # has to READ those same directories itself, to validate a bank and to copy the results. One
+  # mount at the same path inside and out makes both true with one variable; the alternative is
+  # a second variable per root, which is one more thing for somebody to set to the wrong half.
+  # wing-sim does the same with its simulation root (`rig/session.py:296`). The repo is the one
+  # exception: it is mounted at /work, because the image's editable install is the single path
+  # line `/work/src` and without it this container has no `scenariobank` at all -- and the host's
+  # path to it goes in the environment instead, for the sibling's own /work mount.
+  #
+  # The socket mount is acceptable here where it was rejected for the studio: the agent serves
+  # no HTTP.
   agent:
     <<: *common
     profiles: ["rig"]
@@ -153,8 +161,16 @@ services:
       - !reset null
       - /etc/localtime:/etc/localtime:ro
       - /var/run/docker.sock:/var/run/docker.sock
+      # This checkout, read-only, and the agent cannot start without it: `scripts/sim-run.sh`
+      # and `scripts/bridge.sh` are the two lines it runs, and /work/src is the venv's one path
+      # line. Read-only for the same reason `run` is -- the agent writes results, never source.
+      - "${SCENARIOBANK_REPO:-$PWD}:/work:ro"
       # The NAS share: banks/<bank_id>, models/, results/<job_id>. Open question 8.
-      - "${SCENARIOBANK_SHARE:-/mnt/scenariobank}:/share"
+      - "${SCENARIOBANK_SHARE:-/mnt/scenariobank}:${SCENARIOBANK_SHARE:-/mnt/scenariobank}"
+      # Where the run containers write, on this rig's own disk and never the share: a run writes
+      # its record a file at a time and an NFS round trip per scenario is a cost for nothing.
+      # The agent copies the finished directory to the share itself.
+      - "${SCENARIOBANK_OUT:-$HOME/scenariobank/out}:${SCENARIOBANK_OUT:-$HOME/scenariobank/out}"
       # The GPU locks (Phase 7 Step 2): `.wing-sim.gpu.lock` for the rig, taken shared, and
       # `.wing-sim.gpu<N>.lock` for each card, taken exclusive. The rig lock is wing-sim's, by
       # name and by path, and exclusion is a property of the INODE -- so this must be the same
@@ -163,9 +179,19 @@ services:
       # and never any other network mount, where flock(2) is emulated and excludes nobody.
       - "${SIMULATION_ROOT:-$HOME/simulation}:/simulation"
     environment:
+      # Host paths, every one of them, and true inside this container too because of the mounts
+      # above. SCENARIOBANK_SHARE alone would do -- the other three default to banks/, models/
+      # and results/ under it -- and they are written out so a rig whose models live elsewhere
+      # has one line to change.
+      SCENARIOBANK_SHARE: "${SCENARIOBANK_SHARE:-/mnt/scenariobank}"
       SCENARIOBANK_BANKS: "${SCENARIOBANK_SHARE:-/mnt/scenariobank}/banks"
       SCENARIOBANK_MODELS: "${SCENARIOBANK_SHARE:-/mnt/scenariobank}/models"
       SCENARIOBANK_RESULTS: "${SCENARIOBANK_SHARE:-/mnt/scenariobank}/results"
+      SCENARIOBANK_OUT: "${SCENARIOBANK_OUT:-$HOME/scenariobank/out}"
+      # The checkout as the DAEMON must be told to mount it. This container reads it at /work;
+      # the daemon has never heard of /work, so a sibling started with that path would get an
+      # empty directory and fail minutes later on a missing manifest.
+      SCENARIOBANK_REPO: "${SCENARIOBANK_REPO:-$PWD}"
       SIMULATION_ROOT: /simulation
       WFQUEUE_URL: "${WFQUEUE_URL:-http://localhost:9090}"
       SIM_IMAGE: "${SIM_IMAGE:-metadrive-wingfin-sim:latest}"

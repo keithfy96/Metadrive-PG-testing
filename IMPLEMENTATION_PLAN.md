@@ -589,11 +589,15 @@ metadrive-PG/
       lock.py               #   the rig lock shared + this card's exclusive, holder file
                             #   kept separate, /proc/locks as a witness and never an authority
       session.py            #   bridge up on this card's port, sibling sim container via
-                            #   scripts/sim-run.sh, supervise, tear down. `agent --once job.json`
-      supervise.py          #   log file + exit-code file + status file per card. No state held.
-      deliver.py            #   results to the NAS: the share copy + rename now; the NAS
-                            #   database when it exists (Open question 7). Ack only after this.
-      paths.py              #   names in the job -> paths on the rig, under the three roots
+                            #   scripts/sim-run.sh, supervise, harvest, deliver, tear down.
+                            #   `agent --once job.json` is this file with a file for a queue.
+                            #   supervise.py and deliver.py were planned beside it and are IN
+                            #   it (2026-09-15): supervision is twenty lines around one file
+                            #   read, delivery is a copy and a rename, and three files would
+                            #   have been three import cycles around one object.
+      jobs.py               #   names in the job -> paths on the rig, under the four roots, and
+                            #   every refusal that must happen before a card is taken. Planned
+                            #   as paths.py; it is the validation that made it worth a name.
       queue_client.py       #   vendored verbatim from the NAS (`curl -O $WFQUEUE_URL/source/client.py`,
                             #   so its header carries the real address); a test pins its sha256
                             #   against docs/queue-docs/ so a server-side change to the client is
@@ -4449,7 +4453,10 @@ Phase 7 Step 3's shape, a sibling container per job through the docker socket. R
 three grounds: it rewrites `invoke.py` and `jobs.py` for no behaviour a person would notice; it
 mounts `/var/run/docker.sock` into a server with no authentication, the same exposure `cli.py:955`
 exists to limit; and Phase 7's supervisor is unwritten, so converging on it now means guessing at
-an interface its own step has not defined. Revisit when Phase 7 Step 3 is real.
+an interface its own step has not defined. **Revisited 2026-09-15, when Step 3 made that
+supervisor real, and the decision stands**: the first two grounds are untouched by its existing,
+and `RunSession` needs a card lock and a host-path view of every root, neither of which a studio
+running one job in its own container has or wants.
 
 **Verify alone, step by step** *(expanded 2026-09-13)*. The claim under all of it: this image
 contains MetaDrive and writes as the host uid.
@@ -5202,7 +5209,7 @@ lock directory was created there by us, and the exclusive taker in the checks ab
 making the same syscall on the same inode their CI job makes. The one finding is the corrected
 bullet above: a container is not blind to its own locks, only to the host's.
 
-### Step 3 — the run session, driven by a job file (R1: our own) ⬜
+### Step 3 — the run session, driven by a job file (R1: our own) ✅  *(built 2026-09-15)*
 
 Takes the lock, starts this card's bridge if it is not up, launches the run as a sibling container,
 supervises, delivers, tears down. ~300 lines. His `rig/session.py` is the reference, but it takes
@@ -5239,9 +5246,131 @@ proven before Step 5 wraps it in a loop.
   suffix, and any uploaded `modifiers.py` **parsed to AST and never imported**. A job that fails
   this can never run and is dead-lettered (Step 5), never retried.
 
-**Verify alone:** one scenario end to end from `agent --once job.json`: the lock taken, the bridge
-up on its card's port, the container run, `results/<job_id>` renamed into place, the lock released.
+**Verify alone: met.** One scenario end to end from `agent --once job.json`: the lock taken, the
+bridge up on its card's port, the container run, `results/<job_id>` renamed into place, the lock
+released.
 No queue anywhere yet.
+
+**Done 2026-09-15.** `scenariobank agent --once job.json` is the whole session: validate, take
+the card, start that card's bridge if the job needs one, launch the run as a sibling container,
+follow it, deliver, release. Two modules, one command, five opt-in inputs on `sim-run.sh`, and
+one latent bug in `compose.yaml` found by building it.
+
+- `src/scenariobank/agent/jobs.py` (330 lines, new) — everything that happens **while the card is
+  still free**. `Roots` (the four directories a rig works in), `resolve()` (the checks, and the
+  rewrite into the container's own paths), `JobRefused` (a verdict: this job cannot run here or
+  on the other rig either). `Resolved` keeps the container's paths as `str` and the host's as
+  `Path`, deliberately: the failure they cause is silent — a bind mount the daemon cannot resolve
+  creates an empty directory and the run dies on a missing manifest, four minutes and one card
+  later.
+- `src/scenariobank/agent/session.py` (600 lines, new) — `RunSession`: `adopt` / `ensure_bridge` /
+  `launch` / `supervise` / `harvest` / `deliver` / `stop`, plus `Progress` (derived, stored
+  nowhere) and `Outcome` (six verdicts). Every subprocess goes through one seam, `Commands`, so
+  the tests drive the real code against a dictionary for a daemon.
+- `cli.agent --once` — the command, and the exit codes a queue worker will read: **0** ran (a
+  stopped run included), **1** the run or the rig failed, **2** the command line, **3** refused
+  and to be dead-lettered, **4** the card is busy. `agent` with no `--once` refuses and names
+  Step 5, so the compose service says what is missing rather than crashing.
+- `scripts/sim-run.sh` — five new environment inputs, every one a no-op when unset, so the line
+  a person runs is byte-for-byte what Phase 5 verified: `REPO_DIR` and `BANK_DIR` (host paths),
+  `DETACH`, and `JOB_ID`/`ATTEMPT` for the labels. Every container it starts now carries
+  `scenariobank.managed-by`, hand-run ones included — a sweep for strays should find those too.
+
+**Three views of every path, and two of them are not this process's.** The agent starts siblings
+through the docker socket, so a sibling's `-v` is resolved by the **daemon on the host**; the
+agent must also **read** those same directories itself, to validate a bank and to copy the
+results; and the run sees a third set (`/bank`, `/out`, `/models`). The share and the local out
+directory are therefore mounted into the agent container **at their own host paths**, which
+collapses the first two into one variable — wing-sim's trick with its simulation root
+(`rig/session.py:296`), for the same reason. The repo cannot be: it must be at `/work`, because
+the image's editable install is the single path line `/work/src`. So its host path travels in the
+environment as `SCENARIOBANK_REPO` and `sim-run.sh` reads it as `REPO_DIR`.
+
+**And that is how a real bug in `compose.yaml` was found: the `agent` service could never have
+started.** It mounted the socket, the share and the lock directory, and not the repo — so
+`python -m scenariobank agent` in that container would have failed on `import scenariobank`,
+because the image carries the environment and this repo carries the code. Declared in Phase 5,
+never started, and nothing would have said so until a rig tried it.
+
+**The card is held by the agent, not by the container, and that is a deliberate difference from
+the reference.** wing-sim makes `flock` the container's own command (`rig/session.py:307`), so the
+lock dies exactly when the run does. We cannot: `flock file python …` leaves `flock` as pid 1, and
+pid 1 is what makes `docker stop` reach the batch's flag and turn a killed run into a **scored
+partial** one (Step 1). That property is worth more than closing the window, and the window is
+what the rest of the design already covers — measured on the laptop: kill the agent and the run
+keeps driving with the card free, and the restarted agent **adopts it by label** rather than
+starting a second. `restart: always` makes the gap seconds; what can still slip into it is a
+CARLA job taking the rig lock while a run of ours is driving, which is a two-line note for
+Tyrone's side of Open question 10 and not a thing this code can fix alone.
+
+**Detached must not be `--rm`.** An exited container is how an agent that was down when the run
+*ended* finds out that it ended, and where its stdout still is. Measured both ways: killed while
+the run was on row 1, the restarted agent picked it up at 3/5 and delivered at 5/5; killed and
+restarted after the run had finished, it read the exited container's code, kept its log and
+delivered. Exactly one `run.started` in both — one per container, which is the number to check.
+`harvest()` is the only thing that removes a run container.
+
+**The gap between the exit code and the container, closed.** The run writes `exit_code` and then
+exits, so the two happen in that order — but the supervisor's read and its liveness check do not,
+and a run that finishes between them leaves a file that exists and a container that has stopped.
+wing-sim reported a job **failed** with "lock released with no exit code recorded" after every one
+of its presets passed. The fix is one more read before concluding anything, and a test that makes
+the container stop *during* the check.
+
+**Validation before the card, and what it refuses:** no `job_id` (the results directory, the
+container and the redelivery guard all need one, and a rig cannot mint one — two rigs would mint
+two); no `bank.id`; a bank id that resolves outside the banks root; a bank that is not on this
+share; a manifest that disagrees about which bank it is; a scenario id the bank does not hold; a
+policy that is not a `pkg.mod:Name`; and a checkpoint or config name that matches **zero or more
+than one** file under the models root. The policy is checked for shape only — importing it to see
+whether it loads would pull torch and a CUDA context into the supervisor, and the run already
+reports `permanent: true` when it will not.
+
+Three more notes, so nothing here is silent:
+
+- **The `modifiers.py` bullet has no input today.** `Job` carries no such field — the AV3
+  preprocessing is ported into `src/scenariobank/av3/av3_model.py` (Phase 4 Step 7) rather than
+  uploaded — so there is nothing to parse to AST. What stands in its place is stronger: the agent
+  imports nothing from the models root at all, and resolves names under it to exactly one file.
+  If a submission ever carries code, this is the line that must grow the AST check.
+- **A job carries names; `JobBank.path` is still required by the model.** A submitter must write
+  *something* there and the agent ignores it, reading `bank.id` and rewriting the path to
+  `/bank`. Making the field optional is a one-line widening of the schema and belongs with the
+  studio's submit (Phase 2c Step 12), not here.
+- **The local out directory is never swept.** The container writes as root, so `out/<job_id>`
+  outlives the job and, on a laptop, cannot even be removed by the user who started it. One
+  directory per job on the rig's own disk, and films are hundreds of MB — a sweep (by age, and
+  only for a `job_id` already delivered) belongs in **Step 5**, where the loop that creates them
+  lives. Added to that step's list.
+
+| check (laptop, `scenariobank-sim:latest`, `--no-gpu`) | result |
+|---|---|
+| one scenario, `agent --once` | `completed`, `1/1`, delivered, 7.0 s |
+| what was delivered | 8 files, including the resolved `job.json` and the container's log |
+| the same job again | `already delivered`, exit 0, no card taken, nothing run |
+| a scenario id the bank does not hold | exit **3**, named, and **no holder record** — the card was never taken |
+| the card held from another shell (`flock -x`) | exit **4**, naming the foreign pid; card 1 still free |
+| killed mid-run, restarted | adopted at 3/5, delivered 5/5, **1** `run.started` |
+| killed after the run finished, restarted | adopted the exited container, delivered, **1** `run.started` |
+| SIGTERM to the agent, two rows in | `stopped`, 3 rows kept, `failure_reason: "stopped"`, exit_code 0, delivered, no container left |
+| `scenariobank.av3:BridgePolicy` | `bridge-gpu0` started on **5600**, 320 steps / 320 actions through it, delivered |
+| the same again | the same bridge container reused, not restarted |
+| wing-sim's 5558 bridge, throughout | up and untouched — which is the whole reason the base port is 5600 |
+| two agents, `--gpu 0` and `--gpu 1` | both cards `ours`, two containers, two results |
+| a job with `"tier": "hard"` | batch under `hard/`, `events.jsonl` and `exit_code` above it |
+| `agent` with no `--once` | refuses, naming Step 5 |
+| `tests/unit/test_agent_jobs.py` (new, 26) + `test_session.py` (new, 34) | 60 passed |
+| `tests/unit/test_images.py` (3 assertions added, 12 for `sim-run.sh`) | 7 passed |
+| `ruff check src tests scripts`, `docs/reference/commands.md` regenerated | clean |
+| the offline suite, minus the two files of Open question 12 | **904 passed, 9 skipped, 503.16 s** (843 before this step) |
+
+One thing the verification itself taught: **`uv run` wraps the agent**, so killing the pid that
+`uv run scenariobank agent` returns kills the wrapper and leaves the agent holding the card. The
+lock's own holder record is what names the real pid. In the container the agent is pid 1 and there
+is no wrapper; on a laptop, read the record.
+
+The worked round trip, the five environment variables, the exit-code table and the two recovery
+measurements are in `docs/running-the-application.md`, "One job, start to finish: `agent --once`".
 
 ### Step 4 — ~~`metadrive-runner`: the service on each rig~~ retired 2026-09-13
 
@@ -5293,6 +5422,17 @@ the server is ever started with one, `WFQUEUE_TOKEN` come from the environment. 
 9. Any other failure → `nack(retry_after=…)`, release. Throughout, write a **status file per
    card** beside the results: job id, scenario progress (derived from the record directory, never
    stored), lock holder, disk, image label, agent version.
+10. **Sweep the local out directory** *(added 2026-09-15, from Step 3)*. Every job leaves
+   `SCENARIOBANK_OUT/<job_id>` on the rig's own disk, written by a container running as root, and
+   films are hundreds of MB. Delete by age, and **only** where `results/<job_id>` exists on the
+   share — the local copy is the evidence until the delivered one is real. Nothing else in the
+   agent removes it, deliberately: it is what an adopted run is read from.
+
+Steps 1, 3, 5 and 6 of that list are `RunSession` (Step 3) called in order —
+`adopt()`, `ensure_bridge()`, `launch()`, `supervise(on_tick=…)`, `harvest()`, `deliver()` — so
+what this step adds is the queue around them: the lease, the extend timer on `on_tick`, and the
+ack/nack mapping of `Outcome` (`refused` → `nack(dead=True)`, `completed`/`stopped` → ack after
+delivery, everything else → `nack(retry_after=…)`).
 
 **Verify alone:** against Step 0's replica, on the laptop, `NO_GPU=1`, `ExpertPolicy`, two fake
 cards: `put()` two jobs and watch each worker take one; hold one card from a shell and watch
@@ -5595,8 +5735,9 @@ colleague moving between the two should not have to relearn anything.
    The container name per card needs no change to `bridge.sh`: it already reads `BRIDGE_PORT`
    and `BRIDGE_NAME` from the environment (`scripts/bridge.sh:38`, `:40`), so the agent passes
    both. `run --bridge-port` on the client stays as written. The rest — one bridge per *running*
-   simulation, because the server holds one connection — is Phase 5 Step 3's finding and is
-   built in Phase 7 Step 3.
+   simulation, because the server holds one connection — is Phase 5 Step 3's finding, and it was
+   built in Phase 7 Step 3 and measured there: `bridge-gpu0` on 5600 with wing-sim's own bridge
+   still up on 5558 beside it.
 6. **How the NAS exposes the studio to browsers** *(2026-09-13)*. `cli.py` binds loopback only, by
    design, because its routes run subprocesses that write into the repo with no authentication.
    On the NAS someone other than localhost must reach it: a reverse proxy, a tunnel, or a
