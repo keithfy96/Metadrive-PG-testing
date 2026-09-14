@@ -592,7 +592,7 @@ metadrive-PG/
                             #   scripts/sim-run.sh, supervise, tear down. `agent --once job.json`
       supervise.py          #   log file + exit-code file + status file per card. No state held.
       deliver.py            #   results to the NAS: the share copy + rename now; the NAS
-                            #   database when it exists (Still open 7). Ack only after this.
+                            #   database when it exists (Open question 7). Ack only after this.
       paths.py              #   names in the job -> paths on the rig, under the three roots
       queue_client.py       #   vendored verbatim from the NAS (`curl -O $WFQUEUE_URL/source/client.py`,
                             #   so its header carries the real address); a test pins its sha256
@@ -4092,7 +4092,7 @@ command is for, when it is re-run and how is `docs/calibrating-levels.md`.
 
 ---
 
-# Phase 5 — Containers ✅  ⟵ *Steps 1–4 met 2026-09-10 → 2026-09-14 on the laptop and one rig; 2.4, the NAS's own `compose up`, waits on Still open 6*
+# Phase 5 — Containers ✅  ⟵ *Steps 1–4 met 2026-09-10 → 2026-09-14 on the laptop and one rig; 2.4, the NAS's own `compose up`, waits on Open question 6*
 
 > **Machine-run.** These are entered by CI, by the rig agent and by the studio's own worker, not
 > by a person at a terminal — with one exception, `docker compose up studio`, which serves a page a
@@ -4422,7 +4422,7 @@ kernel module) answers memory pressure by dropping the card off the bus, which o
 brings back. On a rig this is not a concern; on the laptop, close what is not needed before
 1.8, and read `nvidia-smi` first when a GPU row dies mid-drive.
 
-### Step 2 — `docker/studio.Dockerfile`: the one image built here ✅  ⟵ *met 2026-09-14 on the laptop; 2.4 is the NAS's, after Still open 6*
+### Step 2 — `docker/studio.Dockerfile`: the one image built here ✅  ⟵ *met 2026-09-14 on the laptop; 2.4 is the NAS's, after Open question 6*
 
 `FROM scenariobank-sim:latest`, then the web group. Nothing else — no `pull_asset`, no EGL
 patch, no glvnd manifest, all inherited.
@@ -4501,7 +4501,7 @@ went with it. A page that answers but whose job dies importing `metadrive` means
 built `FROM` something other than the sim image — check `SIM_IMAGE` at build time.
 
 **2.4 The NAS's own command.** `docker compose up studio` (no `-d`) on the NAS is 2.3 again and
-is run there once, after Still open 6 decides how a browser reaches it.
+is run there once, after Open question 6 decides how a browser reaches it.
 
 **Run 2026-09-14 (laptop, after Step 1 closed).** `SIM_IMAGE` unset, so the base is the
 converter's `metadrive-wingfin-sim:latest`; the job was submitted through `POST /api/jobs`, which
@@ -4512,7 +4512,7 @@ is the route the page's Run tab posts to, so the browser step is the same code p
 | 2.1 | **met.** First build 1.5 s of `uv pip install` on a cached base; `docker images` → one tag, `85e5dad 13.4GB`; `docker history` top layers: `0B WORKDIR /work`, **`10.5MB RUN uv export … uv pip install`**, `93.4kB COPY pyproject.toml uv.lock`. No 13 GB copy-up. `uv export --only-group web` resolved 10 changes out of the lock: `+ starlette 1.6.0`, `+ uvicorn 0.52.4`, `+ idna`, `+ truststore`, and three the base already had, moved to the lock's pins (`pydantic 2.13.4 → 2.13.5`, `pydantic-core 2.46.4 → 2.46.5`, `typing-inspection 0.4.2 → 0.4.4`). So "additive" is exact for the venv as a whole and the lock wins for the packages the web group touches -- a patch bump, and the one the tests and the laptop's `.venv` already run on. `uv run pytest tests/unit/test_images.py -q` → 7 passed. |
 | 2.2 | **met.** The awk above prints exactly the six lines. The plan's original grep printed `user: 1000:1000` under `studio` and `gpus:` under `run` but nothing for `/work` -- `config` emits long-form volumes -- and nothing for the agent without `--profile rig`; the check now reads the normalised form. |
 | 2.3 | **met.** `docker compose up -d studio` → `scenariobank-studio-1` up in 4 s; `docker inspect`: `User=1000:1000`, `NetworkMode=host`, mounts `/etc/passwd ro`, `/etc/localtime ro`, repo `→ /work rw`. `GET /api/doctor` → `commit 85e5dadc6c7436d324348f6e3d8f8e680c06b4db`; `GET /` → 200, 156 kB of page; `GET /api/commands` lists the groups. `POST /api/jobs` → 201, `argv ['/opt/venv/bin/python', '-m', 'scenariobank', 'generate', '--out', '/work/banks/studio-check', '--bank-id', 'studio-check', '--category', 'curve', '--seeds', '1']`; job `finished`, exit 0, log ends `[1/1] curve_0000 seed 1 -> 2C0_1_ lane 1 340.1 m` / `1 scenarios in 1 categories -> /work/banks/studio-check/manifest.json`. `ls -ln`: `manifest.json`, `thumbs/curve_0000.png` (47 kB) and the `.studio/jobs/<id>` directory all **owned by 1000:1000**; `find banks/studio-check -not -uid 1000` → nothing. `drive_side: left` in the manifest. The job log's `libOpenGL.so.0: cannot open shared object file` line is the same one every Step 1 log carries from the base image; it is not the studio's and the thumbnail rendered anyway. `docker compose down` removed the container and network; the bridge, started by hand, was untouched. |
-| 2.4 | **not run here; it is the NAS's.** Same command, on the NAS, once Still open 6 says how a browser reaches it. |
+| 2.4 | **not run here; it is the NAS's.** Same command, on the NAS, once Open question 6 says how a browser reaches it. |
 
 `banks/studio-check` is left in place as the evidence; delete it whenever. Nothing committed.
 
@@ -4531,7 +4531,7 @@ note). A rig needs no converter checkout.
   process. A second simulation connecting while one runs waits in the backlog and times out.
   So a rig running one simulation per card runs one bridge per card, on `BRIDGE_PORT` = 5558 +
   card index — already honoured by the server and by `bridge.sh`; the client's port becomes
-  `run --bridge-port`, and the container name gains the card (Still open 5). The bridge does no
+  `run --bridge-port`, and the container name gains the card (Open question 5). The bridge does no
   GPU work and is a resource the agent's worker starts, not a controller.
 - **One coupling worth writing down for future users:** `AV3_MPC_MENU="4 16 20 32"` prebuilds one
   acados solver per waypoint count. A model with a count outside that menu still runs — the solver
@@ -4563,7 +4563,7 @@ Expect: `status: ok`, the converter's own numbers for this row (640 controls, ro
 `max_step`), and a log with no acados compile between `init` and the first `step` — a compile
 there means the waypoint count is outside `AV3_MPC_MENU`. The same row through `sim-run.sh` is
 Step 1's 1.7; a second bridge on `BRIDGE_PORT=5559` cannot be started yet because
-`bridge.sh` fixes the container name (Still open 5), so the two-bridge check is Phase 7's.
+`bridge.sh` fixes the container name (Open question 5), so the two-bridge check is Phase 7's.
 
 ### Step 4 — laptop and rig agree ✅  ⟵ *met 2026-09-14 on the rig, with one finding: outcomes agree across machines, action digests do not*
 
@@ -4703,7 +4703,7 @@ own command, `docker compose up studio` (2.4). As a checklist:
 | 1.4–1.5 | results land, root-owned, with the host's time | laptop |
 | 1.6–1.8 | the two per-card inputs work and the hang is gone | laptop |
 | 2.1–2.3 | the studio image contains MetaDrive and writes as the host uid | laptop |
-| 2.4 | the NAS's one command | NAS, after Still open 6 |
+| 2.4 | the NAS's one command | NAS, after Open question 6 |
 | 3 | the bridge answers on its own, nothing rebuilt | laptop |
 | 4.1 | a rig has this repo and nothing else | rig |
 | 4.2 | the bank is portable — the premise of submitting a job at all | rig |
@@ -4722,7 +4722,7 @@ Phase 7 Step 0's replica.
 *(Retired with Keith, 2026-09-14. Since the studio is the only producer, the `Job` half has no
 reader outside this repo; what still crosses to another team is the **result**. The reading rules
 are the bullet list in **Phase 7 Step 6**, to become `CONTRACT.md` when the webapp's endpoint and
-payload are known (Still open 7); `validate --results` is the agent's check in **Phase 7 Step 5**.
+payload are known (Open question 7); `validate --results` is the agent's check in **Phase 7 Step 5**.
 Nothing renumbered.)*
 
 ---
@@ -4861,7 +4861,7 @@ rejected as the most code and a rig that stops when the studio does.)*
   container's root-owned write into a permission error, which is one more reason the agent, not
   the container, does the copy.
 - Not decided: whether the rigs can mount the share, which protocol, and whether the checkpoint
-  cron already uses it — Still open 8.
+  cron already uses it — Open question 8.
 
 ---
 
@@ -5227,7 +5227,7 @@ proven before Step 5 wraps it in a loop.
   change — it reads `BRIDGE_PORT` and `BRIDGE_NAME` already.
 - **The bank root is a plain directory** *(Keith, 2026-09-15)*: `SCENARIOBANK_BANKS`, as
   `compose.yaml` declares it. Whether that path is a mounted share or a local directory is the
-  deployment's business and not this step's (Still open 8), which is what makes
+  deployment's business and not this step's (Open question 8), which is what makes
   `agent --once job.json` runnable on the laptop and on a rig with nothing mounted.
 - **The lock directory is a deployment prerequisite, not code.** `~/simulation` on the first rig
   is owned by `metadrive`, mode 755 *(measured 2026-09-15)*. wing-sim's script creates the rig
@@ -5279,7 +5279,7 @@ the server is ever started with one, `WFQUEUE_TOKEN` come from the environment. 
    has no timer of its own.
 8. **Deliver, then ack, then release.** `deliver(job_id, result_dir)` is one function behind one
    interface, because where results finally live is not decided — most likely a database on the
-   NAS, shape unknown (Still open 7). The first implementation is the share copy (**Files**); when
+   NAS, shape unknown (Open question 7). The first implementation is the share copy (**Files**); when
    the database exists `deliver` writes to it as well or instead and the loop does not change.
    Ack only after delivery succeeds, so a failed delivery is a retried job, never a lost result.
    Before delivering, `scenariobank validate --results <dir>/results.json` (moved here from the
@@ -5303,10 +5303,10 @@ and no second container appears.
 
 **The agent delivers, the NAS stores** *(2026-09-13)*. `deliver()` on the agent is the only writer.
 Its first target is `results/<job_id>/` on the share (**Files**); its intended target is a database
-on the NAS whose shape is not yet decided (Still open 7). Whatever that database is, the rules
+on the NAS whose shape is not yet decided (Open question 7). Whatever that database is, the rules
 below are the requirements on it, and the studio is what reads it — including the **push to
 Tyrone's webapp**, a studio background task that takes each newly complete result from the NAS
-store and POSTs it (endpoint, auth and payload unknown, Still open 7). Downstream of delivery;
+store and POSTs it (endpoint, auth and payload unknown, Open question 7). Downstream of delivery;
 never the agent's job. Our own SQLite plus a results tree until then. Not his schema, and no
 mapping — the shape is ours.
 
@@ -5338,7 +5338,7 @@ lands here.)*
   because it observes 31 numbers and changes the task.
 - **The model's known behaviours that are not runner defects**: the car stopping on an empty
   road (Phase 4 Step 7 note 7); the traffic lights a state-vector policy cannot see (Phase 8);
-  the camera framing findings in Still open 1.
+  the camera framing findings in Open question 1.
 - **Exit codes**: 0 = ran, 2 = integrity refusal, 1 = internal.
 
 - **Per-scenario rows, not columns on a job.** A job legitimately ends with 30 of 35 scored, and
@@ -5362,7 +5362,7 @@ Before the bank is correct, prove the whole path with a stub:
 
 1. The Step 1 image, taking one scenario and writing a `results.json`.
 2. A real message on the real queue — **the first and only use of it**, the one step waiting on
-   access (Still open 9) — leased by the agent on one real rig.
+   access (Open question 9) — leased by the agent on one real rig.
 3. Results delivered to the NAS, renamed into place, message acked; the studio's push picks it up.
 
 Then wire the real bank behind it. **A green round-trip against a stub is worth more than a correct
@@ -5462,46 +5462,6 @@ that list already covers it.
 
 ---
 
-## Still open
-
-1. **The two rig fidelity gaps** recorded in `rigs/av3.txt`'s header — fisheye rendered as an
-   unwarped pinhole, and 4:3 rendered then squashed by preprocess rather than native 16:9. Both
-   are known, neither is fixed, and both belong in Phase 7 Step 6's results notes so nobody reads
-   their effect as a model defect.
-2. ~~`max_steps` per category~~ **resolved**: `step_budget()` from the measured route length
-   (`categories.py:185`).
-3. ~~Which exit for `t_junction` and `roundabout`~~ **resolved**: `docs/reference/destinations.md`
-   records the exit and its reason per category.
-4. **Bank size beyond 5 seeds.** 35 is the shipping bank. `--count` is a flag, so growing it is one
-   regeneration away — but the results notes state the 20% granularity, so growing it later changes
-   what a success rate means to the webapp. Decide before the push is written, not after.
-5. ~~One bridge per running simulation~~ **resolved 2026-09-15**: the base port is **5600**, so
-   gpu0's bridge is 5600 and gpu1's is 5601 — clear of wing-sim's 5558/5559, which makes a
-   collision with their bridge an error rather than our simulator driving against their planner.
-   The container name per card needs no change to `bridge.sh`: it already reads `BRIDGE_PORT`
-   and `BRIDGE_NAME` from the environment (`scripts/bridge.sh:38`, `:40`), so the agent passes
-   both. `run --bridge-port` on the client stays as written. The rest — one bridge per *running*
-   simulation, because the server holds one connection — is Phase 5 Step 3's finding and is
-   built in Phase 7 Step 3.
-6. **How the NAS exposes the studio to browsers** *(2026-09-13)*. `cli.py` binds loopback only, by
-   design, because its routes run subprocesses that write into the repo with no authentication.
-   On the NAS someone other than localhost must reach it: a reverse proxy, a tunnel, or a
-   deliberate loosening with auth. Decide before the NAS deploy.
-7. **Where results finally live, and how they reach Tyrone's webapp** *(2026-09-13)*. Most likely a
-   database on the NAS; its shape, and the webapp's endpoint, auth and payload, are all unknown.
-   The agent's `deliver()` is the seam: the share copy now, the database when it exists. Decide
-   the database before Phase 7 Step 6; ask about the webapp before the push is written.
-8. **The NAS share** *(2026-09-13)*. Protocol, mountable on both rigs, root-squash or not, and
-   whether the checkpoint cron already uses it. **It no longer blocks Step 3** *(2026-09-15)*:
-   Step 3 reads `SCENARIOBANK_BANKS` as a plain directory, which is what `compose.yaml` already
-   declares, so `agent --once job.json` runs on the laptop and on a rig with nothing mounted.
-   Mounting the share is then a path change and not a code change. Still to decide for Step 6,
-   which delivers into it.
-9. **Queue access** *(2026-09-13)*. None yet. Everything up to Phase 7 Step 7 runs against the
-   Step 0 replica; Step 7 waits on a key from the colleague.
-
----
-
 ## Appendix — house conventions to copy verbatim
 
 Taken from `converter-scenarionet-stage2-redesign`. `scenariobank` is a separate repo, but a
@@ -5564,7 +5524,7 @@ colleague moving between the two should not have to relearn anything.
 **Docs**
 - The sibling repo has no root `CONTRACT.md`; its convention would be `docs/reference/<topic>.md`
   with a 1-3 line trap summary in `CLAUDE.md` pointing at it. When the results notes become a
-  file (Phase 7 Step 6, after Still open 7), keep `CONTRACT.md` at the root because it is
+  file (Phase 7 Step 6, after Open question 7), keep `CONTRACT.md` at the root because it is
   cross-team and the repo is standalone, and *also* add the trap lines to `CLAUDE.md`.
 - If you write a `CLAUDE.md` here: **hard budget under 30 KB**, traps only (1-3 lines + pointer),
   measurements live in `docs/reference/`. The sibling's grew to 223 KB by appending before it had
@@ -5613,3 +5573,77 @@ colleague moving between the two should not have to relearn anything.
   which our studio image inherits rather than repeats.
 - `wingfin-osm-scenarionet-converter/docker/openpilot/Dockerfile` and `scripts/bridge.sh` — the
   bridge image Phase 4 Step 7 talks to, reused unchanged. `bridge.sh` is how it is started.
+
+---
+
+## Open questions
+
+1. **The two rig fidelity gaps** recorded in `rigs/av3.txt`'s header — fisheye rendered as an
+   unwarped pinhole, and 4:3 rendered then squashed by preprocess rather than native 16:9. Both
+   are known, neither is fixed, and both belong in Phase 7 Step 6's results notes so nobody reads
+   their effect as a model defect.
+2. ~~`max_steps` per category~~ **resolved**: `step_budget()` from the measured route length
+   (`categories.py:185`).
+3. ~~Which exit for `t_junction` and `roundabout`~~ **resolved**: `docs/reference/destinations.md`
+   records the exit and its reason per category.
+4. **Bank size beyond 5 seeds.** 35 is the shipping bank. `--count` is a flag, so growing it is one
+   regeneration away — but the results notes state the 20% granularity, so growing it later changes
+   what a success rate means to the webapp. Decide before the push is written, not after.
+5. ~~One bridge per running simulation~~ **resolved 2026-09-15**: the base port is **5600**, so
+   gpu0's bridge is 5600 and gpu1's is 5601 — clear of wing-sim's 5558/5559, which makes a
+   collision with their bridge an error rather than our simulator driving against their planner.
+   The container name per card needs no change to `bridge.sh`: it already reads `BRIDGE_PORT`
+   and `BRIDGE_NAME` from the environment (`scripts/bridge.sh:38`, `:40`), so the agent passes
+   both. `run --bridge-port` on the client stays as written. The rest — one bridge per *running*
+   simulation, because the server holds one connection — is Phase 5 Step 3's finding and is
+   built in Phase 7 Step 3.
+6. **How the NAS exposes the studio to browsers** *(2026-09-13)*. `cli.py` binds loopback only, by
+   design, because its routes run subprocesses that write into the repo with no authentication.
+   On the NAS someone other than localhost must reach it: a reverse proxy, a tunnel, or a
+   deliberate loosening with auth. Decide before the NAS deploy.
+7. **Where results finally live, and how they reach Tyrone's webapp** *(2026-09-13)*. Most likely a
+   database on the NAS; its shape, and the webapp's endpoint, auth and payload, are all unknown.
+   The agent's `deliver()` is the seam: the share copy now, the database when it exists. Decide
+   the database before Phase 7 Step 6; ask about the webapp before the push is written.
+8. **The NAS share** *(2026-09-13)*. Protocol, mountable on both rigs, root-squash or not, and
+   whether the checkpoint cron already uses it. **It no longer blocks Step 3** *(2026-09-15)*:
+   Step 3 reads `SCENARIOBANK_BANKS` as a plain directory, which is what `compose.yaml` already
+   declares, so `agent --once job.json` runs on the laptop and on a rig with nothing mounted.
+   Mounting the share is then a path change and not a code change. Still to decide for Step 6,
+   which delivers into it.
+9. **Queue access, and the queue's own server** *(2026-09-13)*. None yet, on either count.
+   Everything up to Phase 7 Step 7 runs against the Step 0 replica
+   (`tests/support/fake_wfqueue.py`), and Step 7 waits on a key from the colleague. The second
+   half is Step 0's item 1, still unasked: the `wfqueue` **server** -- the package its own client
+   docstring implies, a single file, or a compose service -- so that the agent's loop can be
+   developed against the real code on localhost instead of against our double. Until it arrives
+   every "real" assertion in `test_queue_contract.py` has only ever run against the replica, and
+   when the two disagree the replica is what is wrong.
+
+10. **wing-sim's lock is one file for a whole rig** *(2026-09-15, Phase 7 Step 2)*. Ours are per
+    card, `.wing-sim.gpu<N>.lock`, and we take his `.wing-sim.gpu.lock` **shared**, so our two
+    cards run together while CARLA is still shut out of both. Nothing is unsafe and nothing is
+    blocked; the cost is that a two-GPU rig behaves as a one-GPU rig for as long as CARLA runs.
+    **The ask for Tyrone is one sentence:** take `.wing-sim.gpu<N>.lock` for the card you are
+    using, and keep taking `.wing-sim.gpu.lock`, exclusive, for anything that needs the machine.
+    Do not assume he will change it -- this is written so that the day he does, nothing of ours
+    has to move.
+
+11. **Who owns the lock directory on each rig** *(2026-09-15, measured)*. `~/simulation` on the
+    first rig is owned by `metadrive`, mode 755, and did not exist at all until Step 2's check
+    created it. `flock(2)` needs only read access, and both sides create their lock files 0666 --
+    but creating one needs write permission on the **directory**. If their GitLab runner runs as
+    another user, whichever side gets there second cannot make the file. Decide before Step 5
+    runs unattended: mode 777 on that directory, or an agreed owner. The second rig has none yet.
+
+12. **Four tests fail on this laptop, and they are not Phase 7's** *(confirmed 2026-09-15)*.
+    Three in `tests/unit/test_importing.py`, one in `tests/unit/test_workspace.py`. The assertion
+    is `report.last_conversion["dataset_dir"] == "scenarionet-100hz"` and what is there is
+    `scenarionet-10hz`: the converter workspace this machine has is not the one those pages were
+    measured on (the two-checkout trap in **Reference checkouts**). Every offline suite run
+    recorded in this document therefore excludes those two files -- 843 passed, 9 skipped, is
+    with them excluded. Decide which is true: re-pin the tests to the current workspace, or treat
+    the 100 Hz conversion as the one that counts and fix the workspace.
+
+*The rest of this document points at these by number -- "Open question 7" -- so a resolved item
+keeps its number and is struck through rather than removed. Add new ones at the end.*

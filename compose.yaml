@@ -153,7 +153,7 @@ services:
       - !reset null
       - /etc/localtime:/etc/localtime:ro
       - /var/run/docker.sock:/var/run/docker.sock
-      # The NAS share: banks/<bank_id>, models/, results/<job_id>. Still open 8.
+      # The NAS share: banks/<bank_id>, models/, results/<job_id>. Open question 8.
       - "${SCENARIOBANK_SHARE:-/mnt/scenariobank}:/share"
       # The GPU locks (Phase 7 Step 2): `.wing-sim.gpu.lock` for the rig, taken shared, and
       # `.wing-sim.gpu<N>.lock` for each card, taken exclusive. The rig lock is wing-sim's, by

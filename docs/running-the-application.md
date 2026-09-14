@@ -97,7 +97,7 @@ ssh -L 8770:127.0.0.1:8770 <nas>      # then open http://127.0.0.1:8770/ on your
 ```
 
 Whether the NAS should instead front it with a reverse proxy, a tunnel of its own, or a
-deliberate loosening behind authentication is undecided (`IMPLEMENTATION_PLAN.md`, Still open 6).
+deliberate loosening behind authentication is undecided (`IMPLEMENTATION_PLAN.md`, Open question 6).
 Until it is, the tunnel is the answer.
 
 **After a NAS reboot, start it again by hand.** The studio service carries no restart policy
