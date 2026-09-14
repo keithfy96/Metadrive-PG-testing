@@ -13,6 +13,13 @@
 #       --model-config /models/model_dev.yml --checkpoint /models/step_440000_trt_direct_full.ep \
 #       --out /out/<job_id>
 #
+# And the form the agent will issue, once per lease (Phase 7 Step 1): the whole job in a file
+# the agent wrote into this rig's own /out, and stdout a stream of JSON objects rather than
+# prose. Everything a supervisor reads is then under --out -- batch.json, starts/, results/,
+# events.jsonl, and exit_code written last whatever happened.
+#
+#   NO_GPU=1 bash scripts/sim-run.sh run --job /out/<job_id>/job.json --out /out/<job_id> --events
+#
 # What the container sees, and why -- every path below is the container's, so the arguments
 # after the command name are written in the container's terms (/work, /out, /models):
 #   /work      this repo, READ-ONLY. Read-only is the test: a runner that can rewrite the bank

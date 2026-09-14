@@ -274,7 +274,12 @@ def test_replay_refuses_the_av3_rig_on_a_10_hz_road_before_building_anything(tmp
                      "--out", str(tmp_path / "out"))
     assert result.exit_code == 1
     assert "tick_rate 0.05 s (20 Hz), but these cameras are read every 0.1 s" in result.output
-    assert not (tmp_path / "out").exists(), "refused before anything was written"
+    assert not (tmp_path / "out" / "results.json").exists(), "refused before anything was scored"
+    # What a refusal does leave, since Phase 7 Step 1: the exit code a supervisor looks for
+    # whatever happened, and the one line saying why there will never be a result.
+    assert sorted(path.name for path in (tmp_path / "out").iterdir()) == [
+        "events.jsonl", "exit_code"
+    ]
     assert "--ignore-rig-rate" in run_cli("replay", "--help").output
     assert "--ignore-rig-rate" in run_cli("run", "--help").output, "for filming (Step 6b)"
 

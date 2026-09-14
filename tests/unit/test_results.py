@@ -27,6 +27,13 @@ from pydantic import ValidationError
 
 import scenariobank.runner as runner_module
 from scenariobank.bank import CategoryEntry, Manifest, ScenarioRow, write_manifest
+from scenariobank.events import (
+    BATCH_FILE,
+    EVENTS_FILE,
+    STARTS_DIR,
+    read_events,
+    read_exit_code,
+)
 from scenariobank.handedness import DRIVE_SIDE_LEFT
 from scenariobank.options import OptionError
 from scenariobank.policies import PolicyError
@@ -631,8 +638,13 @@ def test_a_relative_out_lands_under_out_and_a_tier_names_a_subdirectory(tmp_path
                       "--tier", tier)
         assert result.exit_code == 0, result.output
         assert f"results written: out/film/{tier}/results.json" in result.stdout
-    assert sorted(p.name for p in (tmp_path / "out" / "film").iterdir()) == [
+    assert sorted(p.name for p in (tmp_path / "out" / "film").iterdir() if p.is_dir()) == [
         "easy", "hard", "medium"
+    ]
+    # The two files a supervisor reads belong to the process, not to the batch, so they sit in
+    # the directory `--out` named -- beside the three tiers rather than inside the last one.
+    assert sorted(p.name for p in (tmp_path / "out" / "film").iterdir() if p.is_file()) == [
+        "events.jsonl", "exit_code"
     ]
     job_file = tmp_path / "job.json"
     job_file.write_text(
@@ -662,8 +674,10 @@ def test_a_job_file_is_the_same_run_and_takes_no_other_flags(tmp_path, monkeypat
     out = tmp_path / "out"
 
     refused = _run("--job", str(job_file), "--bank", str(bank), "--out", str(out))
-    assert refused.exit_code != 0
+    assert refused.exit_code == 2, "click's own code for a usage error"
     assert "--job carries the whole job; drop --bank" in refused.output
+    # And even that is recorded: the agent looks for an exit code whatever it did wrong.
+    assert read_exit_code(out) == 2
 
     result = _run("--job", str(job_file), "--out", str(out))
     assert result.exit_code == 0, result.output
@@ -698,3 +712,159 @@ def test_the_command_needs_a_bank_or_a_job(tmp_path):
     result = _run("--out", str(tmp_path / "out"))
     assert result.exit_code != 0
     assert "name a bank to run, or a --job file" in result.output
+
+
+# --- offline: the event stream, and the files a supervisor reads instead of a log --------------
+
+
+def test_a_run_says_what_it_is_doing_in_order_and_leaves_a_bar_behind_it(tmp_path, monkeypatch):
+    """Phase 7 Step 1: every moment of a run as one JSON object per line, and two of those
+    moments as files. The bar is then the directory alone -- `batch.json` is the denominator,
+    `results/` is the numerator, and the row in `starts/` with no result yet is the one running
+    -- which is what an agent restarted mid-run reads, having kept nothing in memory."""
+    use_fake_env(monkeypatch)
+    bank = write_bank(tmp_path)
+    job_file = tmp_path / "job.json"
+    job_file.write_text(
+        dump_json(
+            job_for(bank, job_id="studio-7", attempt=2, scenarios=["curve_0000", "curve_0001"])
+        )
+    )
+    out = tmp_path / "out"
+    result = _run("--job", str(job_file), "--out", str(out))
+    assert result.exit_code == 0, result.output
+
+    stream = read_events(out / EVENTS_FILE)
+    assert [item["event"] for item in stream] == [
+        "run.started",
+        "batch.started",
+        "scenario.started",
+        "scenario.finished",
+        "scenario.started",
+        "scenario.finished",
+        "run.finished",
+    ]
+    # Every line stands alone: a log holding two attempts of one job is read by reading lines.
+    assert {item["job_id"] for item in stream} == {"studio-7"}
+    assert {item["attempt"] for item in stream} == {2}
+
+    started = stream[0]
+    assert started["out"] == str(out) and started["job_file"] == str(job_file)
+    assert started["policy"] == "scenariobank.policies:ConstantPolicy"
+    assert started["pid"] == os.getpid()
+
+    batch = json.loads((out / BATCH_FILE).read_text())
+    assert batch["event"] == "batch.started"
+    assert (batch["bank_id"], batch["source"], batch["n"]) == ("fake-bank", "pg", 2)
+    assert batch["scenarios"] == ["curve_0000", "curve_0001"]
+    assert (batch["step_hz"], batch["stride"]) == (10.0, 1)
+
+    assert sorted(path.name for path in (out / STARTS_DIR).iterdir()) == [
+        "curve_0000.json", "curve_0001.json"
+    ]
+    start = json.loads((out / STARTS_DIR / "curve_0001.json").read_text())
+    # The row's own budget, so a heartbeat's step count has a denominator without the bank.
+    assert (start["index"], start["n"], start["max_steps"]) == (2, 2, 10)
+
+    ended = [item for item in stream if item["event"] == "scenario.finished"]
+    assert [(item["scenario_id"], item["index"], item["steps"]) for item in ended] == [
+        ("curve_0000", 1, 50), ("curve_0001", 2, 10)
+    ]
+    assert all(item["status"] == "ok" for item in ended)
+
+    last = stream[-1]
+    assert (last["outcome"], last["exit_code"], last["permanent"]) == ("ok", 0, False)
+    assert (last["n"], last["stopped"]) == (2, False)
+    assert last["results"] == str(out / "results.json")
+    assert read_exit_code(out) == 0
+
+    assert batch["n"] == len(list((out / "results").iterdir())) == len(
+        list((out / STARTS_DIR).iterdir())
+    )
+
+
+def test_a_refusal_leaves_an_exit_code_and_a_line_saying_it_will_never_run(tmp_path, monkeypatch):
+    """The exit code is written whatever happened, so a supervisor that finds none knows the
+    container was killed outright rather than that it refused. `permanent` is the judgement a
+    dead-letter rests on: nothing ran, and nothing this machine does will change that."""
+    use_fake_env(monkeypatch)
+    bank = write_bank(tmp_path)
+    out = tmp_path / "out"
+    result = _run("--bank", str(bank), "--scenarios", "nope", "--out", str(out))
+
+    assert result.exit_code == 1
+    assert read_exit_code(out) == 1
+    stream = read_events(out / EVENTS_FILE)
+    assert [item["event"] for item in stream] == ["run.started", "run.finished"]
+    assert stream[-1]["permanent"] is True
+    assert "no scenario named nope" in stream[-1]["error"]
+    assert stream[-1]["results"] is None
+    assert not (out / BATCH_FILE).exists(), "the batch never started"
+    assert FakeEnv.built == [], "and no simulator was opened"
+
+
+def test_a_job_file_that_does_not_parse_still_records_an_exit_code(tmp_path):
+    """No `run.started`: nothing was ever identified to run, and the stream says so by opening
+    with the line that closes it."""
+    out = tmp_path / "out"
+    bad = tmp_path / "bad.json"
+    bad.write_text('{"schema_version": 1}')
+    result = _run("--job", str(bad), "--out", str(out))
+
+    assert result.exit_code == 1
+    assert read_exit_code(out) == 1
+    stream = read_events(out / EVENTS_FILE)
+    assert [item["event"] for item in stream] == ["run.finished"]
+    assert stream[0]["permanent"] is True and stream[0]["job_id"] is None
+
+
+def test_a_failure_after_the_batch_started_is_not_permanent(tmp_path, monkeypatch):
+    """A run that got as far as building an env may have failed on the card, the driver or the
+    bridge, and those are worth another rig. The observation shape moving is the failure at
+    hand, and the record it wrote before failing is still named."""
+    use_fake_env(monkeypatch, widths=(19, 21), ends={0: (3, {})})
+    bank = write_bank(tmp_path)
+    out = tmp_path / "out"
+    result = _run("--bank", str(bank), "--scenarios", "curve_0000", "--out", str(out))
+
+    assert result.exit_code == 1
+    assert read_exit_code(out) == 1
+    last = read_events(out / EVENTS_FILE)[-1]
+    assert last["permanent"] is False
+    assert "observation shape moved" in last["error"]
+    assert last["results"] == str(out / "results.json") and (out / "results.json").exists()
+
+
+def test_events_on_stdout_replace_the_summary_line(tmp_path, monkeypatch):
+    """`--events` is what the container is run with: stdout is the stream, and the one prose
+    line a person reads is not on it. The file is written either way, and holds the same lines."""
+    use_fake_env(monkeypatch)
+    bank = write_bank(tmp_path)
+    out = tmp_path / "out"
+    result = _run("--bank", str(bank), "--scenarios", "curve_0000", "--out", str(out), "--events")
+
+    assert result.exit_code == 0, result.output
+    assert "results written" not in result.stdout
+    printed = [json.loads(line) for line in result.stdout.splitlines() if line.startswith("{")]
+    assert [item["event"] for item in printed] == [item["event"] for item in
+                                                   read_events(out / EVENTS_FILE)]
+
+
+def test_a_stopped_run_exits_zero_and_the_last_line_says_so(tmp_path, monkeypatch):
+    """The stop is `run_bank`'s, not the entrypoint's (Phase 7 Step 1): SIGTERM from
+    `docker stop` reaches the flag, the row ends `stopped`, the record is written, and the
+    process exits 0 -- a cancelled run that scored six of thirty-five is not a failed one."""
+    def send_at_five(seed, taken):
+        if seed == 0 and taken == 5:
+            os.kill(os.getpid(), signal.SIGTERM)
+
+    use_fake_env(monkeypatch, on_step=send_at_five)
+    bank = write_bank(tmp_path)
+    out = tmp_path / "out"
+    result = _run("--bank", str(bank), "--scenarios", "curve_0000", "--out", str(out))
+
+    assert result.exit_code == 0, result.output
+    assert read_exit_code(out) == 0
+    last = read_events(out / EVENTS_FILE)[-1]
+    assert (last["outcome"], last["stopped"], last["exit_code"]) == ("ok", True, 0)
+    assert FakeEnv.built[0].closed, "closed on the normal path, nothing raised into it"

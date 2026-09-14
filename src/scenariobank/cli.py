@@ -1533,6 +1533,14 @@ def run(
             "(scenariobank.av3:AV3Policy). Every field is required; nothing is defaulted.",
         ),
     ] = None,
+    events: Annotated[
+        bool,
+        typer.Option(
+            "--events",
+            help="Print the run's events on stdout, one JSON object per line, instead of the "
+            "summary line: what a supervisor reads. <out>/events.jsonl is written either way.",
+        ),
+    ] = False,
 ) -> None:
     """Score a policy against a bank, one result per scenario, and never abort the batch.
 
@@ -1570,6 +1578,14 @@ def run(
     without one. The AV3 spec declares 0.05 s and a road steps at 10 Hz, so a film needs
     `--ignore-rig-rate`; a film is a look, not a model input, and the record keeps both rates.
 
+    **What a supervisor reads, and never a printed line** (Phase 7 Step 1): `<out>/batch.json`
+    the moment every refusal has passed, `<out>/starts/<id>.json` as each scenario is built,
+    `<out>/results/<id>.json` as each one ends, `<out>/events.jsonl` with all of it as JSON
+    lines, and `<out>/exit_code` written last, atomically, whatever happened -- a refusal that
+    opened no simulator leaves one too. `--events` puts the same lines on stdout. The two
+    process-level files sit in the directory `--out` named; everything the batch writes is under
+    the tier subdirectory when the job names a tier.
+
     **`--step-hz 100 --decision-hz 20` is the AV3 stack's clock** (Phase 4 Step 7): the road
     stepped at the rig's own 0.05 s and the bridge ticked at its 20 Hz, every step budget
     scaled with it. `--policy scenariobank.av3:AV3Policy` with `--camera-rig`, `--model-config`
@@ -1583,9 +1599,20 @@ def run(
     about 11 s; a rig adds about 15 s per row to open the offscreen window, and filming six
     cameras about 60 ms a step on the host. The AV3 forward pass is about a second a decision.
     """
+    import os
+    import socket
+    import sys
+
     from pydantic import ValidationError
 
     from scenariobank.bank import BankError, read_manifest
+    from scenariobank.events import (
+        EVENTS_FILE,
+        Emitter,
+        RunFinished,
+        RunStarted,
+        write_exit_code,
+    )
     from scenariobank.options import OptionError
     from scenariobank.policies import PolicyError
     from scenariobank.results import JOB_SCHEMA_VERSION, Job, JobBank, JobOptions
@@ -1633,6 +1660,17 @@ def run(
     if save_trajectories:
         flags_given.append("--save-trajectories")
 
+    # The supervisor's two files live here, in the directory `--out` named, before anything can
+    # fail: a refusal that never reached a bank still leaves an exit code where the agent looks
+    # for one. The batch's own directory is this one plus the job's tier, and is not known until
+    # the job has been read.
+    home = under_out(out)
+    emitter = Emitter(home / EVENTS_FILE, stream=sys.stdout if events else None)
+    code = 1  # until the run says otherwise: anything that gets past here failed
+    reason: str | None = None
+    identity: tuple[str | None, int | None] = (None, None)
+    report = None
+    where = home
     try:
         if job is not None:
             if flags_given:
@@ -1675,26 +1713,73 @@ def run(
                 model_config_path=None if model_config is None else str(model_config),
                 save_trajectories=save_trajectories,
             )
-        out = under_out(out, what.options.tier)
+        where = under_out(home, what.options.tier)
+        identity = (what.job_id, what.attempt)
+        emitter(
+            RunStarted(
+                job_id=what.job_id,
+                attempt=what.attempt,
+                out=str(where),
+                job_file=None if job is None else str(job),
+                bank=what.bank.path,
+                bank_id=what.bank.id,
+                policy=what.policy,
+                pid=os.getpid(),
+                host=socket.gethostname(),
+            )
+        )
         report = run_bank(
             what,
-            out,
+            where,
             progress=lambda line: typer.echo(line, err=True),
             record_video=record_video,
             camera_rig=camera_rig,
             ignore_rig_rate=ignore_rig_rate,
             heartbeat_s=heartbeat if heartbeat > 0 else None,
+            on_event=emitter,
         )
+        code = 0
     except (BankError, OptionError, PolicyError, RunError, ValidationError, ValueError) as error:
+        reason = str(error)
         typer.echo(f"run failed: {error}", err=True)
-        raise typer.Exit(code=1) from error
+    except typer.BadParameter as error:
+        # Click prints and exits 2 on its own; this only records what it said, and lets it go.
+        code, reason = 2, str(error)
+        raise
+    finally:
+        emitter(
+            RunFinished(
+                job_id=identity[0],
+                attempt=identity[1],
+                outcome="ok" if code == 0 else "failed",
+                exit_code=code,
+                stopped=bool(report is not None and report.stopped),
+                n=None if report is None else report.summary.n,
+                success_rate=None if report is None else report.summary.success_rate,
+                # Named when it is there to read, and a run that failed after the first env
+                # was built has one: a batch that never aborts writes what it scored.
+                results=(
+                    str(where / "results.json") if (where / "results.json").exists() else None
+                ),
+                error=reason,
+                # Nothing ran and nothing will: the job is wrong, not the machine. A failure
+                # after the first env was built may be the card, the driver or the bridge.
+                permanent=code != 0 and "batch.started" not in emitter.seen,
+            )
+        )
+        write_exit_code(home, code)
 
+    if code != 0:
+        raise typer.Exit(code=code)
+
+    assert report is not None  # code 0 is only set on the line after run_bank returns
     summary = report.summary
     stopped = "  (stopped before the end)" if report.stopped else ""
-    typer.echo(
-        f"results written: {out / 'results.json'}  "
-        f"{summary.n} scenarios, success rate {summary.success_rate:.2f}{stopped}"
-    )
+    if not events:
+        typer.echo(
+            f"results written: {where / 'results.json'}  "
+            f"{summary.n} scenarios, success rate {summary.success_rate:.2f}{stopped}"
+        )
 
 
 def _parse_values(raw: list[str]) -> list[float]:

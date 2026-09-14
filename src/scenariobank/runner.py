@@ -80,6 +80,15 @@ and set a flag, so nothing is ever raised into `env.close()` -- the panda3d/bull
 wedge that once needed a reboot.
 The per-row file is the progress signal Phase 7's orchestrator extends a lease off, and the
 reason a run killed at 30 of 35 is a scored partial run rather than a lost one.
+
+**And the batch says what it is doing, in JSON, as it does it** (Phase 7 Step 1). `on_event=` is
+handed an `events.Event` at each of four moments -- the batch validated (`batch.started`), each
+scenario built (`scenario.started`), each scenario ended (`scenario.finished`) and each
+heartbeat -- and the first two are written to `<out>/batch.json` and `<out>/starts/<id>.json`
+as well, so a supervisor reads a bar off the directory without opening a log. The job's id and
+attempt are stamped on every event here rather than by the caller, because they are the job's
+and this is the only place that holds it. A caller that hands no `on_event=` (the studio's own
+job engine, `calibrate`) still gets the files; nothing about a run changes either way.
 """
 
 from __future__ import annotations
@@ -95,6 +104,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from scenariobank import events
 from scenariobank.bank import Manifest, RealWorldEntry, read_manifest
 from scenariobank.env import Entry, Row, budget_at, build_env, seed_for, step_hz_for
 from scenariobank.fingerprint import sha256_hex
@@ -302,14 +312,29 @@ class Heartbeat:
     completed, and the action being held. It reads the env and writes nothing; a row on the
     host that ends inside the first interval prints nothing at all. `stride` is the decision
     stride, so the decision count is arithmetic and not a second counter on the loop.
+
+    **The reading is made once and said twice** (Phase 7 Step 1): as the prose line a person
+    watching a log reads, through `say`, and as the `events.Heartbeat` a supervisor reads,
+    through `emit`. One measurement, two renderings -- so the two can never disagree about how
+    fast the car was going, which is the whole complaint against scraping the prose.
     """
 
-    def __init__(self, say: Callable[[str], None], *, every_s: float, stride: int) -> None:
+    def __init__(
+        self,
+        say: Callable[[str], None],
+        *,
+        every_s: float,
+        stride: int,
+        emit: Callable[[events.Heartbeat], Any] | None = None,
+        scenario_id: str = "",
+    ) -> None:
         if every_s <= 0:
             raise ValueError(f"a heartbeat interval must be positive, not {every_s}")
         self.say = say
         self.every_s = float(every_s)
         self.stride = max(1, int(stride))
+        self.emit = emit
+        self.scenario_id = scenario_id
         self.calls = 0
         self.lines = 0
         self.started: float | None = None
@@ -326,15 +351,18 @@ class Heartbeat:
         self.calls += 1
         if now - self.last_said < self.every_s:
             return
-        self.say(self.line(env, now))
+        beat = self.reading(env, now)
+        self.say(self.line(beat))
+        if self.emit is not None:
+            self.emit(beat)
         self.last_said = now
         self.last_position = _position(env)
         self.lines += 1
 
-    def line(self, env: Any, now: float) -> str:
+    def reading(self, env: Any, now: float) -> events.Heartbeat:
+        """What the env says at this instant. Reads it; changes nothing about it."""
         agent = env.agent
         steps = self.calls
-        decisions = (steps + self.stride - 1) // self.stride
         position = _position(env)
         moved = (
             0.0
@@ -347,20 +375,40 @@ class Heartbeat:
         try:
             speed = float(agent.speed)
         except Exception:  # noqa: BLE001 -- a fake env without a body
-            speed = float("nan")
+            speed = None
         completion = getattr(getattr(agent, "navigation", None), "route_completion", None)
-        route = "" if completion is None else f"  route {float(completion) * 100:5.1f}%"
         action = getattr(agent, "last_current_action", None)
-        held = ""
+        held: list[float] | None = None
         if action:
             try:
-                held = "  action " + ",".join(f"{float(v):+.2f}" for v in action[-1])
+                held = [float(value) for value in action[-1]]
             except (TypeError, ValueError, IndexError):
-                held = ""
-        elapsed = now - (self.started or now)
+                held = None
+        return events.Heartbeat(
+            scenario_id=self.scenario_id,
+            elapsed_s=round(now - (self.started or now), 1),
+            step=steps,
+            decision=(steps + self.stride - 1) // self.stride,
+            speed_mps=speed,
+            moved_m=round(moved, 3),
+            route_completion=None if completion is None else round(float(completion), 6),
+            action=held,
+        )
+
+    def line(self, beat: events.Heartbeat) -> str:
+        """The reading as the prose a person reads. Unchanged since Phase 4 Step 7."""
+        speed = float("nan") if beat.speed_mps is None else beat.speed_mps
+        route = (
+            ""
+            if beat.route_completion is None
+            else f"  route {beat.route_completion * 100:5.1f}%"
+        )
+        held = "" if not beat.action else "  action " + ",".join(
+            f"{value:+.2f}" for value in beat.action
+        )
         return (
-            f"  t+{elapsed:5.0f}s  step {steps}  decision {decisions}  "
-            f"speed {speed:4.1f} m/s  moved {moved:5.1f} m{route}{held}"
+            f"  t+{beat.elapsed_s:5.0f}s  step {beat.step}  decision {beat.decision}  "
+            f"speed {speed:4.1f} m/s  moved {beat.moved_m:5.1f} m{route}{held}"
         )
 
 
@@ -587,6 +635,7 @@ def run_bank(
     camera_rig: Path | None = None,
     ignore_rig_rate: bool = False,
     heartbeat_s: float | None = 10.0,
+    on_event: Callable[[events.Event], Any] | None = None,
 ) -> Results:
     """Run every scenario a job names and write the results under `out`. The one entry point.
 
@@ -604,6 +653,9 @@ def run_bank(
     `progress`, one line every that many seconds of wall time while a row runs -- step, decision,
     speed, distance moved, route completed, the action held -- so a slow row with a model on the
     car can be told from a hung one; `None` or 0 turns it off. It changes nothing a row records.
+    `on_event` is handed the same four moments as `events.Event` objects, for a supervisor that
+    parses no prose; `<out>/batch.json` and `<out>/starts/<id>.json` are written whether or not
+    one is given, because they are the record and not the stream.
 
     Returns the `Results` it wrote to `<out>/results.json`. A stopped batch returns normally --
     a cancelled run that still writes its results is a scored partial run. A batch whose
@@ -658,10 +710,50 @@ def run_bank(
         say(f"note: {note}")
     out = Path(out)
     (out / "results").mkdir(parents=True, exist_ok=True)
+    (out / events.STARTS_DIR).mkdir(parents=True, exist_ok=True)
     if record_video:
         (out / "videos").mkdir(parents=True, exist_ok=True)
 
+    sink = on_event or (lambda _event: None)
+
+    def emit(event: events.Event) -> events.Event:
+        """Stamp the job on an event, hand it on, and give it back so a file can be written."""
+        event = event.model_copy(update={"job_id": job.job_id, "attempt": job.attempt})
+        sink(event)
+        return event
+
+    def finished(result: ScenarioResult, index: int) -> None:
+        """A row has ended: its record on disk first, then the line that says so."""
+        write_json(out / "results" / f"{result.scenario_id}.json", result)
+        emit(
+            events.ScenarioFinished(
+                scenario_id=result.scenario_id,
+                index=index,
+                n=len(chosen),
+                status=result.status,
+                success=result.success,
+                failure_reason=result.failure_reason,
+                steps=result.steps,
+                wall_time_s=result.wall_time_s,
+            )
+        )
+
     started_utc = _utc_now()
+    write_json(
+        out / events.BATCH_FILE,
+        emit(
+            events.BatchStarted(
+                bank_id=manifest.bank_id,
+                source=manifest.source,
+                policy=job.policy,
+                n=len(chosen),
+                scenarios=[row.scenario_id for _, _, row in chosen],
+                step_hz=step_hz,
+                decision_hz=job.decision_hz,
+                stride=stride,
+            )
+        ),
+    )
     results: list[ScenarioResult] = []
     shape_before: tuple[int, ...] | None = None
     shape_after: tuple[int, ...] | None = None
@@ -669,9 +761,21 @@ def run_bank(
         with nullcontext(stop) if stop is not None else stop_on_signals() as flag:
             # One env per row, closed before the next is built: a row scores the same alone, in
             # any company and in any order. See the module docstring for the measurement.
-            for name, entry, row in chosen:
+            for index, (name, entry, row) in enumerate(chosen, start=1):
                 if flag():
                     break
+                write_json(
+                    out / events.STARTS_DIR / f"{row.scenario_id}.json",
+                    emit(
+                        events.ScenarioStarted(
+                            scenario_id=row.scenario_id,
+                            category=name,
+                            index=index,
+                            n=len(chosen),
+                            max_steps=budget_at(entry.budget_for(row), entry, job.step_hz),
+                        )
+                    ),
+                )
                 env = None
                 recorder = None
                 film = None
@@ -685,7 +789,7 @@ def run_bank(
                     except Exception:  # noqa: BLE001 -- the batch's promise: this row is an error row
                         result = _error_row(name, entry, row, seconds=time.perf_counter() - built)
                         results.append(result)
-                        write_json(out / "results" / f"{row.scenario_id}.json", result)
+                        finished(result, index)
                         say(f"{row.scenario_id}: error building the env")
                         continue
                     if record_video:
@@ -705,12 +809,16 @@ def run_bank(
                             None if recorder is None else recorder.add,
                             None if film is None else film.add,
                             None if not heartbeat_s else Heartbeat(
-                                say, every_s=heartbeat_s, stride=stride
+                                say,
+                                every_s=heartbeat_s,
+                                stride=stride,
+                                emit=emit,
+                                scenario_id=row.scenario_id,
                             ),
                         ),
                     )
                     results.append(result)
-                    write_json(out / "results" / f"{row.scenario_id}.json", result)
+                    finished(result, index)
                     if drive is not None:
                         shape_before = shape_before or drive.observation_shape
                         shape_after = drive.observation_shape_end

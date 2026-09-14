@@ -320,3 +320,53 @@ def test_run_help_names_heartbeat():
     result = CliRunner().invoke(app, ["run", "--help"])
     assert result.exit_code == 0
     assert "--heartbeat" in result.output
+
+
+def test_a_heartbeat_reading_is_made_once_and_said_twice(monkeypatch):
+    """The prose line and the event are two renderings of one measurement (Phase 7 Step 1), so
+    the line a person reads and the object a supervisor parses cannot disagree about how fast
+    the car was going. That disagreement is the whole complaint against scraping the prose."""
+    import json
+
+    from scenariobank import events
+    from scenariobank.runner import Heartbeat
+
+    clock = [0.0]
+    monkeypatch.setattr("scenariobank.runner.time.perf_counter", lambda: clock[0])
+    said: list[str] = []
+    emitted: list[events.Heartbeat] = []
+    beat = Heartbeat(
+        said.append, every_s=1.0, stride=5, emit=emitted.append, scenario_id="curve_0000"
+    )
+    env = _HeartbeatEnv()
+    env.agent.speed = 3.2
+    env.agent.navigation.route_completion = 0.25
+    beat(env)  # the reset call
+    for _ in range(4):
+        clock[0] += 0.5
+        env.agent.position[0] += 1.0
+        beat(env)
+
+    assert len(said) == len(emitted) == 2
+    event = emitted[0]
+    assert event.scenario_id == "curve_0000"
+    assert (event.step, event.decision) == (2, 1)
+    assert (event.speed_mps, event.moved_m) == (3.2, 2.0)
+    assert event.route_completion == 0.25 and event.action == [0.1, 0.5]
+    assert beat.line(event) == said[0], "the prose is rendered from the event, not beside it"
+    assert json.loads(event.line())["event"] == "heartbeat"
+
+
+def test_a_heartbeat_with_nothing_to_emit_still_says_its_line(monkeypatch):
+    # `emit=None` is every caller that is not the batch: `replay`, and the tests above.
+    clock = [0.0]
+    monkeypatch.setattr("scenariobank.runner.time.perf_counter", lambda: clock[0])
+    from scenariobank.runner import Heartbeat
+
+    said: list[str] = []
+    beat = Heartbeat(said.append, every_s=1.0, stride=1)
+    env = _HeartbeatEnv()
+    beat(env)
+    clock[0] += 1.0
+    beat(env)
+    assert len(said) == 1 and "step 1" in said[0]

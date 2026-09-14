@@ -268,6 +268,91 @@ The rig has no studio and no compose service to start today. A rig with two busy
 five containers -- the agent, two bridges, two simulators -- and nothing on it listens on a port
 other than the bridges on 127.0.0.1.
 
+## One job, one container
+
+The line a rig's agent will issue (Phase 7 Step 5) is the line you can issue by hand today. The
+container reads a `Job` file -- the same JSON the studio submits and the queue carries -- runs
+it, and writes everything a supervisor needs into `--out`. Nobody parses a printed line.
+
+```bash
+mkdir -p out/j7
+cat > out/j7/job.json <<'JSON'
+{
+  "schema_version": 1,
+  "job_id": "j7",
+  "attempt": 1,
+  "bank": {"id": "t-junction", "path": "/work/banks/t-junction"},
+  "scenarios": ["t_junction_0000"],
+  "policy": "scenariobank.policies:ExpertPolicy"
+}
+JSON
+
+NO_GPU=1 SIM_IMAGE=scenariobank-sim:latest NAME=j7 \
+    bash scripts/sim-run.sh run --job /out/j7/job.json --out /out/j7 --events
+
+cat out/j7/exit_code
+find out/j7 -type f | sort
+```
+
+**Every path in the job file is the container's**, not the host's: `/work` is this repo mounted
+read-only, `/out` is `OUT_DIR` (`./out` unless you set it), `/models` is the checkpoint
+directory. So the job above names `/work/banks/t-junction` and is itself read from
+`/out/j7/job.json` -- write it into `out/`, which is the one directory the container can read
+*and* you can write. A rig's agent writes the same file into that rig's local `/out/<job_id>`.
+
+That run, on the laptop, prints five lines and leaves seven files:
+
+```
+{"schema_version": 1, "event": "run.started", …, "out": "/out/j7", "policy": "scenariobank.policies:ExpertPolicy", "pid": 1, "host": "keith-82y7"}
+{"schema_version": 1, "event": "batch.started", …, "n": 1, "scenarios": ["t_junction_0000"], "step_hz": 10.0, "stride": 1}
+{"schema_version": 1, "event": "scenario.started", …, "scenario_id": "t_junction_0000", "index": 1, "n": 1, "max_steps": 320}
+{"schema_version": 1, "event": "scenario.finished", …, "status": "ok", "success": true, "steps": 139, "wall_time_s": 0.788}
+{"schema_version": 1, "event": "run.finished", …, "outcome": "ok", "exit_code": 0, "stopped": false, "n": 1, "success_rate": 1.0}
+```
+
+| what | when it appears | what it is for |
+|---|---|---|
+| `batch.json` | every refusal has passed, before the simulator opens | the bar's denominator: `n` and the scenario ids in order |
+| `starts/<id>.json` | each scenario is about to be built | which row is running, and that row's own `max_steps` |
+| `results/<id>.json` | each scenario ends | the scored row, whatever ended it |
+| `results.json` | the batch ends | the record everything downstream reads |
+| `events.jsonl` | throughout | the five lines above, whether or not you passed `--events` |
+| `exit_code` | last, always | `0` ran, `1` failed, `2` the command line was wrong |
+
+**A progress bar needs none of the log**: the denominator is `batch.json`'s `n`, the numerator is
+the number of files in `results/`, and the row running now is the one in `starts/` with no result
+beside it yet. That is what lets an agent restarted mid-run describe the run correctly -- it
+kept nothing in memory, so there is nothing to have lost.
+
+**`--events` puts the stream on stdout and takes the summary line off it.** Without the flag you
+get the usual `results written: …` line and the same events in the file. A container's stdout
+also carries panda3d's and torch's own chatter, so a reader keeps the lines that parse as JSON
+and drops the rest; `events.jsonl` holds only ours.
+
+**`docker stop` is a scored partial run, not a lost one.** The SIGTERM reaches the batch's flag,
+the scenario it lands in ends with `failure_reason: "stopped"`, every row so far is written, the
+env is closed on the normal path and the process exits **0** -- `run.finished` says
+`"stopped": true`. Measured on 2026-09-14: a five-scenario job stopped after the second started
+kept both rows and ended `success_rate: 0.5`, `exit_code: 0`.
+
+**`exit_code` is the one file to look for, and its absence is an answer.** It is written whatever
+happened -- a job file that will not parse leaves one too -- staged and renamed, so a half-written
+file can never be read as a `0`. No file at all means the container was killed outright: SIGKILL,
+the OOM killer, or the machine going down.
+
+**`run.finished` carries the one judgement a supervisor acts on.** `"permanent": true` means
+nothing ran and nothing this machine does will change that -- the bank at that path is a
+different bank, a scenario id is not in it, the policy will not import -- so the job is
+dead-lettered rather than spending its remaining attempts. A failure after `batch.started` is
+not permanent: it may be the card, the driver or the bridge, and those are worth another rig.
+
+Two things to know before reading a directory twice. **An attempt's results overwrite and its
+events do not**: `events.jsonl` is appended, so a second attempt landing in the directory the
+first one used keeps both streams, and every line carries its `attempt`. And **a job that names a
+tier writes its batch into a subdirectory** (`--out out/j7` with `"tier": "hard"` writes
+`out/j7/hard/results.json`), while `events.jsonl` and `exit_code` stay in the directory you
+named: they belong to the process, not to the batch.
+
 ## Did it work?
 
 Three checks, in the order the machines come up.

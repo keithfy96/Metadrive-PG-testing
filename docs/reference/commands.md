@@ -660,6 +660,14 @@ The cameras never enter the observation, so a row with a rig scores exactly as t
 without one. The AV3 spec declares 0.05 s and a road steps at 10 Hz, so a film needs
 `--ignore-rig-rate`; a film is a look, not a model input, and the record keeps both rates.
 
+**What a supervisor reads, and never a printed line** (Phase 7 Step 1): `<out>/batch.json`
+the moment every refusal has passed, `<out>/starts/<id>.json` as each scenario is built,
+`<out>/results/<id>.json` as each one ends, `<out>/events.jsonl` with all of it as JSON
+lines, and `<out>/exit_code` written last, atomically, whatever happened -- a refusal that
+opened no simulator leaves one too. `--events` puts the same lines on stdout. The two
+process-level files sit in the directory `--out` named; everything the batch writes is under
+the tier subdirectory when the job names a tier.
+
 **`--step-hz 100 --decision-hz 20` is the AV3 stack's clock** (Phase 4 Step 7): the road
 stepped at the rig's own 0.05 s and the bridge ticked at its 20 Hz, every step budget
 scaled with it. `--policy scenariobank.av3:AV3Policy` with `--camera-rig`, `--model-config`
@@ -702,6 +710,7 @@ cameras about 60 ms a step on the host. The AV3 forward pass is about a second a
 | `--heartbeat <float>` | default `10.0` |  | Print a progress line to stderr every this many seconds while a row runs: step, decision, speed, metres moved, route completed, the action held. Tells a slow row from a hung one. 0 turns it off. |
 | `--step-hz <float>` | optional |  | Step a procedural road at this rate instead of MetaDrive's 10 Hz, with every budget scaled to match; `--step-hz 100 --decision-hz 20` is the AV3 stack's. A recording steps at its own rate and refuses any other. |
 | `--model-config <path>` | optional |  | The submission's model_dev.yml, for a policy that reads one (scenariobank.av3:AV3Policy). Every field is required; nothing is defaulted. |
+| `--events` | default `false` |  | Print the run's events on stdout, one JSON object per line, instead of the summary line: what a supervisor reads. <out>/events.jsonl is written either way. |
 
 ```bash
 uv run scenariobank run --bank ./banks/t-junction --out ./runs/floor                                                                                                                                                                                            # the whole bank against the constant-action floor

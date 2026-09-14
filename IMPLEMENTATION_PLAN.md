@@ -4980,7 +4980,7 @@ enqueued**, so both the id and the `lease_id` must come from the lease reply. An
 other message is `409`. This is at-least-once delivery seen from the outside, and it is what
 Step 5's loop has to be written against.
 
-### Step 1 — the container image and entrypoint ⬜
+### Step 1 — the container image and entrypoint ✅  *(built 2026-09-15)*
 
 Extends Phase 5. The container reads a `Job` file (Phase 4 Step 3's model: the same JSON the
 queue carries), calls `run_bank()`, writes `results.json`, exits 0. Four additions, all so a supervisor never has to parse prose:
@@ -5007,6 +5007,82 @@ one Phase 5 measured, so the numbers there are what the lease timer is sized fro
 
 **Verify alone:** `sim-run.sh` it by hand with a one-scenario `Job` file; get a `results.json`;
 then the probe inside `scenariobank-sim:latest` on a rig's GPU.
+
+**Done 2026-09-15.** All four additions are in, and the first finding is that **the image did not
+change at all**: `docker/Dockerfile` is untouched. The image carries the environment and this
+repo is mounted at `/work`, whose `src/` is the venv's one path line, so the entrypoint is code
+and code arrives with the mount. "The container reads a `Job` file" was already
+`run --job` (Phase 4 Step 3); what this step built is what it *writes* while it does.
+
+- `src/scenariobank/events.py` (319 lines, new): six events — `run.started`, `batch.started`,
+  `scenario.started`, `scenario.finished`, `heartbeat`, `run.finished` — as pydantic models with
+  `extra="forbid"` and a `schema_version` on every line, beside `Emitter` (append to a file,
+  print to a stream, or both), `write_exit_code`/`read_exit_code` and `read_events`. It imports
+  no simulator, no runner and no CLI, so a rig agent reads a run's events with `scenariobank`
+  installed and nothing else. Field order is pydantic's rather than sorted, so `event` is the
+  second key a `tail` shows; `dump_json`'s sorted, indented shape is for the files.
+- `runner.run_bank(on_event=…)`: the same four moments, with the job's id and attempt stamped on
+  every event in one place — `emit()` — because they are the job's and `run_bank` is what holds
+  it. `<out>/batch.json` and `<out>/starts/<id>.json` are the first two events written as files,
+  **whether or not a sink is given**, because they are the record and not the stream.
+  `<out>/results/<id>.json` has been the third since Phase 4 Step 3. So the bar is the directory:
+  denominator `batch.json`'s `n`, numerator the file count in `results/`, and the row running now
+  is the one in `starts/` with no result beside it. Nothing is held in memory, which is the
+  property an agent restarted mid-run rests on.
+- **The heartbeat is one reading said twice.** `runner.Heartbeat` now makes an
+  `events.Heartbeat` and renders the prose *from it*, so the line a person reads and the object
+  a supervisor parses cannot disagree about how fast the car was going — which is the whole
+  complaint against scraping the prose. The prose format is unchanged, to the space.
+- `cli.run --events` prints the stream on stdout and takes the summary line off it; the file is
+  written either way. The two **process** files — `events.jsonl` and `exit_code` — live in the
+  directory `--out` named, while everything the **batch** writes goes under the job's tier
+  subdirectory when it names one (`--out out/j7` + `"tier": "hard"` → `out/j7/hard/results.json`).
+  A supervisor must find an exit code without knowing the job's contents; Step 3 reads
+  `<job dir>/exit_code` and `cli.under_out(out, job.options.tier)` for the rest.
+- **The exit code is written whatever happened**, staged and renamed like wing-sim's launch
+  script, so a half-written file can never be read as a `0`: `0` ran (a stopped run included),
+  `1` failed, `2` the command line was wrong (click's own code, and the file agrees with the
+  process). The directory is created and the emitter opened *before* any validation, so a job
+  file that will not parse still leaves an exit code where the agent looks for one. **No file at
+  all is the answer "killed outright"** — SIGKILL, the OOM killer, the machine going down — which
+  is wing-sim's `VANISHED` and is why `read_exit_code` returns `None` rather than raising.
+- **`run.finished` carries the one judgement a supervisor acts on**: `permanent: true` means
+  nothing ran and nothing this machine does will change that (the bank at that path is a
+  different bank, a scenario id is not in it, the policy will not import), so the job is
+  dead-lettered rather than spending its attempts. It is not a guess — the emitter has seen
+  whether `batch.started` went by. A failure after the first env was built is not permanent: it
+  may be the card, the driver or the bridge, and those are worth another rig.
+- **The third bullet, teardown, is Step 3's and not this step's.** There is no compose stack
+  inside our container — the container *is* the run — so the teardown that must not live in the
+  supervisor is the entrypoint's own `finally` (the event, then the exit code) plus `--rm`.
+  The launched-script half arrives with the session that starts a bridge beside a simulator.
+- Where the doc is silent about nothing, but two choices are ours and are worth naming for Step 5
+  to agree with: `events.jsonl` is **appended, never truncated**, so a second attempt landing in
+  the directory the first one used keeps both streams and every line carries its `attempt`; and a
+  heartbeat's `speed_mps` is `null` and never `nan`, because `json.dumps` writes that as the bare
+  token `NaN`, which is not JSON and which a strict reader refuses the whole line over — the line
+  it would refuse being the one that says the car has stopped.
+
+| check | result |
+|---|---|
+| one-scenario `Job` through `sim-run.sh`, `NO_GPU=1`, on the laptop | exit 0; five events on stdout; seven files under `out/j7` |
+| the same run's `results.json` | `t_junction_0000`, arrived, 139 steps, 0.788 s |
+| `pid` on the `run.started` line | `1` — the run is the container's init, so `docker stop`'s SIGTERM reaches it |
+| `docker stop -t 30` on a five-scenario job, after the second row started | both rows kept, second `failure_reason: "stopped"`, `success_rate: 0.5`, `"stopped": true`, **exit 0**, `exit_code` file `0` |
+| a refusal (`--scenarios nope`) | `run.started` then `run.finished` `permanent: true`; no `batch.json`; no env built; `exit_code` `1` |
+| a job file that will not parse | `run.finished` alone, `permanent: true`, `exit_code` `1` |
+| a failure after the batch started (observation shape moved) | `permanent: false`, `results.json` still named and present |
+| `--job` with `--bank` (a usage error) | process `2`, file `2`, `permanent: true` |
+| `tests/unit/test_events.py` (new, 14), six added to `test_results.py` with two there extended, two added to `test_runner.py` | green offline, no simulator |
+| `ruff check`, and `docs/reference/commands.md` regenerated | clean; `--events` in the reference |
+
+**Still to do on a rig**, and it needs this committed and pulled there: the probe inside
+`scenariobank-sim:latest` on a GPU with this entrypoint. The image itself was verified on the
+first rig on 2026-09-14 (Phase 5 Step 4, checks 4.3–4.4) and nothing here changes it, so what the
+rig has left to say is only that the same files appear beside a GPU run.
+
+The worked round trip, the file table and the two traps are in
+`docs/running-the-application.md`, "One job, one container".
 
 ### Step 2 — the lock helper (R1: our own, same paths) ⬜
 
