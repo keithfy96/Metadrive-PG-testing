@@ -12,7 +12,7 @@ serialised scenarios.** MetaDrive's procedural generator is deterministic under 
 so the bank is a manifest of integers. The ScenarioNet `.pkl` export path is rejected because
 replay requires `ScenarioEnv`, which swaps `NodeNetworkNavigation` for `TrajectoryNavigation`
 and silently changes the task — it observes 31 numbers through `TrajectoryNavigation` where we
-observe 19. Stated for the frontend in `CONTRACT.md` (Phase 6).
+observe 19. Stated for the webapp in Phase 7 Step 6's results notes (Phase 6 retired 2026-09-14).
 
 Three things shape the design beyond that:
 
@@ -79,9 +79,7 @@ cards runs five containers; three images in total, all built from this repo on t
 The queue is not something we run — on the laptop its stand-in is Phase 7 Step 0's replica, a
 plain Python process.
 
-This supersedes "Phase 7 — optional, build only if asked" and the shared-`jobs`-table design that
-replaced it. Phase 7 is the deliverable. It also supersedes the state-vector policy boundary: see
-**No lidar** and **Phase 4**.
+Phase 7 is the deliverable. The evaluated model is a camera model: see **No lidar** and **Phase 4**.
 
 **Out of scope, decided the same day:** getting the model checkpoint onto the rigs. It arrives by
 some other route -- most likely a cronjob. The runner takes a local path and never fetches.
@@ -95,7 +93,7 @@ Every sentence in Phase 7 uses these five words in exactly this sense:
 
 | word | means |
 |---|---|
-| **queue** | `wfqueue` on the NAS. Not ours. `docs/queue-docs/`. At `http://192.168.1.90:9090` today (the doc's own header says `localhost:8080` because it was rendered by a dev copy); read from `WFQUEUE_URL`, never hard-coded. |
+| **queue** | `wfqueue` on the NAS. Not ours. `docs/queue-docs/`. At `http://192.168.1.90:9090` today (the doc's own header says `localhost:8080` because it was rendered by a dev copy); read from `WFQUEUE_URL`, never hard-coded. Our topic is **`metadrive`** (pinned 2026-09-08); CARLA's is Tyrone's to name. |
 | **orchestrator** | *retired 2026-09-13; there is none of ours.* The word still names Tyrone's rig-side CARLA service. |
 | **agent** (was **runner**) | our one container per rig, a worker per GPU: lock, lease, run, deliver, ack. Owns that rig's locks, its bridges and its simulator containers. |
 | **bridge** | openpilot's planner and controller behind a TCP port — one process per *running* simulation, a resource the worker starts, not a controller. |
@@ -114,18 +112,6 @@ schema is data and a path is not a library**:
 - the queue -- HTTP against a documented API, using the stdlib client the server itself serves
 - `~/simulation/.wing-sim.gpu*.lock` -- files opened with `flock`, not an import of `rig/lock.py`
 
-| Was going to reuse | Write our own instead | Cost |
-|---|---|---|
-| `rig/lock.py` | flock helper against the same paths | ~150 lines |
-| `staging.py` / `archive.py` | our own staging + archive | ~250 lines |
-| `rig/session.py` | our own session | ~300 lines (his is preset/CARLA-coupled anyway) |
-| `ingest/harvest.py` | our own ingest | small -- our schema, no mapping |
-
-**R1 also removes a blocker.** `orchestrator/src/staging.py` and `archive.py` do not exist in his
-checkout -- not gitignored, on no branch, while `runner/job_runner.py:11,25`, `api/uploads.py:14`
-and `validation.py:37` import them. Under R1 that is his problem for starting his service, not a
-prerequisite for anything here.
-
 ### Why a queue on the NAS, when each rig has a lock
 
 The GPU argument is the weakest justification. A flock is advisory and kernel-released on holder
@@ -142,18 +128,6 @@ What the queue fixes is what a lock cannot express:
 - **A place for jobs that are wrong.** `nack` past `max_attempts` dead-letters, and dead is
   inspectable and requeueable. A wedged job stops being a mystery.
 - **One screen**, not two tabs where a user guesses why their job is not moving.
-
-### What is still open
-
-- **One lock file per machine, or per GPU.** wing-sim's is per machine (`.wing-sim.gpu.lock`,
-  `rig/lock.py:39-40`), which was right when a rig had one card. With two cards a machine-wide lock
-  serialises the whole rig and "which GPU is free" cannot be expressed. Phase 7 names it per device
-  and records the incompatibility as a question for Tyrone rather than assuming an answer.
-- **Where the frontend reads results from.** Ours are delivered to the NAS by the rig agent
-  (Phase 7, **Files**); the studio reads them there and pushes them to Tyrone's webapp. Where on
-  the NAS they finally live — most likely a database — is Still open 7.
-- ~~The topic name.~~ **`metadrive`**, one topic for our agent; CARLA's is Tyrone's to
-  name. *(Pinned 2026-09-08; Phase 7's test block already assumed it.)*
 
 ### Three things the served client does that the doc does not say
 
@@ -300,7 +274,7 @@ road markings and its own route.
 
 **Therefore every option on the difficulty form is camera-only.** This is a consequence of the
 no-lidar decision already taken, not a new constraint, but it governs the whole feature rather than
-any single axis. It goes in `CONTRACT.md` as one statement at the top of the options section, so
+any single axis. It goes first in Phase 7 Step 6's results notes (the camera-only statement), so
 nobody reads a state-vector model's collision result as a model defect.
 
 **And therefore the model under test is a camera model** (amended 2026-08-30). The sentence above
@@ -430,9 +404,9 @@ The six axes are the contract; tiers are aliases only. Explicit flags win: `--ti
 resolves to hard everywhere except cones. Keep raw values reachable — `--traffic medium` and
 `--traffic-density 0.15` must both work, because house style in the converter repo is raw values.
 
-Objects are placed along the **ego's route lanes** (`navigation.checkpoints`), not per block. That is
-precisely what makes them work on intersection categories, which is the entire reason for writing a
-custom manager instead of using `accident_prob`.
+Cones and barriers are placed by MetaDrive's own `TrafficObjectManager` (straight and curve blocks
+only); pedestrians and cyclists by `VRUManager`, per actor on a road drawn off the map after the
+first block (Phase 4 Step 4b). See **New modules**.
 
 ### Traffic, in detail
 
@@ -545,7 +519,7 @@ Two consequences for reproducibility, which for this axis alone rests on code we
 ## Decisions locked
 
 - **Repo**: new standalone git repo in `metadrive-PG/`. Conventions copied from the converter repo (uv, Typer, `src/` layout, `[project.scripts]`), no shared code.
-- **Frontend**: **one producer onto the queue, our studio** (Phase 2c, Step 12), served from the NAS; the wing-sim webapp receives our results. `run_bank(...)` stays importable and CLI-free, so the container and the studio's worker are two callers of one core. *(Amended 2026-08-30 — was "CLI + `results.json`", with Phase 7 optional. Amended 2026-09-01 — the queue moved to the NAS and there are now two rigs. Amended 2026-09-02 — the studio submits runs too. Amended 2026-09-13 — the studio is the only producer, Tyrone's webapp a consumer of results, and the NAS orchestrator is replaced by an agent on each rig; see **How this ships**.)*
+- **Frontend**: **one producer onto the queue, our studio** (Phase 2c, Step 12), served from the NAS; the wing-sim webapp receives our results. `run_bank(...)` stays importable and CLI-free, so the container and the studio's worker are two callers of one core. *(Settled 2026-09-13; see **How this ships**.)*
 - **The GUI is the surface; the CLI is the engine.** No authoring workflow requires a terminal. The CLI is not deleted because a subprocess is forced by `BaseEngine.singleton` — see **What a person actually uses** for the reasoning, so this is not reopened as a matter of preference. *(Decided 2026-09-02, Keith.)*
 - **Categories**: the seven as drafted.
 - **Seeds**: fixed at 0, 1, 2, 3, 4 for every category. 35 maps.
@@ -555,8 +529,8 @@ Two consequences for reproducibility, which for this axis alone rests on code we
   2026-08-30 — was "build against the state-vector callable now". Reversed because a state-vector
   policy cannot perceive five of the six option axes, so it could never have been the thing scored.)*
   `ConstantPolicy` and `ExpertPolicy` survive as internal diagnostics, never a product surface.
-- **Independence (R1)**: no module of Tyrone's `wing-sim` is ever imported. Shared: the `jobs` table
-  (a schema) and the GPU lock path (a path). See **How this ships**.
+- **Independence (R1)**: no module of Tyrone's `wing-sim` is ever imported. Shared: the queue's
+  HTTP API (a schema) and the GPU lock path (a path). See **How this ships**.
 
 ---
 
@@ -571,7 +545,7 @@ metadrive-PG/
     cli.py                  # the worker's entry point, not the product's front door. One Typer app:
                             #   doctor categories sockets inspect destinations examples
                             #   generate seeds replace commands studio
-                            #   calibrate run selftest schema validate
+                            #   calibrate run schema validate
     categories.py           # CATEGORIES dict: block_seq, destination, max_steps, description
     options.py              # LEVELS, TIERS, resolve_options() -> ResolvedOptions (names, numbers, origins)
     config.py               # base config builder
@@ -636,8 +610,8 @@ metadrive-PG/
   docs/reference/
     destinations.md         # the resolved destination socket per category (Phase 1)
     level-calibration.md    # the Phase 4b sweep
-  CONTRACT.md
-  banks/pg-bank-2026-08/
+  CONTRACT.md               # written with Phase 7 Step 6, when the webapp's payload is known (Phase 6 retired)
+  banks/<bank_id>/          # generated and imported banks; not in git
   .studio/                  # Phase 2c job logs and scratch figures. Gitignored, disposable.
 ```
 
@@ -814,13 +788,8 @@ phases of work, deleted rather than corrected.)*
   stored as dotted paths (`agent_observation` → `metadrive.obs.state_obs.StateObservation`), so it
   is a *record* of the config and not a config to load back. `map`, `start_seed` and
   `num_scenarios` are stripped: they vary per block sequence and are already recorded per category
-  and per scenario, so leaving them in would put two answers in one file.
-  *(Amended 2026-08-31 — `random_spawn_lane_index` was `False`. Reversed after measuring that it is
-  the only thing distinguishing the five `X` seeds, which build one identical road.)*
-  *(Amended 2026-08-31 — this bullet used to list `curriculum_level=1`, `random_lane_num=False`,
-  `random_lane_width=False`, `store_map=True` and `navigation_module`. `base_config` sets none of
-  them; the list was a draft's wish, not a reading of the code. Corrected against what the
-  manifest actually contains.)*
+  and per scenario, so leaving them in would put two answers in one file. `random_spawn_lane_index`
+  stays `True`: it is the only thing distinguishing the five `X` seeds (see **Traps**).
 - Record the resolved MetaDrive dist version, git SHA and `asset_version()` **as information**. They
   explain a result months later; nothing refuses on them.
 - Per scenario record `destination` and `spawn_lane_index`, so the runner can set
@@ -835,8 +804,6 @@ phases of work, deleted rather than corrected.)*
   **seed 4 is a poor draw for two categories**: 7% from seed 0 for `curve`, not measurably apart
   for `roundabout`. `SEEDS` stays `(0,1,2,3,4)` because that is the set every figure in this repo
   was measured at; `scenariobank seeds` ranks the alternatives on demand.
-  *(Amended 2026-09-01 — was a fixed constant. Changed after the near-duplicate was found by
-  looking at two thumbnails, not by any check here.)*
 - Assert every requested seed builds for every category. Map generation is a **backtracking search**
   (`BIG.py:91-103`), so a requested block sequence can simply fail to plug in for a given seed. With
   seeds fixed at 0–4 that is a hard failure, not a scan: **fail loudly** and record the substitute
@@ -848,13 +815,8 @@ phases of work, deleted rather than corrected.)*
   right-hand-drive model fails everything for reasons no result explains.
 - Thumbnails: `figures.render_route` into `thumbs/`, one **per scenario** — the road in grey,
   the driven route in red, a blue arrow at the spawn and a green star at the destination,
-  titled with the category, seed, rule, node, rotation and length.
-  *(Amended 2026-09-01 — was `draw_top_down_map` → `cv2.imwrite`, map-only and therefore one
-  image per **map**. Two failures, both found by looking at the output: the three `X` categories
-  at one seed wrote three byte-identical files, and a map with no spawn marker cannot say which
-  way it turns — the `curve` thumbnails were read from the wrong end and reported as having no
-  right turns, when seed 2 turns right twice. Reusing Phase 1's route figure fixed both and is
-  cheaper per image; the cost is the filled road-surface look.)*
+  titled with the category, seed, rule, node, rotation and length. One per scenario, never per
+  map, and always with the route drawn: see **Traps**, "Read a turn direction off a map picture".
 - Write `manifest.json` **last and atomically** (temp file + `os.replace`).
 - `scenario_id` is the stable public key; format `{category}_{index:04d}`. `index` is the position
   within the category, not the seed — they coincide at seeds 0–4 and stop coinciding for any
@@ -954,8 +916,6 @@ uv run scenariobank generate --out ./banks/pg-bank-2026-08 --bank-id pg-bank-202
 ```
 `--category/-c` is repeatable and defaults to every category; `--seeds` takes a comma-separated
 list and defaults to `0,1,2,3,4`; `--no-thumbnails` skips the PNGs.
-*(Amended 2026-08-31 — the draft's `--categories a b c --count 5` is gone. `--count` had no meaning
-once the seeds became a fixed, named list rather than a number of them to draw.)*
 
 - **Expect:** exit 0; `manifest.json` + 35 PNGs; progress on stderr as it goes, one line per
   scenario naming the destination, spawn lane and route length. The whole bank takes ~4 s.
@@ -983,11 +943,9 @@ an entirely different path (two envs per scenario, destination pinned at constru
 cheaper single-reset path in `bank.generate` is not just faster, it lands on the same answers.
 `tests/unit/test_bank.py` covers it: 15 tests, 6 of them `needs_sim`.
 
-*(Amended 2026-09-01 — the thumbnails were wrong on first delivery and it took someone looking
-at them to find it. See the two Traps rows added the same day. Generation is now **~5 s** for the
-full bank rather than 4.1 s: the route figure is cheaper per image than the map render, but there
-are 35 of them instead of 25 and matplotlib costs about a second to import. The first run after
-an install reads 6.2 s — that one also builds matplotlib's font cache.)*
+Generation is **~5 s** for the full bank with route thumbnails (35 figures; matplotlib costs about
+a second to import). The first run after an install reads 6.2 s — that one also builds matplotlib's
+font cache.
 
 ---
 
@@ -1508,7 +1466,7 @@ step.** `exit_rule` and `max_steps` live on `CategoryEntry` — "the fixed facts
 `ScenarioRow`. A per-scenario override means new optional fields on `ScenarioRow`, which is
 `extra="forbid"`, under a `schema_version` pinned to `Literal["1.0"]`: a manifest this build writes
 will not load in an older one, and the reverse. So **bump to `1.1`**, and say what the new fields
-mean in `CONTRACT.md` (Phase 6) before Tyrone builds a picker against the old shape.
+mean in Phase 7 Step 6's results notes before the webapp renders the old shape.
 
 The open sub-question, with a recommendation: does an overridden `exit_rule` mean the scenario has
 left its category? **No — keep the category name and record the override.** The manifest's rule is
@@ -2640,8 +2598,7 @@ that step's **Verify alone** is met.
 
 **Every step below is written for a procedural bank.** Phase 3 adds a second kind, and the seam
 that keeps them one runner is a single function between "an entry and its rows" and "an env plus
-a per-row prepare step". Written out for both entry kinds, because the plan used to say "four
-places differ" and marked one:
+a per-row prepare step". Written out for both entry kinds:
 
 | | procedural (`CategoryEntry`) | recorded (`RealWorldEntry`) |
 |---|---|---|
@@ -2742,8 +2699,8 @@ is that recipe's reader. The procedural half is new; the recorded half is `repla
 built. What is PG-only is the map build, `set_route`, and the six axes — *not* `horizon` and not
 seed selection, which the table shows both kinds have.
 
-**Already built — reuse it, do not restate it.** Three of the things this step used to describe as
-new work already exist, with the reasoning in their own docstrings:
+**Already built — reuse it, do not restate it.** Three pieces already exist, with the reasoning in
+their own docstrings:
 
 - **`num_scenarios_for(seeds)` — `bank.py:412`**, whose docstring already carries the
   `base_env.py:926` argument: `num_scenarios` reads as a count and is not one, it bounds an
@@ -2907,10 +2864,10 @@ inventing them at each site:
   counts from Step 2), `route_completion`, `actions_digest` (`fingerprint.sha256_hex` over the
   per-decision action stream — what Step 8 diffs), and `traceback` on an error.
 - **`failure_reason` is a string, not a boolean**, taken from the `TerminationState` keys
-  *actually present in `info`* in a fixed precedence. The list this plan used to carry included
-  `idle`, which `TerminationState` defines (`constants.py:34`) but nothing in `metadrive_env.py`,
-  `base_env.py` or `scenario_env.py` ever writes; `crash` (the aggregate) and `env_seed` *are*
-  written and were not in the list. `replay.ENDINGS` is already the measured list; promote it.
+  *actually present in `info`* in a fixed precedence. Measured, not read off the enum: `idle` is
+  defined (`constants.py:34`) but nothing in `metadrive_env.py`, `base_env.py` or
+  `scenario_env.py` ever writes it; `crash` (the aggregate) and `env_seed` *are* written.
+  `replay.ENDINGS` is the measured list; promote it.
 - `--save-trajectories` optional (off by default; the only large artifact).
 - **Never abort the batch**: catch per-episode, record `status: "error"` + traceback, continue.
   And **never wait for the end to write**: each scenario's result is written to
@@ -2939,13 +2896,11 @@ inventing them at each site:
   Phase 2c Step 12 and gives Phase 6 its second schema. *(Built with one more field than
   listed: `attempt: int | None`. The container reads nothing but the job, so the lease's
   attempt count has to travel in it to reach the result.)*
-- **`horizon` and the loop cap are the same belt and braces on both kinds.** *(Corrected
-  2026-09-07 — this bullet used to say a stored scenario's `horizon` is `None` and the loop cap is
-  the only thing that ends it. Phase 3 Step 6 measured otherwise: `ScenarioEnv.done_function`
-  reads `horizon` (`scenario_env.py:162`), it was simply never set, and `replay_config` now sets
-  it to the row's budget. With it unset the env does run past the end of the recording in
-  silence — 6000 frames of a 3782-frame scenario, neither terminated nor truncated — which is
-  why the loop cap stays as well.)*
+- **`horizon` and the loop cap are the same belt and braces on both kinds.** Phase 3 Step 6
+  measured that `ScenarioEnv.done_function` reads `horizon` (`scenario_env.py:162`); `replay_config`
+  sets it to the row's budget. Unset, the env runs past the end of the recording in silence —
+  6000 frames of a 3782-frame scenario, neither terminated nor truncated — which is why the loop
+  cap stays as well.
 - ~~`replay.Episode` is subsumed: `replay --json` prints one result of this shape.~~ *Decided
   against at build time (2026-09-08): `Episode` is a report — `ended_by` as a phrase, `budget`,
   `ms_per_step`, the `CHANGED to` warning — and a result is a record; folding one into the
@@ -3300,9 +3255,7 @@ than a footnote.
 4. **The layout is drawn off the map, not the route.** The route is pinned *after* the reset
    (`env._prepare_procedural`, `navigation.set_route`), so at `reset()` `navigation.checkpoints`
    is not yet the row's. Candidates are every positive road of every block after the first — the
-   first is the ego's — and a road is picked per actor from `self.np_random`. The **Scenario
-   options** sentence "objects are placed along the ego's route lanes" is superseded: for
-   obstacles by the 2026-09-04 correction already under **New modules**, for actors by this.
+   first is the ego's — and a road is picked per actor from `self.np_random`.
 5. **No broken-down car, ever.** The stock barrier branch spawns a vehicle half the time;
    `ObstacleManager` uses `prohibit_scene` and `barrier_scene` only. Measured: `curve` at
    `traffic=none, cones=medium, barriers=medium` places 36 cones, 2 barriers and one
@@ -3637,8 +3590,7 @@ uv run pytest tests/unit/test_camera_rig.py -q
 **Expect:** six named sensors and no `rgb_camera` among them; `image_buffers <= 9`; the probe
 confirms every sign convention the rig rests on by measurement rather than by reading -- six
 `ok` rows. No model, no bridge. `replay` gains `--camera-rig` here because it is the diagnostic
-that already exists. *(The block used to pipe `--json` into `jq`, which the sim image does not
-carry, and to run the rig at the road's own rate, which gotcha 5 refuses -- see the notes.)*
+that already exists.
 
 **Built 2026-09-10.** What was measured, and what moved from the notes above:
 
@@ -3798,7 +3750,7 @@ The other half of the port, plus the two things about it that are not a copy:
 - `tools/av3_model.py` — `AV3Model.observe/predict_with_navigation`, `FrameHistory`, `preprocess`,
   `ego_state`, `navigation`, `waypoints`
 - `tools/openpilot_policy.py` — `BridgeConnection`, `OpenpilotDriver`, `to_metadrive_action`
-- `tools/av3_probe.py`'s model half *(moved here from Step 6, 2026-09-10)*: the camera map,
+- `tools/av3_probe.py`'s model half: the camera map,
   the ego state, the navigation block against the route sensor, and the waypoints scored under
   both signs -- all computed by `av3_model.py`, three of them against a checkpoint. It joins
   `scripts/av3-probe.sh`, which already runs the rig's frame probe and a rig replay.
@@ -3844,9 +3796,8 @@ docker wait av3 && docker rm av3
 python3 -c "import json; r=json.load(open('out/av3/results.json')); print(r['results'][0], r['env'])"
 uv run pytest tests/unit/test_av3_config.py -q
 ```
-*(Rewritten 2026-09-10: `--step-hz 100`, which is what makes the rig readable at 20 Hz; the
-submission's paths on this machine; detached, because a killed client SIGTERMs the row into a
-`stopped` record; python instead of `jq`, which the sim image lacks.)*
+*(Detached, because a killed client SIGTERMs the row into a `stopped` record; python instead of
+`jq`, which the sim image lacks.)*
 **Expect:** `actions == ceil(steps / 5)` at 100 / 20 Hz, with `env.decision_hz` 20 and `stride`
 5; the offline test deletes one field from a copy of the submitted `model_dev.yml` and
 `load_config` raises naming it rather than defaulting; steering sign matches Step 6's probe.
@@ -3949,7 +3900,7 @@ submission's paths on this machine; detached, because a killed client SIGTERMs t
    stops on the empty road, throttle +0.53 easing to a held brake, because the model predicts a
    near-stationary path on a scene it never trained on; the same bridge on route-only waypoints
    drives the road at 3 m/s. **Keith, 2026-09-13: the model's behaviour, not the runner's.** A
-   finding for `CONTRACT.md`, not work in any phase.)*
+   finding for Phase 7 Step 6's results notes, not work in any phase.)*
    **The heartbeat.** A row at 1.45 s per decision prints nothing for fifteen minutes and reads
    as a hang, which is how the first re-run was nearly killed a second time. `run --heartbeat
    SECONDS` (10 by default, 0 for off; `run_bank(heartbeat_s=)`) is an `observe` hook,
@@ -4003,10 +3954,9 @@ Cost, and it drives the ETA model in Phase 7 Step 8. **Measured per-scenario wal
 The decision is one forward pass every 0.05 s of *simulated* time, so a 32 s row is 640 passes
 whatever the hardware; what the hardware sets is the wall clock per pass. Price a 35-scenario bank
 from the rig row: ~35 × 100 s ≈ 1 hour without video, and the estimate is per rig or it is wrong on
-the slower one. (The "~1 s forward pass" this paragraph used to quote was the laptop's number.)
+the slower one.
 
-**Two claims, not one.** This step used to ask for Step 5's reproducibility diff to be empty
-against the AV3 policy. The AV3 path runs through the openpilot bridge — a real-time control
+**Two claims, not one.** The AV3 path runs through the openpilot bridge — a real-time control
 stack in its own container, over TCP 5558 — and nothing in this plan has established that it
 returns the same action twice for the same frame. So the claim is split: the **runner** is
 deterministic *given the same actions*, which is Step 5's and is checked through
@@ -4158,15 +4108,13 @@ is not the rig's launcher. **A rig has this repo and nothing else** — both ima
 it there (`bridge.sh build`; `sim-image.sh build`, which with no converter checkout beside the
 repo builds `docker/Dockerfile` as `scenariobank-sim:latest`), so on a rig
 `SIM_IMAGE=scenariobank-sim:latest`, set once in the agent's environment. The laptop keeps the
-converter's image as its default. Not yet verified: the model on the GPU inside
-`scenariobank-sim:latest` (Step 1's 2026-09-12 note) — the first thing to run on a rig after
-the build.
+converter's image as its default. The model on the GPU inside `scenariobank-sim:latest` was
+verified on the rig 2026-09-14 (Step 4, checks 4.3 and 4.4).
 
-**Reuse, do not rebuild.** This phase used to say "adapt `docker/Dockerfile` from the converter" and
-list the hard parts it already solves — `ubuntu:22.04`, `uv`, `UV_PROJECT_ENVIRONMENT=/opt/venv`,
-`metadrive.pull_asset`, the panda3d `Config.prc` patch preferring EGL over GLX, the
-`glvnd/egl_vendor.d` manifest, `HOME=/tmp`. That was written before anyone checked whether the
-image those lines produce already runs this repo. **It does**, measured 2026-09-06:
+**Reuse, do not rebuild.** The converter's image already solves the hard parts — `ubuntu:22.04`,
+`uv`, `UV_PROJECT_ENVIRONMENT=/opt/venv`, `metadrive.pull_asset`, the panda3d `Config.prc` patch
+preferring EGL over GLX, the `glvnd/egl_vendor.d` manifest, `HOME=/tmp` — and it already runs this
+repo, measured 2026-09-06:
 
 ```
 $ docker run --rm -v $PWD:/work:ro metadrive-wingfin-sim:latest python -m scenariobank doctor
@@ -4176,7 +4124,8 @@ obs_space:     Box(-0.0, 1.0, (19,), float32)               drive_side: left
 ```
 
 No build, no install, no `PYTHONPATH` — and that output *is* what this phase's acceptance asks for.
-So the from-scratch Dockerfile is cut, and what replaces it is one two-line image for the studio.
+So the only image built from scratch here is the studio's; `docker/Dockerfile` is the same recipe
+kept as the fallback for a machine with no converter checkout (Step 1).
 
 **Why no `PYTHONPATH`.** The base image's editable install is a single bare path line,
 `/work/src`. `site` evaluates it at every interpreter start, so whatever is mounted at `/work` has
@@ -4255,46 +4204,32 @@ Two compose services over one image, the rig's `docker run` line as a script, pl
   paths (a sibling's bind mounts are the host's, never the agent's own mount points),
   `WFQUEUE_URL`, `SIM_IMAGE`. The socket mount is acceptable here where Step 2 rejected it for
   the studio: the agent serves no HTTP.
-- **`image:` with no `build:` key on the runner.** A `docker compose build` in this repo must be
-  unable to produce something under the tag `metadrive-wingfin-sim`; that is the failure the
-  converter's own `wingfin.groups` label exists to catch, and the cheapest fix is to make it
-  impossible here.
-  *(Reversed 2026-09-12: the runner now has a `build:` key -- `docker/Dockerfile`, the
-  converter's recipe ported minus the `ros` group, under our own tag `scenariobank-sim:latest`.
-  The trap above was two repos building one tag; a tag of our own removes it. Why: a rig has
-  this repo and not the converter, and "clone, build, run" is what a rig needs. The bridge came
-  along the same way: `docker/openpilot/` carried whole, the openpilot fork vendored under
-  `deps/` (309 MB, 3026 files, largest 46 MB, ten symlinks that `bridge.sh build` and
-  `test_images.py` both check), `scripts/bridge.sh build|save` ported. `pyproject.toml` gained
-  the `gpu` and `model` groups and the two explicit indexes; `uv lock` added 408 lines and
-  removed none; the host `.venv` is untouched because the groups are opt-in.)*
-  *(Reversed again, the same day, and this is where it rests: **the runner's image is the
-  converter's `metadrive-wingfin-sim:latest`, one sim container for both projects, and `run`
-  has no `build:` key** -- the bullet above is right after all. Keith's call, 2026-09-12: he
-  wants the same container to serve the converter too, and only one direction of sharing is
-  safe -- the converter's image is a strict superset (its own libraries and `ros` on top of
-  everything we need), ours is not, so the shared tag has to be the one built there, with
-  `docker compose build` in that checkout. What stays from the morning: `docker/Dockerfile` as
-  the **fallback** for a machine with no converter checkout, built by `sim-image.sh build`
-  under a fixed tag of its own, `scenariobank-sim:latest`, never the converter's;
-  `SIM_IMAGE=scenariobank-sim:latest` selects it in compose, the studio's `ARG`, and the
-  script. The label check is what makes the shared tag safe, on both sides. `test_images.py`
-  pins that `run` has no build key and that the fallback build cannot take the shared tag.
-  And `sim-image.sh build` **delegates**: with the converter checkout beside this repo
-  (`CONVERTER_DIR`) it runs the converter's own `docker build` under the converter's tag, so one
-  command makes the shared image on any machine that has both; without it, the fallback.)*
+- **`image:` with no `build:` key on the runner** *(Keith's call, 2026-09-12)*. The runner's image
+  is the converter's `metadrive-wingfin-sim:latest`, one sim container for both projects, built
+  with `docker compose build` in that checkout. Only that direction of sharing is safe: the
+  converter's image is a strict superset (its own libraries and `ros` on top of everything we
+  need), ours is not. A `docker compose build` in this repo must be unable to produce anything
+  under the shared tag — two repos building one tag is the failure the `wingfin.groups` label
+  exists to catch. `docker/Dockerfile` (the converter's recipe minus `ros`) is the **fallback**
+  for a machine with no converter checkout, built by `sim-image.sh build` under its own tag,
+  `scenariobank-sim:latest`, never the converter's; `SIM_IMAGE=scenariobank-sim:latest` selects
+  it in compose, the studio's `ARG` and the script. `sim-image.sh build` **delegates**: with the
+  converter checkout beside this repo (`CONVERTER_DIR`) it runs the converter's own `docker
+  build` under the converter's tag. `test_images.py` pins that `run` has no build key and that
+  the fallback build cannot take the shared tag. The bridge is built the same way:
+  `docker/openpilot/` carried whole, the openpilot fork vendored under `deps/` (309 MB, 3026
+  files, ten symlinks that `bridge.sh build` and `test_images.py` both check). `pyproject.toml`
+  carries the `gpu` and `model` groups, opt-in, so the host `.venv` is untouched.
   *(Verified 2026-09-12: `scenariobank-sim:latest` built in ~20 min, 13.1 GB, label `sim gpu
   model`; `doctor` in it prints commit 85e5dadc and `drive_side: left`, the same as the host;
   a `BridgePolicy` row of `t_junction_0000` at 100/20 ran inside it against the live bridge,
   3200 steps / 640 actions, 7.2 s. The bridge image built from the vendored context in ~35 min,
   5.53 GB, and a host row against it gives the converter's own numbers: 640 controls, route
-  0.78, `max_step`. **Not verified in the new sim image: the model on the GPU.** Mid-session an
-  unattended apt upgrade moved the NVIDIA user-space libraries to 595.91 under the running
-  595.84 kernel module, and from then on `--gpus all` fails with `nvml error: driver/library
-  version mismatch` for every image, the converter's included, until a reboot. The probe
-  command in Step 7's verify block is the check to run after it. Trap for the record: a driver
-  upgrade lands silently and breaks every GPU container on the machine; `nvidia-smi` on the
-  host is the one-line diagnosis.)*
+  0.78, `max_step`. Trap for the record: an unattended apt upgrade moved the NVIDIA user-space
+  libraries to 595.91 under the running 595.84 kernel module, and from then on `--gpus all`
+  failed with `nvml error: driver/library version mismatch` for every image until a reboot. A
+  driver upgrade lands silently and breaks every GPU container on the machine; `nvidia-smi` on
+  the host is the one-line diagnosis.)*
 - **The runner mounts `.:/work:ro`.** Read-only *is* the test: a runner that can rewrite the bank
   it is scoring makes "the same numbers everywhere" uncheckable. `${OUT_DIR:-./out}:/out` is the
   only writable path — and `../models:/models:ro` the second read-only one *(added 2026-09-13;
@@ -4580,8 +4515,7 @@ is the route the page's Run tab posts to, so the browser step is the same code p
 `metadrive-wingfin-openpilot:prod` is built **from this repo** (`bridge.sh build`, the converter's
 Dockerfile with the openpilot fork vendored under `docker/openpilot/deps/`, 2026-09-12: 5.53 GB,
 ~35 min) and a host `BridgePolicy` row against it gives the converter's own numbers (Step 1's
-note). *(This step used to say "reused as it stands, confirm with `diff -rq`"; the vendoring
-replaced that, and a rig needs no converter checkout.)*
+note). A rig needs no converter checkout.
 
 - It mounts nothing and needs no repo: `bridge.sh start` is `docker run -d --network host … python3
   -m zapeta.server`, and the wire protocol is 29 lines of length-prefixed JSON on TCP 5558.
@@ -4627,9 +4561,7 @@ Step 1's 1.7; a second bridge on `BRIDGE_PORT=5559` cannot be started yet becaus
 
 ### Step 4 — laptop and rig agree ✅  ⟵ *met 2026-09-14 on the rig, with one finding: outcomes agree across machines, action digests do not*
 
-*(Rewritten 2026-09-13: the command used to name `pg-bank-2026-08` and `ceiling.json`, neither of
-which exists, and compared a host to a container on one machine. The claim that matters is across
-machines, through the line the rig will run.)*
+The claim that matters is across machines, through the line the rig will run.
 
 ```bash
 # on the laptop, then the same line on a rig (banks/t-junction copied over first; banks are not in git)
@@ -4649,10 +4581,6 @@ portable and the premise needs revisiting before the studio submits a job.
 below: the bank **is** portable — every outcome field agrees — but two CPUs do not produce the
 same floats, so the exact-diff form of this gate is the wrong instrument across machines. The
 comparison that holds is the outcome fields; `docs/running-the-application.md` has the jq line.)*
-
-There is no `selftest` command and this phase no longer asks for one. It was going to build a known
-seed and assert left-side drive as a build check for an image we now do not build — and `doctor`
-already prints `drive_side` from a real reset, in the container, on demand.
 
 **Verify alone, step by step** *(expanded 2026-09-13; the four marked rig run there — state
 the commands before running them, per the rig-access rule)*. A rig has this repo and nothing
@@ -4756,7 +4684,7 @@ What 4.2 changes: the gate's exact diff stays as the **same-machine** regression
 there, across images too). Across machines the claim is "every outcome field equal", and that
 is what the studio can promise about a job scored on any rig. `actions_digest` remains what it
 was built for — the same-machine determinism pin in `test_camera_rig.py` — and is not a
-cross-machine identity. Nothing in code changes for this; `CONTRACT.md` (Phase 6) should say
+cross-machine identity. Nothing in code changes for this; Phase 7 Step 6's results notes say
 which fields are comparable across machines. Nothing committed.
 
 **Done when:** the diff is empty between the laptop and a rig (4.2), the read-only mount refuses
@@ -4783,62 +4711,13 @@ Phase 7 Step 0's replica.
 
 ---
 
-# Phase 6 — `CONTRACT.md` and handoff ⬜
+# Phase 6 — ~~`CONTRACT.md` and handoff~~ retired 2026-09-14
 
-> **Machine-run.** `validate` and `schema` are CI's, checking that the examples in `CONTRACT.md`
-> still parse. See **What a person actually uses**.
-
-**Goal:** your colleague can build the frontend without reading any of your Python.
-
-**Build**
-- `CONTRACT.md`: both JSON schemas field-by-field — `Job` (what a producer puts on the topic)
-  and `Results` (what comes back), both Phase 4 Step 3's — with the rules that matter to him:
-  - **The camera-only statement, at the top of the options section.** A state-vector policy cannot
-    perceive traffic, cones, barriers, pedestrians, cyclists or lights. Nobody should read a
-    state-vector model's collision result as a model defect.
-  - **The bank is left-side traffic** (right-hand-drive market), stated as plainly as the
-    camera-only note above and for the same reason. The ego keeps left, roundabouts
-    circulate clockwise, on-ramps join from the left, and the turn that crosses oncoming
-    traffic is the **right** turn — so `intersection_right`, not `intersection_left`, is
-    the unprotected one. A model trained for right-side traffic will fail this bank for
-    reasons that are not model defects, and nobody should read those results as one.
-  - **Seeds vary geometry and route; options vary difficulty.** State it explicitly — it is the
-    distinction most likely to be misread, and it decides whether a result means "the model can do
-    left turns" or "the model can do *this* left turn".
-  - The six axes, their four levels each, and the resolved numeric each maps to; the tier aliases.
-  - Options are echoed **expanded** in results, level name *and* resolved numeric.
-  - `scenario_id` is the key he stores; **seeds are ours and may change between banks**.
-  - `metadrive.commit` is echoed back in results as a **label**, so an old result can be read
-    later. Nothing refuses on it: a bank is per-batch, and roads are not promised stable across
-    batches.
-  - **Success rates are over 5 scenarios per category — 20% granularity.** So the UI must not render
-    `0.6` as though it meant 60% +/- 1%.
-  - Thumbnails are relative paths inside the bank dir, 512x512 RGB PNG, and **map-only** — never
-    showing traffic, cones, barriers, pedestrians, cyclists or lights, whatever the options say.
-    Also **not to scale between scenarios**: each map is zoomed to fit its own frame, so a
-    junction that looks larger in one tile is not larger, just in a smaller map. Do not size or
-    compare anything off the pixels. **The resolution must stay square**: `draw_top_down_map`
-    (`utils/draw_top_down_map.py:11`) renders a square 2000x2000 canvas and scales the map's longest
-    axis to fill it (`top_down_renderer.py:53-61`), so a non-square output stretches a square source.
-  - **What the evaluated model observes.** The six AV3 cameras, read off the rig; the env
-    observation is a `Box(19,)` state vector (6 ego + 10 navigation + 3 line-detector scalars, no
-    lidar) used only by the CLI diagnostic policies. Note alongside it why the ScenarioNet `.pkl`
-    replay path is rejected: `ScenarioEnv` swaps `NodeNetworkNavigation` for `TrajectoryNavigation`
-    and changes the task, observing **31** numbers rather than 19 (`trajectory_navigation.py:20-21,211`).
-  - `failure_reason` is a closed enum — list every value so he can build the grouping UI. Includes
-    `crash_human`, and `run_red_light` once Phase 8 lands (schema v1.1).
-  - `status: "error"` is distinct from `success: false`; an error means we learned nothing.
-  - Exit codes: 0 = ran, 2 = integrity refusal, 1 = internal.
-- Machine-readable schemas emitted from the pydantic models:
-  `scenariobank schema --manifest > schemas/manifest.v1.json`, `--results` and `--job`.
-- `scenariobank validate --results results.json` so he can self-check.
-- Committed example `manifest.json` and `results.json` in `examples/`.
-
-**How you test it**
-- Hand him `CONTRACT.md` + the two example files and nothing else. He builds the picker against
-  the examples. If he has to ask you a question answerable from the code, the doc is incomplete.
-- `uv run scenariobank validate --results examples/results.json` → exit 0.
-- Round-trip: `validate` a results file with `failure_reason: "banana"` → exit non-zero.
+*(Retired with Keith, 2026-09-14. Since the studio is the only producer, the `Job` half has no
+reader outside this repo; what still crosses to another team is the **result**. The reading rules
+are the bullet list in **Phase 7 Step 6**, to become `CONTRACT.md` when the webapp's endpoint and
+payload are known (Still open 7); `validate --results` is the agent's check in **Phase 7 Step 5**.
+Nothing renumbered.)*
 
 ---
 
@@ -4848,18 +4727,16 @@ Phase 7 Step 0's replica.
 GPU, run in two containers there, and its results delivered back to the NAS — with nothing of
 Tyrone's imported (R1).
 
-*(Rewritten 2026-09-13. This phase used to have an orchestrator on the NAS leasing jobs and calling
-an HTTP service on each rig. Both are gone: the queue knows messages, not cards, so the only process
-that can know a card is free is the one holding it, and that process is on the rig. What remains is
-**one agent container per rig, a worker per GPU, that locks a card and only then leases** — and the
-queue is asked for last, at Step 7, because Keith has no access to it yet; everything before runs
-against Step 0's local replica.)*
+*(Shape settled 2026-09-13. Nothing on the NAS dispatches and nothing on a rig listens: the queue
+knows messages, not cards, so the only process that can know a card is free is the one holding it,
+and that process is on the rig. So: **one agent container per rig, a worker per GPU, that locks a
+card and only then leases** — and the queue is asked for last, at Step 7, because Keith has no
+access to it yet; everything before runs against Step 0's local replica.)*
 
-Superseded: the wrapper sketch that used to sit here, and the shared-`jobs`-table design that
-replaced it. **The queue is not a table we write SQL against.** It is `wfqueue`, an HTTP service on
-the NAS with lease/ack/nack semantics, documented in `docs/queue-docs/queue-doc-v0.json`, with a
-392-line stdlib-only Python client at `docs/queue-docs/queue-client-v0.py`. **Use that client. Do
-not reimplement the HTTP calls** — it already handles leasing, ack/nack, retry backoff and
+**The queue is not a table we write SQL against.** It is `wfqueue`, an HTTP service on the NAS
+with lease/ack/nack semantics, documented in `docs/queue-docs/queue-doc-v0.json`, with a 392-line
+stdlib-only Python client at `docs/queue-docs/queue-client-v0.py`. **Use that client. Do not
+reimplement the HTTP calls** — it already handles leasing, ack/nack, retry backoff and
 long-polling, and every one of those is a thing to get subtly wrong.
 
 Read **How this ships** first for the topology and, in particular, for what the five words mean.
@@ -4876,9 +4753,8 @@ handlers idempotent, or use `dedupe_key` upstream."* If our agent dies mid-run, 
 expires, the message returns to `ready`, and it is leased again — **while the rig is still
 running it**, possibly by the other rig's worker.
 
-> **Forces:** the run is **keyed by job id and idempotent** *(reworded 2026-09-13; this used to be
-> `POST /runs` on a rig service)*. A worker that leases a job whose `results/<job_id>` already
-> exists on the share acks without running; an agent that restarts adopts any container carrying
+> **Forces:** the run is **keyed by job id and idempotent**. A worker that leases a job whose
+> `results/<job_id>` already exists on the share acks without running; an agent that restarts adopts any container carrying
 > our label for its card before it leases anything. Those two rules are what make redelivery
 > harmless instead of a double-booked GPU, and why the agent can be restarted at any moment
 > without a reconciliation dance.
@@ -4899,8 +4775,7 @@ not failed. Dead-lettering after `max_attempts` is for jobs that are **wrong**, 
 > on this rig or the other. Only a job that cannot ever run — a bad options file, a missing
 > checkpoint, a validation failure — is allowed near the dead-letter pile.
 >
-> This is the same distinction the previous draft called `waiting`, and it remains **the single
-> most likely wrong behaviour in this whole phase.**
+> This remains **the single most likely wrong behaviour in this whole phase.**
 
 ---
 
@@ -4933,8 +4808,7 @@ does not apply: **it will terminate a MetaDrive run holding the card.**
 
 The split that follows, and it is the design:
 
-- **There is no GPU map.** The worker holding the card is the only thing that leases *(2026-09-13;
-  this bullet used to give the NAS orchestrator a stale plan to re-plan from)*.
+- **There is no GPU map.** The worker holding the card is the only thing that leases.
 - **The rig's lock is the truth.** Checked *on the rig*, because it cannot be checked anywhere
   else: `rig/lock.py:43,73-123` excludes by **inode** and reads liveness out of local `/proc/locks`
   plus `/proc/<pid>/stat` starttime. Host-local by construction. On an NFS mount it would not mean
@@ -4987,8 +4861,7 @@ rejected as the most code and a rig that stops when the studio does.)*
 
 ## Why the agent holds no state
 
-*(Was "Why the rig half is a service rather than an SSH command". Nothing calls the agent any more,
-so nothing listens; the three properties below are what survive, unchanged.)* Three properties are
+Nothing calls the agent, so nothing listens. Three properties are
 worth having and all three come from the same choice — **the agent holds no state of its own**:
 
 - Every answer it gives is read back off disk: the log file, the exit-code file, and the
@@ -5051,13 +4924,14 @@ on the real NAS — and is the **first and only** step that touches it.
 Extends Phase 5. The container reads a `Job` file (Phase 4 Step 3's model: the same JSON the
 queue carries), calls `run_bank()`, writes `results.json`, exits 0. Four additions, all so a supervisor never has to parse prose:
 
-**The question this step used to inherit is answered** *(Keith, 2026-09-13)*: **the rig clones
-this repo and builds both images from it** — `bridge.sh build` for the bridge, `sim-image.sh build`
+**Where the image comes from** *(Keith, 2026-09-13)*: **the rig clones this repo and builds both
+images from it** — `bridge.sh build` for the bridge, `sim-image.sh build`
 for the sim image, which with no converter checkout beside the repo builds `docker/Dockerfile` as
 `scenariobank-sim:latest`; `SIM_IMAGE=scenariobank-sim:latest` in the agent's environment. No
 converter checkout, no `docker save`. The line the agent runs is `scripts/sim-run.sh`'s (Phase 5
-Step 1). Not yet verified in that image: the model on the GPU — the Phase 4 Step 7 probe on a
-rig is the first thing to run after the build.
+Step 1). The model on the GPU in that image was verified 2026-09-14 on the first rig (Phase 5
+Step 4, checks 4.3 and 4.4): probe, then a scored AV3 row, `status: ok`; and the rig is the
+one Phase 5 measured, so the numbers there are what the lease timer is sized from.
 
 - **Structured JSON lines on stdout.** One object per event. No regexes — his `rig/progress.py`
   scrapes four prose patterns out of CARLA's log because it has no choice; we do not.
@@ -5077,7 +4951,7 @@ then the probe inside `scenariobank-sim:latest` on a rig's GPU.
 
 Advisory `flock`, **exclusion by inode**, one lock file per GPU. ~150 lines.
 
-- **Name it per device** — `.wing-sim.gpu<N>.lock` — and record in `CONTRACT.md` that wing-sim's
+- **Name it per device** — `.wing-sim.gpu<N>.lock` — and record, for Tyrone, that wing-sim's
   single `.wing-sim.gpu.lock` serialises a whole rig. *Open question for Tyrone; do not assume he
   will change it.* Until he does, a two-GPU rig behaves as a one-GPU rig whenever CARLA is running.
 - **Publish holder identity as a separate file.** Atomic replacement is a rename, and a rename gives
@@ -5130,9 +5004,9 @@ file read and no port is open on a rig. The bearer token went with the port.
 
 ### Step 5 — the rig agent: lock, lease, run, deliver, ack ⬜
 
-*(Rewritten 2026-09-13 from "the orchestrator: the lease loop", which ran on the NAS. Keith's
-shape: one container per rig — `docker compose up agent`, the sim image, no GPU — with one worker
-per card, each polling its card's availability and only then the queue for a job.)*
+*(Keith's shape, 2026-09-13: one container per rig — `docker compose up agent`, the sim image, no
+GPU — with one worker per card, each polling its card's availability and only then the queue for a
+job.)*
 `QueueClient` from `docs/queue-docs/`, one topic (`metadrive`), long-polled. `WFQUEUE_URL` and, if
 the server is ever started with one, `WFQUEUE_TOKEN` come from the environment. Per worker:
 
@@ -5157,6 +5031,10 @@ the server is ever started with one, `WFQUEUE_TOKEN` come from the environment. 
    NAS, shape unknown (Still open 7). The first implementation is the share copy (**Files**); when
    the database exists `deliver` writes to it as well or instead and the loop does not change.
    Ack only after delivery succeeds, so a failed delivery is a retried job, never a lost result.
+   Before delivering, `scenariobank validate --results <dir>/results.json` (moved here from the
+   retired Phase 6): the file parses against `Results`, every `failure_reason` is in the enum,
+   the row count matches the job's scenario list. A file that fails is delivered anyway, into
+   `results/<job_id>/invalid/`, and the job is nacked — evidence first, then the retry.
 8b. `ack` raising `QueueHTTPError` with `409` after a run completed → `GET /messages/{id}`;
    `state == "done"` means the first ack landed and the client's own retry is noise. Anything else
    is a real lease loss: the job was redelivered, and step 4 on the other worker is what keeps it
@@ -5180,6 +5058,37 @@ Tyrone's webapp**, a studio background task that takes each newly complete resul
 store and POSTs it (endpoint, auth and payload unknown, Still open 7). Downstream of delivery;
 never the agent's job. Our own SQLite plus a results tree until then. Not his schema, and no
 mapping — the shape is ours.
+
+**What the webapp must be told about a result** *(moved here from Phase 6, retired 2026-09-14;
+written as a document — `CONTRACT.md` at the repo root, plus `scenariobank schema --results` if
+the payload is the results document — the day the endpoint and payload are known. Until then this
+list is the document, and every finding elsewhere in the plan that says "for the results notes"
+lands here.)*
+- **The camera-only statement first.** A state-vector policy cannot perceive traffic, cones,
+  barriers, pedestrians, cyclists or lights. A collision under one is not a model defect.
+- **The bank is left-side traffic** (right-hand-drive market): the ego keeps left, roundabouts
+  circulate clockwise, on-ramps join from the left, and the unprotected turn is the **right**
+  turn. A model trained for right-side traffic fails this bank for reasons that are not defects.
+- **Seeds vary geometry and route; options vary difficulty.** Options are echoed **expanded** in
+  results, level name and resolved numeric, so a result says which difficulty it was.
+- **`scenario_id` is the key to store. Seeds are ours and may change between banks.**
+- **`metadrive.commit` is a label**, echoed so an old result can be read later; nothing refuses on it.
+- **Success rates are over 5 scenarios per category — 20% granularity.** `0.6` is three of five,
+  not 60% ± 1.
+- **`failure_reason` is a closed enum** — list every value (with `crash_human`, and
+  `run_red_light` once Phase 8 lands, schema v1.1) so a grouping UI can be built.
+- **`status: "error"` is distinct from `success: false`.** An error means we learned nothing;
+  `skipped` is distinct from both.
+- **Across machines, compare outcome fields only** — `status`, `steps`, `route_completion`,
+  `cost`, `collisions`, `failure_reason`, `actor_layout_digest`. `actions_digest` and the last
+  digits of `reward` differ between CPUs (Phase 5 Step 4, 2026-09-14) and are not defects.
+- **What the evaluated model observes**: the six AV3 cameras off the rig; the 19-number state
+  vector is only the CLI diagnostic policies'. The ScenarioNet `.pkl` replay path is rejected
+  because it observes 31 numbers and changes the task.
+- **The model's known behaviours that are not runner defects**: the car stopping on an empty
+  road (Phase 4 Step 7 note 7); the traffic lights a state-vector policy cannot see (Phase 8);
+  the camera framing findings in Still open 1.
+- **Exit codes**: 0 = ran, 2 = integrity refusal, 1 = internal.
 
 - **Per-scenario rows, not columns on a job.** A job legitimately ends with 30 of 35 scored, and
   `skipped` is a real outcome distinct from `failed`, because "never ran" and "ran and failed" lead
@@ -5297,28 +5206,24 @@ sail through reds. If it never appears, the termination is not wired up. That is
 *expert failing* is the pass condition.
 
 **Known limitation to document:** a state-vector policy cannot perceive these lights at all. Note it
-in `CONTRACT.md` beside the axis — though the camera-only statement at the top of that section
-already covers it.
+in Phase 7 Step 6's results notes beside the axis — though the camera-only statement at the top of
+that list already covers it.
 
 ---
 
 ## Still open
 
-1. ~~**Who owns the Policy adapter?**~~ **Resolved 2026-08-30.** We do. The evaluated model is an
-   AV3 camera submission and the adapter is ported from
-   `wingfin-osm-scenarionet-converter/tools/` into `src/scenariobank/av3/` — see **Phase 4 — the
-   model boundary**. The `RemotePolicy` callable signature survives only for the CLI diagnostics.
-   What is genuinely still open in its place: **the two rig fidelity gaps** recorded in
-   `rigs/av3.txt`'s header — fisheye rendered as an unwarped pinhole, and 4:3 rendered then squashed
-   by preprocess rather than native 16:9. Both are known, neither is fixed, and both belong in
-   `CONTRACT.md` so nobody reads their effect as a model defect.
-2. **`max_steps` per category** — the numbers are a guess until you watch the expert run each
-   category. Set them at the end of Phase 4 from observed step counts (e.g. p95 x 1.5), not before.
-3. **Which exit for `t_junction` and `roundabout`.** Phase 1 discovers the sockets; the choice
-   between them is yours and should be recorded with a reason in `docs/reference/destinations.md`.
+1. **The two rig fidelity gaps** recorded in `rigs/av3.txt`'s header — fisheye rendered as an
+   unwarped pinhole, and 4:3 rendered then squashed by preprocess rather than native 16:9. Both
+   are known, neither is fixed, and both belong in Phase 7 Step 6's results notes so nobody reads
+   their effect as a model defect.
+2. ~~`max_steps` per category~~ **resolved**: `step_budget()` from the measured route length
+   (`categories.py:185`).
+3. ~~Which exit for `t_junction` and `roundabout`~~ **resolved**: `docs/reference/destinations.md`
+   records the exit and its reason per category.
 4. **Bank size beyond 5 seeds.** 35 is the shipping bank. `--count` is a flag, so growing it is one
-   regeneration away — but `CONTRACT.md` states the 20% granularity, so growing it later changes
-   what a success rate means to the frontend. Decide before handoff, not after.
+   regeneration away — but the results notes state the 20% granularity, so growing it later changes
+   what a success rate means to the webapp. Decide before the push is written, not after.
 5. **One bridge per running simulation** *(2026-09-13)*. The server holds one connection; a rig
    running one simulation per card runs one bridge per card. `run --bridge-port` on the client,
    a container name per card in `bridge.sh`, and a base port that is not wing-sim's 5558.
@@ -5393,20 +5298,20 @@ colleague moving between the two should not have to relearn anything.
 - Every `${VAR:-default}` fallback must be an **in-repo path that exists** (`${BANK_DIR:-./banks}`),
   so an unset variable can never make Docker create a root-owned dir in `$HOME`.
 - Mount `/etc/localtime:ro` (else timestamps go UTC-adrift) and `/etc/passwd:ro` (else
-  `pwd.getpwuid()` raises for a host uid with no passwd entry — this bites at `import torch_tensorrt`
-  module scope, so it will matter the moment the AV3 adapter lands).
+  `pwd.getpwuid()` raises for a host uid with no passwd entry — `import torch_tensorrt` calls it
+  at module scope). The sim container runs as root (Phase 5 Step 1); the mounts are the studio's.
 
 **Docs**
 - The sibling repo has no root `CONTRACT.md`; its convention would be `docs/reference/<topic>.md`
-  with a 1-3 line trap summary in `CLAUDE.md` pointing at it. Because this contract is
-  cross-team and the repo is standalone, keep `CONTRACT.md` at the root and *also* add the trap
-  lines to `CLAUDE.md`.
+  with a 1-3 line trap summary in `CLAUDE.md` pointing at it. When the results notes become a
+  file (Phase 7 Step 6, after Still open 7), keep `CONTRACT.md` at the root because it is
+  cross-team and the repo is standalone, and *also* add the trap lines to `CLAUDE.md`.
 - If you write a `CLAUDE.md` here: **hard budget under 30 KB**, traps only (1-3 lines + pointer),
   measurements live in `docs/reference/`. The sibling's grew to 223 KB by appending before it had
   to be split.
 - Two standing rules worth carrying over: **never quote a measured figure from a doc, re-measure
-  it** — which is why the `LEVELS` table is marked provisional until Phase 4b writes
-  `level-calibration.md` — and **blast radius is an acceptance criterion**: a fix that changes
+  it** — the `LEVELS` table cites `level-calibration.md`, not the other way round — and **blast
+  radius is an acceptance criterion**: a fix that changes
   things that were not wrong gets reverted however good its numbers look.
 
 ---
@@ -5423,7 +5328,7 @@ colleague moving between the two should not have to relearn anything.
 - `converter-scenarionet-stage2-redesign/tools/policy_client.py:337` — `RemotePolicy`. Its
   signature is now the **diagnostic** contract only (see Phase 4); the evaluated model is AV3.
 - `converter-scenarionet-stage2-redesign/tools/{camera_rig,av3_model,openpilot_policy,av3_probe}.py`
-  and `rigs/av3.txt` — ported into `src/scenariobank/av3/` by Phase 4. Already MetaDrive-shaped.
+  — the provenance of `src/scenariobank/av3/` (ported in Phase 4); ours is the source of truth now.
 - `/home/keith/Desktop/work/wingfin/wing-sim/orchestrator/src/` — **reference only; import nothing
   (R1).** Read before writing Phase 7:
   - `runner/queue.py` — the single-slot loop, and `recover()`'s adopt-don't-requeue discipline.
@@ -5448,5 +5353,3 @@ colleague moving between the two should not have to relearn anything.
   which our studio image inherits rather than repeats.
 - `wingfin-osm-scenarionet-converter/docker/openpilot/Dockerfile` and `scripts/bridge.sh` — the
   bridge image Phase 4 Step 7 talks to, reused unchanged. `bridge.sh` is how it is started.
-- `converter-scenarionet-stage2-redesign/src/osm_scenario/acquisition.py:199-247` — the manifest
-  writer to model `manifest.py` on.
