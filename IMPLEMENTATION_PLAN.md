@@ -30,35 +30,54 @@ Everything in this plan was verified against the MetaDrive source actually insta
 
 ---
 
-## How this ships — one queue, two orchestrators, two rigs
+## How this ships — one queue, one agent per rig, two rigs
 
 **Decision (2026-09-01, with Keith).** This bank is not driven by a CLI and a JSON file. Work
-arrives from the existing webapp, is queued on a **NAS**, and runs on **two rigs**. Four processes,
-and it matters which are ours:
+is queued on a **NAS** and runs on **two rigs**.
+
+**Revised 2026-09-13, with Keith.** The producer is **our studio**, served from the NAS; Tyrone's
+webapp no longer puts jobs on the queue, it receives our results. And the "MetaDrive orchestrator"
+box is gone: nothing on the NAS dispatches. A **rig agent**, one container per rig with a worker
+per GPU, takes a card's lock and *only then* leases a job — *lease when a card is free*. The queue
+itself knows messages, not GPUs (see Phase 7, **What the queue knows**), so the only process that
+can know a card is free is the one holding it. Four containers, and it matters which are ours:
 
 ```
-  frontend
-     |  put()
-     v
-  +---------------------------- NAS ------------------------------+
-  |  wfqueue        multi-topic SQLite queue: lease / ack / nack   |
-  |     |           at-least-once, priority then FIFO              |
-  |     +-- lease -->  CARLA orchestrator      (Tyrone's)          |
-  |     +-- lease -->  MetaDrive orchestrator  (OURS)              |
-  |                      reads the options, picks a rig and a GPU, |
-  |                      calls the runner, saves what comes back   |
-  +---------------------------+------------------+----------------+
-                      call    |                  |    call
-                              v                  v
-                      +--- rig A ----+   +--- rig B ----+
-                      |  md-runner   |   |  md-runner   |   (OURS)
-                      |  container   |   |  container   |
-                      |  GPU lock <--+---+--> CARLA takes these cards too
-                      +--------------+   +--------------+
+ NAS ─────────────────────────────────────────────────────────────────────────────────
+   [1] studio      scenariobank-studio   OURS. Authors banks; writes the bank to the share,
+                                         then put()s the job; reads results off the NAS store
+                                         and pushes each new one to Tyrone's webapp
+       wfqueue     not a container of ours: the queue service already on the NAS
+                   (docs/queue-docs/, WFQUEUE_URL). Lease / ack / nack, at-least-once,
+                   priority then FIFO. Also leased by the CARLA orchestrator (Tyrone's)
+       share       banks/<bank_id>  models/  results/<job_id>   mounted on both rigs
+
+ rig A (rig B identical) ─────────────────────────────────────────────────────────────
+   [2] agent       scenariobank-sim, no GPU   OURS. One per rig, a worker per card; the
+                                              docker socket, the share and the lock dir
+                                              mounted. Per worker: lock the card, lease
+                                              one job, run [3]+[4], DELIVER the results to
+                                              the NAS, ack, release
+        worker gpu0 ─► flock gpu0 ─► lease ─► [3] bridge-gpu0  openpilot, port 5558
+                                              [4] sim-gpu0     scenariobank-sim, device 0
+        worker gpu1 ─► flock gpu1 ─► lease ─► [3] bridge-gpu1  openpilot, port 5559
+                                              [4] sim-gpu1     scenariobank-sim, device 1
+                        ▲ CARLA and hand-run scripts take these same cards, through the
+                          same lock files and no queue of ours
 ```
 
-**Ours:** the MetaDrive orchestrator on the NAS, the runner on each rig, and the container that
-simulates. **Not ours:** the queue, the frontend, and the CARLA orchestrator.
+| # | container | image | where | lifetime | GPU |
+|---|---|---|---|---|---|
+| 1 | studio | `scenariobank-studio` (built here, FROM the sim image) | NAS | always up | no |
+| 2 | rig agent | `scenariobank-sim` (`python -m scenariobank agent`) | each rig, one | always up | no |
+| 3 | openpilot bridge | `metadrive-wingfin-openpilot:prod` | each rig, one per *running* simulation | for the job | no |
+| 4 | simulator + model | `scenariobank-sim` (`scripts/sim-run.sh run …`) | each rig, one per running job | for the job | that card |
+
+**Ours:** the studio, the rig agent, and the two containers a job runs in. **Not ours:** the
+queue, Tyrone's webapp (a consumer of our results), and the CARLA orchestrator. A rig with two busy
+cards runs five containers; three images in total, all built from this repo on the rig (Phase 5).
+The queue is not something we run — on the laptop its stand-in is Phase 7 Step 0's replica, a
+plain Python process.
 
 This supersedes "Phase 7 — optional, build only if asked" and the shared-`jobs`-table design that
 replaced it. Phase 7 is the deliverable. It also supersedes the state-vector policy boundary: see
@@ -70,14 +89,16 @@ some other route -- most likely a cronjob. The runner takes a local path and nev
 ### The words, because two projects use one of them differently
 
 wing-sim calls its **rig-side** service "the orchestrator" (`orchestrator/README.md`: *"Owns the
-rig: one queue, one lock, one archive, one database"*). Here the orchestrator is on the NAS. Every
-sentence in Phase 7 uses these four words in exactly this sense:
+rig: one queue, one lock, one archive, one database"*). Here there is no orchestrator of ours at
+all (since 2026-09-13): the rig-side **agent** is our only long-running process, and it pulls.
+Every sentence in Phase 7 uses these five words in exactly this sense:
 
 | word | means |
 |---|---|
 | **queue** | `wfqueue` on the NAS. Not ours. `docs/queue-docs/`. At `http://192.168.1.90:9090` today (the doc's own header says `localhost:8080` because it was rendered by a dev copy); read from `WFQUEUE_URL`, never hard-coded. |
-| **orchestrator** | our MetaDrive dispatcher on the NAS. Leases, plans, calls, saves. |
-| **runner** | our HTTP service on each rig. Owns that rig's locks and its containers. |
+| **orchestrator** | *retired 2026-09-13; there is none of ours.* The word still names Tyrone's rig-side CARLA service. |
+| **agent** (was **runner**) | our one container per rig, a worker per GPU: lock, lease, run, deliver, ack. Owns that rig's locks, its bridges and its simulator containers. |
+| **bridge** | openpilot's planner and controller behind a TCP port — one process per *running* simulation, a resource the worker starts, not a controller. |
 | **container** | the image that actually simulates. Calls `run_bank()`. |
 
 ### R1 — the independence rule (hard constraint)
@@ -85,9 +106,9 @@ sentence in Phase 7 uses these four words in exactly this sense:
 **Tyrone's code is a reference, never a dependency.** No module of his is imported by anything here.
 Read it to avoid rediscovering failures he already paid for; write our own.
 
-Under this topology R1 costs almost nothing, because **neither side imports the other**. Two
-orchestrators lease from one queue and call their own runners; there is no seam between the two
-codebases at all. What is shared is a queue and a lock *path*, and neither violates R1, because **a
+Under this topology R1 costs almost nothing, because **neither side imports the other**. His
+orchestrator and our agent lease from one queue, each running its own containers; there is no
+seam between the two codebases at all. What is shared is a queue and a lock *path*, and neither violates R1, because **a
 schema is data and a path is not a library**:
 
 - the queue -- HTTP against a documented API, using the stdlib client the server itself serves
@@ -109,7 +130,7 @@ prerequisite for anything here.
 
 The GPU argument is the weakest justification. A flock is advisory and kernel-released on holder
 death, and his `001_initial.sql` says outright that the `gpu_lease` table is "Observability only,
-NOT the authority." Two orchestrators polling one rig's lock already cannot double-book that card.
+NOT the authority." Two consumers polling one rig's lock already cannot double-book that card.
 
 What the queue fixes is what a lock cannot express:
 
@@ -117,7 +138,7 @@ What the queue fixes is what a lock cannot express:
   leases by priority then FIFO by id, so the order is a property of the queue rather than of who
   polled first.
 - **Work that outlives its worker.** A lease expires and the message returns to `ready` on its own.
-  An orchestrator that dies mid-dispatch loses nothing, which is not true of a lock plus a list.
+  An agent that dies mid-run loses nothing, which is not true of a lock plus a list.
 - **A place for jobs that are wrong.** `nack` past `max_attempts` dead-letters, and dead is
   inspectable and requeueable. A wedged job stops being a mystery.
 - **One screen**, not two tabs where a user guesses why their job is not moving.
@@ -128,9 +149,10 @@ What the queue fixes is what a lock cannot express:
   `rig/lock.py:39-40`), which was right when a rig had one card. With two cards a machine-wide lock
   serialises the whole rig and "which GPU is free" cannot be expressed. Phase 7 names it per device
   and records the incompatibility as a question for Tyrone rather than assuming an answer.
-- **Where the frontend reads results from.** Ours are saved on the NAS by our orchestrator; whether
-  the webapp reads them from us or the queue carries them is not decided.
-- ~~The topic name.~~ **`metadrive`**, one topic for our orchestrator; CARLA's is Tyrone's to
+- **Where the frontend reads results from.** Ours are delivered to the NAS by the rig agent
+  (Phase 7, **Files**); the studio reads them there and pushes them to Tyrone's webapp. Where on
+  the NAS they finally live — most likely a database — is Still open 7.
+- ~~The topic name.~~ **`metadrive`**, one topic for our agent; CARLA's is Tyrone's to
   name. *(Pinned 2026-09-08; Phase 7's test block already assumed it.)*
 
 ### Three things the served client does that the doc does not say
@@ -143,7 +165,7 @@ client rather than of the API, and each names the step that must handle it.)*
 - **`_request` retries a POST** on 5xx and transport errors (`retries=2`, backoff 0.5 s). A
   retried `put` without `dedupe_key` can enqueue one run twice — so a producer mints the job id
   *before* `put()` and passes it as `dedupe_key` (Phase 2c Step 12). A retried `ack` after the
-  first one landed returns `409` as a `QueueHTTPError`, which the orchestrator reads as "already
+  first one landed returns `409` as a `QueueHTTPError`, which the agent reads as "already
   settled", not as failure (Phase 7 Step 5).
 - **`consume()` defaults to `poll_interval=60`.** Long-polling is `poll_interval=0, wait=N`; with
   the default an empty long-poll is followed by a 60 s sleep (Phase 7 Step 5).
@@ -159,8 +181,8 @@ otherwise conclude the command line is the product. It is not.
 
 | surface | for | whose |
 |---|---|---|
-| **the studio** (Phase 2c) | authoring a bank: pick a scenario type, build it, look at every scenario, swap a poor seed — and later, submit a run onto the queue | ours |
-| **the wing-sim webapp** | the other producer onto the same queue | Tyrone's |
+| **the studio** (Phase 2c) | authoring a bank: pick a scenario type, build it, look at every scenario, swap a poor seed — and later, submit a run onto the queue. **Served from the NAS**, and the only producer onto the queue (2026-09-13) | ours |
+| **the wing-sim webapp** | receives our results, pushed by the studio; no longer a producer (2026-09-13) | Tyrone's |
 | ~~the CLI~~ | **not a surface.** The studio's worker process, the container's entrypoint, and a maintenance tool for the generated references | ours |
 
 **Exactly one command is user-facing: `scenariobank studio`, which starts the web page.** Everything
@@ -523,7 +545,7 @@ Two consequences for reproducibility, which for this axis alone rests on code we
 ## Decisions locked
 
 - **Repo**: new standalone git repo in `metadrive-PG/`. Conventions copied from the converter repo (uv, Typer, `src/` layout, `[project.scripts]`), no shared code.
-- **Frontend**: **two producers onto one queue** — the wing-sim webapp via a `/metadrive` section, and our own studio (Phase 2c, Step 12). `run_bank(...)` stays importable and CLI-free, so the container and the studio's worker are two callers of one core. *(Amended 2026-08-30 — was "CLI + `results.json`", with Phase 7 optional. Amended 2026-09-01 — the queue moved to the NAS and there are now two rigs and two orchestrators; see **How this ships**. Amended 2026-09-02 — the studio submits runs too, so the webapp is no longer the only way onto the queue.)*
+- **Frontend**: **one producer onto the queue, our studio** (Phase 2c, Step 12), served from the NAS; the wing-sim webapp receives our results. `run_bank(...)` stays importable and CLI-free, so the container and the studio's worker are two callers of one core. *(Amended 2026-08-30 — was "CLI + `results.json`", with Phase 7 optional. Amended 2026-09-01 — the queue moved to the NAS and there are now two rigs. Amended 2026-09-02 — the studio submits runs too. Amended 2026-09-13 — the studio is the only producer, Tyrone's webapp a consumer of results, and the NAS orchestrator is replaced by an agent on each rig; see **How this ships**.)*
 - **The GUI is the surface; the CLI is the engine.** No authoring workflow requires a terminal. The CLI is not deleted because a subprocess is forced by `BaseEngine.singleton` — see **What a person actually uses** for the reasoning, so this is not reopened as a matter of preference. *(Decided 2026-09-02, Keith.)*
 - **Categories**: the seven as drafted.
 - **Seeds**: fixed at 0, 1, 2, 3, 4 for every category. 35 maps.
@@ -584,22 +606,26 @@ metadrive-PG/
       invoke.py             #   builds a job's argv and validates it against the CLI's own flags,
                             #   so the page cannot offer a flag the program does not accept
       static/index.html     #   the whole frontend, one file, no build step
-    nas/                    # Phase 7, NAS side — our MetaDrive orchestrator (R1: imports
-      orchestrator.py       #   nothing of wing-sim's). The lease loop: consume, plan, call,
-                            #   extend, save, ack. Busy is a nack, never a failure.
-      rigs.py               #   the rig client + the GPU plan. The plan may be stale; the
-                            #   rig's lock is the truth.
-      results.py            #   our SQLite + results tree. Per-scenario rows; idempotent ingest.
-      options.py            #   GET /options: the six axes as data, for the frontend's form
+    agent/                  # Phase 7 — the rig agent (R1: imports nothing of wing-sim's).
+                            #   One container per rig, a worker per GPU. Rewritten 2026-09-13
+                            #   from a nas/ orchestrator + rig/ HTTP service: nothing on the
+                            #   NAS dispatches, nothing on the rig listens.
+      loop.py               #   per worker: lock the card, lease one job, run, deliver, ack.
+                            #   A held lock is a sleep, never a nack.
+      lock.py               #   flock per GPU, holder file kept separate, /proc/locks check
+      session.py            #   bridge up on this card's port, sibling sim container via
+                            #   scripts/sim-run.sh, supervise, tear down. `agent --once job.json`
+      supervise.py          #   log file + exit-code file + status file per card. No state held.
+      deliver.py            #   results to the NAS: the share copy + rename now; the NAS
+                            #   database when it exists (Still open 7). Ack only after this.
+      paths.py              #   names in the job -> paths on the rig, under the three roots
       queue_client.py       #   vendored verbatim from the NAS (`curl -O $WFQUEUE_URL/source/client.py`,
                             #   so its header carries the real address); a test pins its sha256
                             #   against docs/queue-docs/ so a server-side change to the client is
                             #   noticed rather than absorbed. Do not reimplement.
-    rig/                    # Phase 7, rig side — the service the orchestrator calls
-      service.py            #   POST/GET/DELETE /runs, GET /health. Idempotent on job_id.
-      lock.py               #   flock per GPU, holder file kept separate, /proc/locks check
-      session.py            #   take lock, launch sibling container, supervise, tear down
-      supervise.py          #   log file + exit-code file. No state held anywhere.
+    web/ (Phase 7 additions)
+      options.py            #   GET /options: the six axes as data, for the studio's submit form
+      results.py            #   the NAS-side index the studio reads; the push to Tyrone's webapp
       archive.py            #   evidence, written before the run touches anything
   rigs/av3.txt              # the six AV3 cameras, ported from the converter
   docker/studio.Dockerfile  # the studio image: FROM metadrive-wingfin-sim, plus the web group
@@ -1033,8 +1059,8 @@ then a guess, then `seeds -c curve --keep 0,1,2,3 --scan 0-30`, then `inspect -b
 only -o /tmp/x.png`, then a second image viewer, then `replace`. The commands are right; the surface
 is wrong. **The thing being judged is a picture, and pictures do not belong in a terminal.**
 
-**This is not Phase 7.** Phase 7 runs a *submitted model* against a finished bank: an orchestrator
-on the NAS, a runner on each rig, a queue between them. This is for us, authoring the bank, on
+**This is not Phase 7.** Phase 7 runs a *submitted model* against a finished bank: an agent on
+each rig, a queue on the NAS between it and the studio. This is for us, authoring the bank, on
 localhost, with no queue, no rig and no container. Nothing here is designed around Phase 7 and
 nothing here blocks on it. The read endpoints live in their own router so a later decision *can*
 mount them elsewhere; that is the entire extent of the coupling.
@@ -1066,7 +1092,7 @@ optimisation and is deliberately **not** built here.
 A global slot, for the same reason the rig has one: two `generate`s into one bank directory is a
 corrupt manifest. Job state is rebuilt by reading two files on disk — `.studio/jobs/<id>/log` and
 `.studio/jobs/<id>/exit` — and never kept in a variable, which is what makes a page reload, or a
-studio restart, show a running job rather than lose it. Same property Phase 7's runner turns on, for
+studio restart, show a running job rather than lose it. Same property Phase 7's agent turns on, for
 the same reason.
 
 **3. Localhost only, and it says so.**
@@ -1965,10 +1991,14 @@ it, because all eleven categories resolve.)*
 *(2026-09-02, Keith: "eventually the ui needs to handle selecting a model and running it against a
 bank, but the output is essentially merely adding it to the queue".)*
 
-Choose a bank, choose a model, choose the six option axes, and press submit. **The action is
-`queue.put(...)` onto the NAS topic and nothing else** — nothing runs on this machine, and no
-results come back to this page. The studio becomes the second producer onto the queue, alongside
-the wing-sim webapp.
+Choose a bank, choose a model, choose the six option axes, and press submit. **The action is:
+write the bank to the share, then `queue.put(...)` onto the NAS topic — in that order, and nothing
+else** — nothing runs on this machine, and no results come back to this page. The studio is the
+only producer onto the queue (2026-09-13; the wing-sim webapp receives results instead). The order
+is not tidiness: the bank goes to `banks/<bank_id>` on the NAS share *before* the job is visible,
+so a rig never leases a job whose bank is not there yet (it would dead-letter it), and no card
+idles on a transfer once it has leased — Keith's requirement, 2026-09-13. The job carries the bank
+**id**, not a path; the agent resolves it on the rig (Phase 7, **Files**).
 
 The form is rendered from Phase 7's `GET /options`, for the same reason every other form here is
 generated: a hand-written copy of the six axes is a second declaration of them.
@@ -2581,7 +2611,7 @@ the reader. **Met** — 546 tests pass, `uv run scenariobank importing` leaves t
 # Phase 4 — Runner, results schema, reference policies ✅  ⟵ *Step 8's gate met 2026-09-12*
 
 > **The commands in this phase are machine-run.** `run`, `calibrate`, `validate` and `selftest`
-> are executed by the container's entrypoint, by the orchestrator, and by CI — never typed by a
+> are executed by the container's entrypoint, by the rig agent, and by CI — never typed by a
 > person, and **no studio screen is owed for them**. The command blocks below are developer
 > verification, and they stay in that form deliberately. See **What a person actually uses**.
 
@@ -2863,7 +2893,7 @@ inventing them at each site:
   queue message's id or the studio-minted one; `null` from the CLI), `attempt` (`int | None`:
   the lease's `attempts`, so a redelivered job's second result says it is one — these two are
   the only queue facts a result carries, and the queue is otherwise invisible below the
-  orchestrator), `stopped` (`bool`: the batch was told to stop, so the orchestrator can tell a
+  agent), `stopped` (`bool`: the batch was told to stop, so the agent can tell a
   partial run from a whole one without scanning rows),
   `bank` (`path`, `id`, `source`, `schema_version` — `schema` is a pydantic name — and
   for a recorded bank `provenance` and `attribution` — the entry already carries both),
@@ -2888,7 +2918,7 @@ inventing them at each site:
   those files last. That per-scenario file is the progress signal Phase 7 Step 1 reads (its
   "record directory and exit-code file"), and it is why a run killed at 30 of 35 is a scored
   partial run rather than a lost one. *(Added 2026-09-08, for the queue: a lease is a clock and
-  the orchestrator extends it off progress it can see.)*
+  the agent extends it off progress it can see.)*
 - **Stoppable.** `run_bank` installs a SIGTERM/SIGINT handler that sets a flag; the loop reads it
   through `run_episode(stop=...)` once per step (an additive parameter on Step 2's loop, with a
   `stopped: bool` on `Drive` so a stopped episode is not misreported as capped or budgeted); the
@@ -3910,11 +3940,16 @@ submission's paths on this machine; detached, because a killed client SIGTERMs t
    `AV3Policy.start_episode` and try again. *(Re-run 2026-09-10 **as root**, the verify block
    as written: it drove. `status ok`, `max_step`, 3200 steps, 640 actions, 929.5 s wall, one
    decision per 1.45 s -- the 1149 ms pass plus the rig read and the bridge round trip. The
-   uid is the cause, and `compose.yaml`'s `user:` line is Phase 5 Step 4's to reconcile.
+   uid is the cause; resolved in Phase 5 Step 1, 2026-09-13: **the sim container runs as
+   root**, and `user:` is the studio's alone.
    The row is not a drive to be proud of: `route_completion` 0.066 in the 32 simulated seconds
    the 100 Hz budget allows, no collision, no out-of-road; the car creeps. That is the model
-   and the bridge's longitudinal path on this scene, Step 8's subject, not the port's -- the
-   route-only `BridgePolicy` crawls the same way and the probe's inputs all agree.)*
+   and the bridge's longitudinal path on this scene, not the port's -- the probe's inputs all
+   agree. Filmed 2026-09-10 (`out/av3-film`): the car rolls two car lengths in its lane and
+   stops on the empty road, throttle +0.53 easing to a held brake, because the model predicts a
+   near-stationary path on a scene it never trained on; the same bridge on route-only waypoints
+   drives the road at 3 m/s. **Keith, 2026-09-13: the model's behaviour, not the runner's.** A
+   finding for `CONTRACT.md`, not work in any phase.)*
    **The heartbeat.** A row at 1.45 s per decision prints nothing for fifteen minutes and reads
    as a hang, which is how the first re-run was nearly killed a second time. `run --heartbeat
    SECONDS` (10 by default, 0 for off; `run_bank(heartbeat_s=)`) is an `observe` hook,
@@ -4108,11 +4143,24 @@ command is for, when it is re-run and how is `docs/calibrating-levels.md`.
 
 # Phase 5 — Containers ⬜
 
-> **Machine-run.** These are entered by CI, by the orchestrator and by the studio's own worker, not
+> **Machine-run.** These are entered by CI, by the rig agent and by the studio's own worker, not
 > by a person at a terminal — with one exception, `docker compose up studio`, which serves a page a
 > person does use. See **What a person actually uses**.
 
-**Goal:** the same numbers on your machine, in CI, and on the frontend's host.
+**Goal:** the same numbers on the laptop, in the NAS's studio, and on each rig.
+
+**Compose is the NAS's and the laptop's; the rig runs one line.** *(2026-09-13.)* `docker compose
+up studio` is the one command a person types on the NAS. On a rig, Phase 7's agent starts each
+job as a sibling container with one `docker run`, and that line is **`scripts/sim-run.sh`**
+(Step 1): image, mounts, user, environment, entrypoint, written once and used by the laptop,
+the Step 4 gate and the rig alike. Compose's `run` service is the laptop alias of that line; it
+is not the rig's launcher. **A rig has this repo and nothing else** — both images are built from
+it there (`bridge.sh build`; `sim-image.sh build`, which with no converter checkout beside the
+repo builds `docker/Dockerfile` as `scenariobank-sim:latest`), so on a rig
+`SIM_IMAGE=scenariobank-sim:latest`, set once in the agent's environment. The laptop keeps the
+converter's image as its default. Not yet verified: the model on the GPU inside
+`scenariobank-sim:latest` (Step 1's 2026-09-12 note) — the first thing to run on a rig after
+the build.
 
 **Reuse, do not rebuild.** This phase used to say "adapt `docker/Dockerfile` from the converter" and
 list the hard parts it already solves — `ubuntu:22.04`, `uv`, `UV_PROJECT_ENVIRONMENT=/opt/venv`,
@@ -4139,16 +4187,19 @@ it does on the host. The cost is that the mount shadows the converter's own sour
 **R1 is untouched.** We import none of that repo's code. We name one of its build products, the way
 a lockfile names a wheel.
 
-## Three containers, one of them ours
+## Four containers, three images, all built from this repo on a rig
 
-| | image | who builds it |
-|---|---|---|
-| 1 | `metadrive-wingfin-sim` | the converter repo. **Reused unchanged** — `generate`, `run`, the camera rig, the AV3 model |
-| 2 | `metadrive-wingfin-openpilot:prod` | the converter repo. **Reused unchanged** — the control stack behind TCP 5558 |
-| 3 | `scenariobank-studio` | **here.** `FROM` #1 plus fastapi, uvicorn, httpx2 |
+| # | container | image | where | lifetime | GPU |
+|---|---|---|---|---|---|
+| 1 | studio | `scenariobank-studio` — **here**, `FROM` the sim image plus fastapi, uvicorn, httpx | NAS | always up | no |
+| 2 | rig agent (Phase 7) | the sim image, `python -m scenariobank agent` — no fourth image | each rig, one | always up | no |
+| 3 | openpilot bridge | `metadrive-wingfin-openpilot:prod` — `bridge.sh build` from `docker/openpilot/`, the fork vendored | each rig, one per *running* simulation | for the job | no |
+| 4 | simulator + model | the sim image, `scripts/sim-run.sh run …` | each rig, one per running job | for the job | that card |
 
-**Phase 7 adds no fourth image.** Its Step 1 runner image is "extends Phase 5", and its Step 3
-launches each run as a *sibling container* — a run of #1 under a supervisor, not an image to build.
+The sim image is `metadrive-wingfin-sim:latest` where the converter checkout exists (the laptop)
+and `scenariobank-sim:latest` from `docker/Dockerfile` where it does not (a rig); `SIM_IMAGE`
+selects, `scripts/sim-image.sh` builds and checks (Step 1). The queue is not a container we run.
+A rig with two busy cards runs five containers.
 
 ## What is already in the base, measured by import rather than read off a label
 
@@ -4178,10 +4229,32 @@ the base, so on a machine that has both — which every machine does, the runner
 
 ## Steps
 
-### Step 1 — `compose.yaml`: our repo, their image, no build ⬜
+### Step 1 — `compose.yaml`, `scripts/sim-run.sh`: our repo, one image, one line ✅  ⟵ *met 2026-09-14: code in, all eight laptop checks pass*
 
-Two services over one image, plus `scripts/sim-image.sh`, which is the guard.
+Two compose services over one image, the rig's `docker run` line as a script, plus
+`scripts/sim-image.sh`, which is the guard.
 
+- **`scripts/sim-run.sh` — the line a rig executes for a job** *(added 2026-09-13)*.
+  `bash scripts/sim-run.sh <scenariobank args>` runs one command in the sim container and exits
+  with its code: `${SIM_IMAGE:-metadrive-wingfin-sim:latest}`, `--gpus device=$GPU` (all when
+  unset; `NO_GPU=1` for `generate`, `doctor`, `ExpertPolicy`), `--network host` (the bridge is on
+  loopback), `$REPO:/work:ro`, `${OUT_DIR:-$REPO/out}:/out`, `${MODELS_DIR:-$REPO/../models}:/models:ro`,
+  `/etc/localtime:ro`, `HOME=/tmp`, `MPLCONFIGDIR=/tmp/matplotlib`, entry `python -m scenariobank`;
+  the label guard first (`sim-image.sh`'s check), so a stale image says so before a run.
+  `GPU` and `BRIDGE_PORT` are its two per-card inputs (`run --bridge-port`, Step 3). Phase 7's
+  agent issues exactly this line; compose's `run` service below is its laptop alias.
+- **The sim container runs as root** *(2026-09-13, closing Phase 4 Step 7 note 7)*. As the host
+  uid, with `/etc/passwd` mounted, the scored AV3 row hung for four hours; as root it drove on the
+  laptop and on the rig. The cause is unexplained and root is the documented form. So `user:` and
+  the passwd mount move out of compose's shared block into the **`studio` service alone**, which
+  writes banks into the repo and must own them; `run` has neither. On a rig, `/out` is read by
+  the agent, which then owns the copy to the share, so root-owned results cost nothing.
+- **The `agent` service** *(2026-09-13; Phase 7 owns the code, this phase owns the container)*:
+  the sim image, no GPU, `/var/run/docker.sock`, the NAS share, `/var/lock/scenariobank`;
+  environment `SCENARIOBANK_BANKS`, `SCENARIOBANK_MODELS`, `SCENARIOBANK_RESULTS` as **host**
+  paths (a sibling's bind mounts are the host's, never the agent's own mount points),
+  `WFQUEUE_URL`, `SIM_IMAGE`. The socket mount is acceptable here where Step 2 rejected it for
+  the studio: the agent serves no HTTP.
 - **`image:` with no `build:` key on the runner.** A `docker compose build` in this repo must be
   unable to produce something under the tag `metadrive-wingfin-sim`; that is the failure the
   converter's own `wingfin.groups` label exists to catch, and the cheapest fix is to make it
@@ -4224,7 +4297,8 @@ Two services over one image, plus `scripts/sim-image.sh`, which is the guard.
   host is the one-line diagnosis.)*
 - **The runner mounts `.:/work:ro`.** Read-only *is* the test: a runner that can rewrite the bank
   it is scoring makes "the same numbers everywhere" uncheckable. `${OUT_DIR:-./out}:/out` is the
-  only writable path.
+  only writable path — and `../models:/models:ro` the second read-only one *(added 2026-09-13;
+  compose had no models mount at all, so a scored run could not use it)*.
 - **The studio mounts `.:/work` writable**, because authoring is the point — `generate` writes into
   `banks/`, `replace` rewrites a row, and the job log and queue live in `.studio/`.
 - `user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"` with `/etc/passwd:ro` and `/etc/localtime:ro`.
@@ -4244,11 +4318,170 @@ Two services over one image, plus `scripts/sim-image.sh`, which is the guard.
   *(Since 2026-09-12 it also has `build`, and its label check compares the image against
   `docker/Dockerfile`'s own `uv sync` line rather than a hard-coded list.)*
 
-**Verify alone:** `doctor` in the container prints the same commit and `drive_side: left` as the
-host; a `generate --out /work/banks/x` inside the runner fails on the read-only mount; the guard
-names the build command on a machine without the image.
+**Verify alone, step by step** *(expanded 2026-09-13; every check runs on the laptop today,
+none needs the queue)*. Before any of them:
 
-### Step 2 — `docker/studio.Dockerfile`: the one image built here ⬜
+```bash
+nvidia-smi -L                        # the card by name. "Driver/library version mismatch" → reboot the host first
+bash scripts/sim-image.sh status     # ends in "ready." — the sim image is present and its label matches the recipe
+ls banks/t-junction ../models        # the bank (not in git) and model_dev.yml + step_440000_trt_direct_full.ep
+uv run scenariobank doctor | grep -E 'commit|drive_side'   # the host's own answer, kept for 1.2
+```
+
+*(2026-09-13: the laptop rebooted; `nvidia-smi -L` lists the RTX 4050 again and the 595.91/595.84
+mismatch of the 12th is gone.)*
+
+**1.1 The guard runs before the container.** A missing or stale image must be named, not run.
+
+```bash
+SIM_IMAGE=nothing-here:latest bash scripts/sim-run.sh doctor; echo "exit=$?"
+```
+
+Expect: a non-zero exit, a line naming `bash scripts/sim-image.sh build`, and no `docker run`
+(`docker ps -a --latest` shows nothing new). If a container is created and *then* fails with
+"unable to find image", the guard is after the run, not before it.
+
+**1.2 The container's `doctor` equals the host's.** The phase's acceptance in one line.
+
+```bash
+NO_GPU=1 bash scripts/sim-run.sh doctor | grep -E 'commit|drive_side'
+```
+
+Expect: `commit: 85e5dadc…`, `requested: 85e5dadc` and `drive_side: left`, byte-for-byte the
+lines the host printed above. A different commit means `/work` is not the mount `site` reads
+`src/` from (the "Why no `PYTHONPATH`" paragraph); a missing `requested:` means the image's own
+metadrive is answering, not the pinned one.
+
+**1.3 The read-only mount refuses a write.** Read-only *is* the test.
+
+```bash
+NO_GPU=1 bash scripts/sim-run.sh generate --out /work/banks/x --bank-id x -c curve --seeds 0; echo "exit=$?"
+ls banks/x 2>&1
+```
+
+Expect: exit 1 with `Read-only file system` in the traceback (the `mkdir` at `bank.py:556` is
+the first write, so it fails before any rendering), and `ls: cannot access 'banks/x'`. If a
+`banks/x` appears, `/work` is mounted `rw` and the numbers-everywhere claim is uncheckable.
+
+**1.4 `/out` is the one writable path, and root owns it.**
+
+```bash
+NO_GPU=1 bash scripts/sim-run.sh run --bank /work/banks/t-junction \
+    --policy scenariobank.policies:ExpertPolicy --out /out/gate; echo "exit=$?"
+ls -ln out/gate/results.json                  # owner uid 0 — expected, the root bullet above
+jq '.summary, .env.metadrive_commit, .bank' out/gate/results.json
+```
+
+Expect: exit 0; `summary.n` equals the bank's scenario count with `by_status.ok` the same
+number; the commit above; `bank.path` reads `/work/banks/t-junction` (the mount's path, the
+label Step 4 deletes). This file is also the laptop half of Step 4's gate, so keep it.
+
+**1.5 The clock is the host's.** The trap that makes timestamps hours adrift.
+
+```bash
+jq -r '.started_utc' out/gate/results.json; date -u +%FT%TZ
+```
+
+Expect: the same minute. Hours apart means `/etc/localtime` is not mounted.
+
+**1.6 The GPU reaches the container, through the script's `--gpus device=$GPU`.**
+
+```bash
+GPU=0 bash scripts/sim-run.sh doctor | grep -E 'commit|drive_side'      # not NO_GPU this time
+docker run --rm --gpus device=0 --network host -v $PWD:/work:ro -v $PWD/../models:/models:ro \
+    -e MODEL_CONFIG=/models/model_dev.yml -e MODEL_CHECKPOINT=/models/step_440000_trt_direct_full.ep \
+    ${SIM_IMAGE:-metadrive-wingfin-sim:latest} bash /work/scripts/av3-probe.sh   # the Phase 4 Step 7 probe, all three stages
+```
+
+Expect: `doctor` unchanged from 1.2, and the probe's three stages all running — six named
+sensors, no `rgb_camera`, `image_buffers <= 9`, six `ok` rows, then the model stage with the
+engine loaded and the forward pass running (`forward pass median … ms`). The probe is a shell
+script, so it goes through `docker run` directly: `sim-run.sh`'s entry is `python -m
+scenariobank` and it runs nothing else — which is why the models mount and the two `MODEL_*`
+variables are spelled out here; without them the probe stops before the model stage with `no
+model config at ../models/model_dev.yml`. The probe's own closing verdict (`result FAILED` on
+the nav-response conversion) is the model's, Phase 4 Step 7's finding, and is not judged here. Failure reads: `nvml error: driver/library version mismatch` → the host's driver
+moved under the module, reboot (the 2026-09-12 trap above); `could not select device driver ""
+with capabilities: [[gpu]]` → the NVIDIA container runtime is not installed on this host; a probe
+that stops after the frame stage → the model stack, Phase 4 Step 7's problem, not this phase's.
+
+**1.7 The bridge answers through the script's `--network host`.** Step 3 proves the bridge
+itself; this proves the script's networking reaches it.
+
+```bash
+bash scripts/bridge.sh start && bash scripts/bridge.sh status     # "listening" on 127.0.0.1:5558
+bash scripts/sim-run.sh run --bank /work/banks/t-junction --scenarios t_junction_0000 \
+    --policy scenariobank.av3:BridgePolicy --camera-rig /work/rigs/av3.txt \
+    --step-hz 100 --decision-hz 20 --out /out/bridge-check; echo "exit=$?"
+jq '.results[0] | {status, steps, route_completion, failure_reason, wall_time_s}' out/bridge-check/results.json
+docker logs metadrive-wingfin-openpilot-bridge 2>&1 | tail -3    # not `bridge.sh logs`: that one follows, and never returns
+```
+
+Expect: exit 0, the row `status: ok` with the step count and route completion the 2026-09-12
+note above records for this row (3200 steps, 640 actions, route 0.78, `max_step`; about 7 s
+warm, about 20 s when the bridge has just started and acados compiles on the first `init`),
+and the bridge's log still on its planner chatter. A `connection refused` means the container is not on the host's
+network (a bridge network with `-p` gives the same symptom); a connect that succeeds and then
+times out on `init` means a previous simulation still holds the one connection the bridge serves
+(Step 3: `listen(1)`), so `bridge.sh stop && bridge.sh start` and rerun.
+
+**1.8 The scored AV3 row drives, as root, with a heartbeat.** The four-hour hang, closed.
+
+```bash
+bash scripts/sim-run.sh run --bank /work/banks/t-junction --scenarios t_junction_0000 \
+    --policy scenariobank.av3:AV3Policy --camera-rig /work/rigs/av3.txt --step-hz 100 --decision-hz 20 \
+    --model-config /models/model_dev.yml --checkpoint /models/step_440000_trt_direct_full.ep \
+    --heartbeat 30 --out /out/av3-check 2>&1 | tee out/av3-check.log
+jq '.results[0] | {status, steps, route_completion, failure_reason, wall_time_s}' out/av3-check/results.json
+```
+
+Expect: the engine loads (about 106 s; the two logged loader failures are the documented
+non-errors), then a heartbeat line every 30 s until the row ends, about five minutes for its
+decisions at this card's 1.1 s per pass; `status: ok`. Route completion and `failure_reason`
+are the model's result and are not judged here (Phase 4 Step 7 note 7: the car stopping is the
+model's behaviour). **Failure:** the engine has loaded, the bridge answered `ready`, and ten
+minutes pass with no heartbeat → the hang is back. First thing to read: `docker inspect
+--format '{{.Config.User}}' <container>` must print nothing (root); anything else means
+`user:` leaked back into the run line.
+
+Add to the failure reads: `torch.AcceleratorError: CUDA error: unspecified launch failure`
+mid-drive, and `nvidia-smi` afterwards printing `No devices were found` → the card has fallen
+off the bus (`journalctl -k | grep Xid` shows `Xid 79 … GPU has fallen off the bus` and `Xid 154
+… Node Reboot Required`). Nothing in the container did that; reboot the host and rerun.
+
+**1.9 The model in `scenariobank-sim:latest`** is the one check this step cannot run on the
+laptop with its default image: it is Step 4's 4.3, on a rig, and it is listed there.
+
+**Run 2026-09-13 (evening), on the laptop, converter's image.** `scripts/sim-run.sh` written;
+`compose.yaml` changed as the bullets say (`user:` and the passwd mount on `studio` alone, the
+models mount on `run`, the `agent` service under the `rig` profile so `docker compose up` never
+starts it on the laptop or the NAS); `tests/unit/test_images.py` gained one test pinning all of
+that against both files, 7 passed.
+
+| check | result |
+|---|---|
+| preflight | `ready.`; host `commit 85e5dadc…`, `drive_side: left` |
+| 1.1 | exit 1, `NOT PRESENT -- bash scripts/sim-image.sh build`, container count unchanged (22 before and after) |
+| 1.2 | `commit`, `requested: 85e5dadc`, `drive_side: left` identical to the host; exit 0 |
+| 1.3 | exit 1, `OSError: [Errno 30] Read-only file system: '/work/banks/x'` from `bank.py:556`; no `banks/x` |
+| 1.4 | exit 0 in 11 s; `results.json` owner uid 0; `n: 5, by_status.ok: 5, success_rate 1.0`; commit as above; `bank.path: /work/banks/t-junction` — kept as the laptop half of the Step 4 gate |
+| 1.5 | `started_utc 2026-09-13T16:07:34Z` against host `16:07:43Z` |
+| 1.6 | `doctor` unchanged with `--gpus device=0`; probe: six sensors, six `ok` rows, engine loaded, `forward pass median 1228 ms`; its verdict `result FAILED` on the nav-response conversion is the model's (Phase 4 Step 7). The plan's original probe line lacked the models mount and stopped at `no model config`; fixed above |
+| 1.7 | first attempt `Connection refused`: a stopped bridge from seven hours before held the name, exactly the documented reading. `bridge.sh stop && start`, rerun: `status: ok`, 3200 steps, 640 actions, route 0.782, `max_step`, 20.5 s (acados compiling on the fresh bridge's first `init`). `bridge.sh logs` follows the log and never returns; the check now reads `docker logs … | tail` |
+| 1.8 | **met 2026-09-14, on the rerun.** `docker inspect` on the running container: `User=[]` (root), `NetworkMode=host`, `/work` ro, `/out` rw, `/models` ro, one gpu request. `status: ok`, 3200 steps, 640 actions, `max_step`, route 0.066 (the host's own earlier run of this row: 0.0659), 815 s; 26 heartbeats at 30 s; `results.json` owned by uid 0; `nvidia-smi -L` lists the card afterwards; no Xid this boot. The first attempt, 2026-09-13, died at step ~113 with `CUDA error: unspecified launch failure` because the card had fallen off the bus after a host OOM (Xid 79, then Xid 154 `Node Reboot Required`) -- not the container's fault; the rerun after the 01:40 reboot on 2026-09-14 passed. |
+
+The bridge container does not survive a reboot: `bridge.sh status` first, `stop; start` if it shows Exited.
+
+So Step 1's code is in and all eight laptop checks pass: the scored AV3 row ran as root, with
+heartbeats, to `max_step` on the rerun after the reboot. Nothing committed.
+
+*Trap, for the record:* a laptop with 15 GB running the sim container with the model, the
+bridge, a browser and desktop apps can hit the OOM killer, and this driver (595.91 open
+kernel module) answers memory pressure by dropping the card off the bus, which only a reboot
+brings back. On a rig this is not a concern; on the laptop, close what is not needed before
+1.8, and read `nvidia-smi` first when a GPU row dies mid-drive.
+
+### Step 2 — `docker/studio.Dockerfile`: the one image built here ✅  ⟵ *met 2026-09-14 on the laptop; 2.4 is the NAS's, after Still open 6*
 
 `FROM scenariobank-sim:latest`, then the web group. Nothing else — no `pull_asset`, no EGL
 patch, no glvnd manifest, all inherited.
@@ -4277,20 +4510,89 @@ mounts `/var/run/docker.sock` into a server with no authentication, the same exp
 exists to limit; and Phase 7's supervisor is unwritten, so converging on it now means guessing at
 an interface its own step has not defined. Revisit when Phase 7 Step 3 is real.
 
-**Verify alone:** the studio comes up on 127.0.0.1:8770, the Run tab lists the commands, and a
-`generate` job launched from the page writes a bank into the mounted repo — which is the claim that
-this image must contain MetaDrive.
+**Verify alone, step by step** *(expanded 2026-09-13)*. The claim under all of it: this image
+contains MetaDrive and writes as the host uid.
 
-### Step 3 — the bridge: confirm, do not build ⬜
+**2.1 The image builds as one thin layer, and the tests still pin the tags.**
 
-`metadrive-wingfin-openpilot:prod` is reused as it stands. This step exists so that "nothing to do"
-is a checked fact and not an assumption.
+```bash
+docker compose build studio
+docker images scenariobank-studio --format '{{.Tag}} {{.Size}}'      # one tag, ~13.4 GB: the base plus ~40 MB
+docker history scenariobank-studio:85e5dad --format '{{.Size}} {{.CreatedBy}}' | head -3
+uv run pytest tests/unit/test_images.py -q                           # 7 passed (Step 1 added one)
+```
+
+Expect: the top layer is tens of MB, not 13 GB — a 13 GB top layer is the `chmod -R` trap
+above, the venv copied up. The size printed is the whole image and it is fine that it reads as
+the base's; what must not happen is a second 13 GB.
+
+**2.2 Compose puts each setting on the one service that needs it.**
+
+```bash
+# `config` normalises volumes to the long form, so a grep for `:/work` finds nothing; and the
+# agent only appears under its profile. Read the services out of the normalised form instead:
+docker compose --profile rig config | awk '/^  [a-z]+:$/{svc=$1} /target: \/work$/{getline n; print svc, "/work", (n ~ /read_only: true/ ? "ro" : "rw")} /target: \/etc\/passwd/{print svc, "passwd"} /^    gpus:/{print svc, "gpus"} /^    user:/{print svc, $2} /docker.sock/{print svc, "docker.sock"}' | sort -u
+```
+
+Expect exactly six lines: `agent: docker.sock`; `run: gpus`; `run: /work ro`; `studio: passwd`;
+`studio: 1000:1000`; `studio: /work rw`. `user:` under `studio` only; `gpus` under `run` only;
+`docker.sock` under `agent` only; `/work:ro` on `run`, `/work` writable on `studio`. Anything on a second service is the leak
+1.8 would catch the slow way.
+
+**2.3 The page serves, and a job it launches writes a bank the host uid owns.**
+
+```bash
+docker compose up -d studio
+curl -s http://127.0.0.1:8770/api/doctor | jq -r '.commit'          # 85e5dadc…, the same commit again
+# in a browser: http://127.0.0.1:8770/ → Run tab → generate, bank id "studio-check", category curve, one seed
+# -- or the same thing the page does, without the browser:
+curl -s -X POST http://127.0.0.1:8770/api/jobs -H 'Content-Type: application/json' \
+  -d '{"command":"generate","options":{"--out":"banks/studio-check","--bank-id":"studio-check","--category":["curve"],"--seeds":"1"}}'
+curl -s http://127.0.0.1:8770/api/jobs/<job_id> | jq -r '.state'     # finished
+ls -ln banks/studio-check/manifest.json                               # owner is YOUR uid, not 0
+docker compose down
+```
+
+Expect: the page lists the commands, the job finishes in the job log, and the bank is owned by
+the host uid — the whole reason `user:` stays on the studio. Root-owned files under `banks/`
+mean `user:` is missing; a `KeyError: getpwuid()` in the job log means the `/etc/passwd` mount
+went with it. A page that answers but whose job dies importing `metadrive` means the image was
+built `FROM` something other than the sim image — check `SIM_IMAGE` at build time.
+
+**2.4 The NAS's own command.** `docker compose up studio` (no `-d`) on the NAS is 2.3 again and
+is run there once, after Still open 6 decides how a browser reaches it.
+
+**Run 2026-09-14 (laptop, after Step 1 closed).** `SIM_IMAGE` unset, so the base is the
+converter's `metadrive-wingfin-sim:latest`; the job was submitted through `POST /api/jobs`, which
+is the route the page's Run tab posts to, so the browser step is the same code path.
+
+| check | result |
+|---|---|
+| 2.1 | **met.** First build 1.5 s of `uv pip install` on a cached base; `docker images` → one tag, `85e5dad 13.4GB`; `docker history` top layers: `0B WORKDIR /work`, **`10.5MB RUN uv export … uv pip install`**, `93.4kB COPY pyproject.toml uv.lock`. No 13 GB copy-up. `uv export --only-group web` resolved 10 changes out of the lock: `+ starlette 1.6.0`, `+ uvicorn 0.52.4`, `+ idna`, `+ truststore`, and three the base already had, moved to the lock's pins (`pydantic 2.13.4 → 2.13.5`, `pydantic-core 2.46.4 → 2.46.5`, `typing-inspection 0.4.2 → 0.4.4`). So "additive" is exact for the venv as a whole and the lock wins for the packages the web group touches -- a patch bump, and the one the tests and the laptop's `.venv` already run on. `uv run pytest tests/unit/test_images.py -q` → 7 passed. |
+| 2.2 | **met.** The awk above prints exactly the six lines. The plan's original grep printed `user: 1000:1000` under `studio` and `gpus:` under `run` but nothing for `/work` -- `config` emits long-form volumes -- and nothing for the agent without `--profile rig`; the check now reads the normalised form. |
+| 2.3 | **met.** `docker compose up -d studio` → `scenariobank-studio-1` up in 4 s; `docker inspect`: `User=1000:1000`, `NetworkMode=host`, mounts `/etc/passwd ro`, `/etc/localtime ro`, repo `→ /work rw`. `GET /api/doctor` → `commit 85e5dadc6c7436d324348f6e3d8f8e680c06b4db`; `GET /` → 200, 156 kB of page; `GET /api/commands` lists the groups. `POST /api/jobs` → 201, `argv ['/opt/venv/bin/python', '-m', 'scenariobank', 'generate', '--out', '/work/banks/studio-check', '--bank-id', 'studio-check', '--category', 'curve', '--seeds', '1']`; job `finished`, exit 0, log ends `[1/1] curve_0000 seed 1 -> 2C0_1_ lane 1 340.1 m` / `1 scenarios in 1 categories -> /work/banks/studio-check/manifest.json`. `ls -ln`: `manifest.json`, `thumbs/curve_0000.png` (47 kB) and the `.studio/jobs/<id>` directory all **owned by 1000:1000**; `find banks/studio-check -not -uid 1000` → nothing. `drive_side: left` in the manifest. The job log's `libOpenGL.so.0: cannot open shared object file` line is the same one every Step 1 log carries from the base image; it is not the studio's and the thumbnail rendered anyway. `docker compose down` removed the container and network; the bridge, started by hand, was untouched. |
+| 2.4 | **not run here; it is the NAS's.** Same command, on the NAS, once Still open 6 says how a browser reaches it. |
+
+`banks/studio-check` is left in place as the evidence; delete it whenever. Nothing committed.
+
+### Step 3 — the bridge: built here, one per running simulation ✅  ⟵ *met 2026-09-10*
+
+`metadrive-wingfin-openpilot:prod` is built **from this repo** (`bridge.sh build`, the converter's
+Dockerfile with the openpilot fork vendored under `docker/openpilot/deps/`, 2026-09-12: 5.53 GB,
+~35 min) and a host `BridgePolicy` row against it gives the converter's own numbers (Step 1's
+note). *(This step used to say "reused as it stands, confirm with `diff -rq`"; the vendoring
+replaced that, and a rig needs no converter checkout.)*
 
 - It mounts nothing and needs no repo: `bridge.sh start` is `docker run -d --network host … python3
   -m zapeta.server`, and the wire protocol is 29 lines of length-prefixed JSON on TCP 5558.
-- The vendored fork at `metadrive-complete/openpilot/` and the image's own build context are the
-  same tree — `diff -rq` is empty. Record that; it is what makes "our own bridge, not wing-sim's"
-  checkable rather than asserted.
+- **One bridge process per running simulation** *(2026-09-13, read off `zapeta/server.py`)*: the
+  server is `listen(1)`, one connection handled to completion on one thread, the planners
+  rebuilt per connection, and the waypoint grid fixed by the first `init` for the life of the
+  process. A second simulation connecting while one runs waits in the backlog and times out.
+  So a rig running one simulation per card runs one bridge per card, on `BRIDGE_PORT` = 5558 +
+  card index — already honoured by the server and by `bridge.sh`; the client's port becomes
+  `run --bridge-port`, and the container name gains the card (Still open 5). The bridge does no
+  GPU work and is a resource the agent's worker starts, not a controller.
 - **One coupling worth writing down for future users:** `AV3_MPC_MENU="4 16 20 32"` prebuilds one
   acados solver per waypoint count. A model with a count outside that menu still runs — the solver
   is generated and compiled on first use — but the first decision then pays a compile it should not.
@@ -4305,25 +4607,137 @@ is a checked fact and not an assumption.
 *(Met 2026-09-10 from Phase 4 Step 7: `bash scripts/bridge.sh start`, then `BridgePolicy` on
 `t_junction_0000` -- `init` answered `ready`, 640 `step`s answered with controls.)*
 
-### Step 4 — host and container agree ⬜  ⟵ *gate*
+**To re-run it as a regression** *(2026-09-13)*, on the host, no sim container involved — so a
+failure here is the bridge's and not the runner's:
 
 ```bash
-docker compose run --rm run run --bank /work/banks/pg-bank-2026-08 \
-    --categories intersection_left \
-    --policy scenariobank.policies:ExpertPolicy --out /out/docker.json
-diff <(jq 'del(.started_utc)|del(.results[].wall_time_s)' out/docker.json) \
-     <(jq 'del(.started_utc)|del(.results[].wall_time_s)' ceiling.json)
+bash scripts/bridge.sh start && bash scripts/bridge.sh status        # image present, "listening" on 127.0.0.1:5558
+uv run scenariobank run --bank banks/t-junction --scenarios t_junction_0000 \
+    --policy scenariobank.av3:BridgePolicy --camera-rig rigs/av3.txt --step-hz 100 --decision-hz 20 \
+    --out out/bridge-host; echo "exit=$?"
+jq '.results[0] | {status, steps, route_completion, failure_reason}' out/bridge-host/results.json
+bash scripts/bridge.sh logs | tail -3                                # a clean shutdown, nothing rebuilt
 ```
 
-**Expect: empty.** If it is not, the bank is not portable and the premise needs revisiting before
-the frontend touches it.
+Expect: `status: ok`, the converter's own numbers for this row (640 controls, route 0.78,
+`max_step`), and a log with no acados compile between `init` and the first `step` — a compile
+there means the waypoint count is outside `AV3_MPC_MENU`. The same row through `sim-run.sh` is
+Step 1's 1.7; a second bridge on `BRIDGE_PORT=5559` cannot be started yet because
+`bridge.sh` fixes the container name (Still open 5), so the two-bridge check is Phase 7's.
+
+### Step 4 — laptop and rig agree ⬜  ⟵ *gate*
+
+*(Rewritten 2026-09-13: the command used to name `pg-bank-2026-08` and `ceiling.json`, neither of
+which exists, and compared a host to a container on one machine. The claim that matters is across
+machines, through the line the rig will run.)*
+
+```bash
+# on the laptop, then the same line on a rig (banks/t-junction copied over first; banks are not in git)
+NO_GPU=1 bash scripts/sim-run.sh run --bank /work/banks/t-junction \
+    --policy scenariobank.policies:ExpertPolicy --out /out/gate
+diff <(jq 'del(.started_utc,.finished_utc,.bank.path,.results[].wall_time_s)' out/gate/results.json) \
+     <(jq 'del(.started_utc,.finished_utc,.bank.path,.results[].wall_time_s)' out/gate-rig/results.json)
+```
+
+Those four are the only volatile fields (checked against a real record, `out/sim-check/results.json`);
+`bank.path` differs by mount and is a label, not a score. **Expect: empty.** If it is not, the diff
+names the field, and that is the finding to write down before anything else — the bank is not
+portable and the premise needs revisiting before the studio submits a job.
 
 There is no `selftest` command and this phase no longer asks for one. It was going to build a known
 seed and assert left-side drive as a build check for an image we now do not build — and `doctor`
 already prints `drive_side` from a real reset, in the container, on demand.
 
-**Done when:** the diff is empty, the read-only mount refuses a write, and the studio image serves
-a page that can launch a job.
+**Verify alone, step by step** *(expanded 2026-09-13; the four marked rig run there — state
+the commands before running them, per the rig-access rule)*. A rig has this repo and nothing
+else, so the images are built there, never copied.
+
+**4.1 (rig) Build both images from the clone, and the guard passes on them.**
+
+```bash
+df -h /mnt/secondary                             # docker's data root; the two builds need ~25 GB free (the root disk is full)
+git pull && bash scripts/sim-image.sh build      # no converter checkout beside the repo → docker/Dockerfile, ~20 min, 13.1 GB
+bash scripts/bridge.sh build                     # ~35 min, 5.5 GB
+SIM_IMAGE=scenariobank-sim:latest bash scripts/sim-image.sh status   # "ready.", label "sim gpu model"
+```
+
+Expect: `sim-image.sh build` says it is building the fallback under its own tag, never
+`metadrive-wingfin-sim` (`test_images.py` pins this); `status` ends in `ready.`
+
+**4.2 (rig) The gate: the same bank, the same numbers.** The laptop half is Step 1's 1.4.
+
+```bash
+# laptop → rig, banks are not in git; then prove the copy is the same bank
+rsync -a banks/t-junction/ rig:~/dev-container/workspace-new/metadrive-complete/Metadrive-PG-testing/banks/t-junction/
+sha256sum banks/t-junction/manifest.json                    # on both machines: one digest
+# on the rig, 1.4's line with the rig's image
+SIM_IMAGE=scenariobank-sim:latest NO_GPU=1 bash scripts/sim-run.sh run --bank /work/banks/t-junction \
+    --policy scenariobank.policies:ExpertPolicy --out /out/gate
+# rig → laptop, then the diff above
+rsync -a rig:.../out/gate/results.json out/gate-rig/results.json
+```
+
+Expect: **the diff is empty.** How to read one that is not, by the field it names:
+- `results[].actions_digest` or `actor_layout_digest` — the simulation is not deterministic
+  across machines. The finding this step warns about; stop and write it down before anything else.
+- `env.metadrive_commit` — the rig's image carries a different MetaDrive; the build did not
+  pin what `pyproject.toml` pins.
+- `bank.id`, `bank.schema_version` or `results[].seed` — the wrong bank, or a bank rewritten by
+  a `replace` on one side since the copy; redo the rsync and the digest.
+- `summary` alone, with every row equal — impossible; a row differs above it, read further up.
+
+**4.3 (rig) The model on the GPU inside `scenariobank-sim:latest`** — the one thing no machine
+has verified, and the first thing to run after the build.
+
+```bash
+docker run --rm --gpus device=0 -v $PWD:/work:ro scenariobank-sim:latest bash /work/scripts/av3-probe.sh
+bash scripts/bridge.sh start
+SIM_IMAGE=scenariobank-sim:latest MODELS_DIR=<the rig's models dir> GPU=0 bash scripts/sim-run.sh run \
+    --bank /work/banks/t-junction --scenarios t_junction_0000 --policy scenariobank.av3:AV3Policy \
+    --camera-rig /work/rigs/av3.txt --step-hz 100 --decision-hz 20 \
+    --model-config /models/model_dev.yml --checkpoint /models/step_440000_trt_direct_full.ep \
+    --heartbeat 30 --out /out/av3-rig
+```
+
+Expect: what 1.6 and 1.8 expect, on the rig's card. The engine load and the pass time are the
+rig's own numbers; record them, they are what Phase 7's lease `visibility_timeout` and extend
+timer are sized from. A failure here that 1.6 did not show on the laptop is in
+`docker/Dockerfile`'s model stack, not the runner.
+
+**4.4 (rig) Two cards, two containers, one each.** What Phase 7's worker-per-GPU stands on.
+
+```bash
+SIM_IMAGE=scenariobank-sim:latest GPU=0 bash scripts/sim-run.sh replay --bank /work/banks/curve \
+    --camera-rig /work/rigs/av3.txt --steps 2000 --ignore-rig-rate --json > /dev/null &
+SIM_IMAGE=scenariobank-sim:latest GPU=1 bash scripts/sim-run.sh replay --bank /work/banks/curve \
+    --camera-rig /work/rigs/av3.txt --steps 2000 --ignore-rig-rate --json > /dev/null &
+sleep 20; nvidia-smi --query-compute-apps=pid,gpu_uuid --format=csv; wait
+```
+
+Expect: two rows with two different UUIDs while both run, both exits 0. Both on one UUID means
+`--gpus device=$GPU` is not reaching `docker run` and the agent would stack every job on card 0.
+
+**Done when:** the diff is empty between the laptop and a rig (4.2), the read-only mount refuses
+a write (1.3), and the studio image serves a page that can launch a job (2.3) — from the NAS's
+own command, `docker compose up studio` (2.4). As a checklist:
+
+| checks | proves | where |
+|---|---|---|
+| 1.1–1.3 | the script is the runner: guard first, same commit, no writes into the bank | laptop |
+| 1.4–1.5 | results land, root-owned, with the host's time | laptop |
+| 1.6–1.8 | the two per-card inputs work and the hang is gone | laptop |
+| 2.1–2.3 | the studio image contains MetaDrive and writes as the host uid | laptop |
+| 2.4 | the NAS's one command | NAS, after Still open 6 |
+| 3 | the bridge answers on its own, nothing rebuilt | laptop |
+| 4.1 | a rig has this repo and nothing else | rig |
+| 4.2 | the bank is portable — the premise of submitting a job at all | rig |
+| 4.3 | `scenariobank-sim:latest` runs what the converter's image ran | rig |
+| 4.4 | a worker per GPU is real | rig |
+
+Steps 1–3 green on the laptop can be re-run any time as a regression; 4.1–4.4 close the gate.
+Nothing here touches the queue, the share or the agent: those are Phase 7's, tested against
+Phase 7 Step 0's replica.
+
 
 ---
 
@@ -4386,11 +4800,18 @@ a page that can launch a job.
 
 ---
 
-# Phase 7 — The orchestrator and the rig runner ⬜  ⟵ *the deliverable*
+# Phase 7 — The rig agent ⬜  ⟵ *the deliverable*
 
-**Goal:** a MetaDrive job put on the NAS queue is leased by our orchestrator, dispatched to a free
-GPU on one of two rigs, run in a container, and its results saved back on the NAS — with nothing of
+**Goal:** a job the studio puts on the NAS queue is leased by the agent on whichever rig has a free
+GPU, run in two containers there, and its results delivered back to the NAS — with nothing of
 Tyrone's imported (R1).
+
+*(Rewritten 2026-09-13. This phase used to have an orchestrator on the NAS leasing jobs and calling
+an HTTP service on each rig. Both are gone: the queue knows messages, not cards, so the only process
+that can know a card is free is the one holding it, and that process is on the rig. What remains is
+**one agent container per rig, a worker per GPU, that locks a card and only then leases** — and the
+queue is asked for last, at Step 7, because Keith has no access to it yet; everything before runs
+against Step 0's local replica.)*
 
 Superseded: the wrapper sketch that used to sit here, and the shared-`jobs`-table design that
 replaced it. **The queue is not a table we write SQL against.** It is `wfqueue`, an HTTP service on
@@ -4399,7 +4820,7 @@ the NAS with lease/ack/nack semantics, documented in `docs/queue-docs/queue-doc-
 not reimplement the HTTP calls** — it already handles leasing, ack/nack, retry backoff and
 long-polling, and every one of those is a thing to get subtly wrong.
 
-Read **How this ships** first for the topology and, in particular, for what the four words mean.
+Read **How this ships** first for the topology and, in particular, for what the five words mean.
 
 ---
 
@@ -4409,20 +4830,22 @@ These are not background. Each dictates a specific piece of code, and each is a 
 missed.
 
 **1. Delivery is at-least-once.** The queue doc says it outright: *"Leasing is at-least-once: make
-handlers idempotent, or use `dedupe_key` upstream."* If our orchestrator dies mid-run, the lease
-expires, the message returns to `ready`, and it is leased again — **while a rig is still running
-it.**
+handlers idempotent, or use `dedupe_key` upstream."* If our agent dies mid-run, the lease
+expires, the message returns to `ready`, and it is leased again — **while the rig is still
+running it**, possibly by the other rig's worker.
 
-> **Forces:** `POST /runs` on the rig is **keyed by job id and idempotent**. A job already in
-> flight returns its existing run, `200`, rather than starting a second one. That single rule is
-> what makes redelivery harmless instead of a double-booked GPU, and it is why the orchestrator can
-> be restarted at any moment without a reconciliation dance.
+> **Forces:** the run is **keyed by job id and idempotent** *(reworded 2026-09-13; this used to be
+> `POST /runs` on a rig service)*. A worker that leases a job whose `results/<job_id>` already
+> exists on the share acks without running; an agent that restarts adopts any container carrying
+> our label for its card before it leases anything. Those two rules are what make redelivery
+> harmless instead of a double-booked GPU, and why the agent can be restarted at any moment
+> without a reconciliation dance.
 
 **2. A lease is a clock, and our work is longer than it.** `visibility_timeout` defaults to 30 s
 (`POST /topics/{topic}/lease`); a 35-scenario bank is minutes, and a 1,000-scenario one is far
 longer.
 
-> **Forces:** the orchestrator calls `msg.extend()` on a timer for the whole run, and stops the
+> **Forces:** the worker calls `msg.extend()` on a timer for the whole run, and stops the
 > instant the run ends. A missed extend does not lose the job — it *duplicates* it, which is worse,
 > and property 1 is the only thing standing between that and two runs on one card.
 
@@ -4439,6 +4862,25 @@ not failed. Dead-lettering after `max_attempts` is for jobs that are **wrong**, 
 
 ---
 
+## What the queue knows, and what it does not
+
+Read off `docs/queue-docs/queue-doc-v0.json`, 2026-09-13, because a design was nearly built on the
+opposite assumption. The queue knows **messages**: each is `ready`, `leased`, `done` or `dead`; a
+lease takes an optional `consumer` label that is recorded on the message; `GET
+/topics/{t}/messages?state=leased` lists every job someone holds, with that label. So it can say
+what work exists, who has it, and what finished — and with a worker per card leasing one job at
+a time and labelling itself `rigA:gpu0`, that listing *is* the "what is running where" view.
+
+It has **no word for GPU, rig, worker, slot or capacity**. It cannot tell anyone a card is free.
+A card is free only because the process that asks for work is the one holding it — which is why
+the consumer lives on the rig, beside the lock, and not on the NAS. Two limits follow, and both are
+about things the queue never sees:
+
+- **CARLA jobs and hand-run scripts take the same cards through no queue of ours.** A card can be
+  busy with zero leased messages in our topic. That is the only reason the lock file still exists.
+- **A lease is a clock.** A job whose worker stops extending shows `ready` while its container is
+  still driving. The extend timer is what keeps the queue's picture honest (property 2).
+
 ## The lock is rig-local, and CARLA shares the cards
 
 Confirmed 2026-09-01: CARLA jobs run on these same two rigs. So the flock stays the authority, for
@@ -4449,46 +4891,90 @@ does not apply: **it will terminate a MetaDrive run holding the card.**
 
 The split that follows, and it is the design:
 
-- **The orchestrator's GPU map is a plan.** It is allowed to be stale, and it usually is.
+- **There is no GPU map.** The worker holding the card is the only thing that leases *(2026-09-13;
+  this bullet used to give the NAS orchestrator a stale plan to re-plan from)*.
 - **The rig's lock is the truth.** Checked *on the rig*, because it cannot be checked anywhere
   else: `rig/lock.py:43,73-123` excludes by **inode** and reads liveness out of local `/proc/locks`
   plus `/proc/<pid>/stat` starttime. Host-local by construction. On an NFS mount it would not mean
-  the same thing, and from the NAS it cannot be seen at all.
-- **A rig that cannot take the lock answers `busy`**, and the orchestrator re-plans. It does not
-  fail the job, it does not tear anything down, and it never signals a holder it did not start.
+  the same thing — so it never lives on the share — and from the NAS it cannot be seen at all.
+- **A worker that cannot take its lock does not lease.** It sleeps and tries again; it never nacks
+  for `busy`, because it never took a job. It does not tear anything down, and it never signals a
+  holder it did not start.
 
 ---
 
-## Why the rig half is a service rather than an SSH command
+## Files: a NAS share, names in the job, paths on the rig
 
-The orchestrator *calls* the runner, so something must be listening. Three properties are worth
-having and all three come from the same choice — **the runner holds no state of its own**:
+*(2026-09-13, Keith: option 1 of three — the others were the bank inside the queue payload with a
+results topic back, rejected on the first thing that is not small, and HTTP through the studio,
+rejected as the most code and a rig that stops when the studio does.)*
+
+| what | size | direction |
+|---|---|---|
+| a PG bank (`manifest.json` + thumbnails; maps rebuild from seeds at run time) | 200–400 KB | NAS → rig |
+| an imported bank (carries the recorded dataset) | ~50 MB | NAS → rig |
+| the checkpoint and `model_dev.yml` | GBs, changes rarely | by cron, already decided out of scope |
+| `results.json` plus per-scenario records | < 1 MB | rig → NAS |
+| films and trajectories, when a job asks for them | hundreds of MB to GBs | rig → NAS |
+
+- **One share, mounted on both rigs, three roots:** `banks/<bank_id>/`, `models/`,
+  `results/<job_id>/`. The agent reads them from `SCENARIOBANK_BANKS`, `SCENARIOBANK_MODELS`,
+  `SCENARIOBANK_RESULTS` — as **host** paths, because the `docker run` it issues bind-mounts the
+  host's filesystem, not the agent's own mount points.
+- **A job carries names, never paths:** `bank.id`, a model name, `job_id`. The agent fills
+  `bank.path`, `checkpoint_path` and `model_config_path` on the rig, so one job runs on either rig
+  whatever its mount points. `Job.bank.id` is already checked against the manifest by the runner
+  (Phase 4 Step 3), so the lookup needs no schema change.
+- **The studio writes the bank to the share before `put()`** (Phase 2c Step 12), so the bank is on
+  disk before the job is visible and no card idles on a transfer once it has leased. The worker
+  mounts `banks/<bank_id>` read-only straight into the simulator; nothing is copied. (If the share
+  ever proves too slow for an imported bank's 50 MB, a local copy is one `cp` in the worker and
+  nothing else changes.)
+- **Results: local run → deliver → ack, in that order.** The container writes to the rig's local
+  `/out/<job_id>`; the agent then **delivers** — the first implementation copies to
+  `results/<job_id>.partial` on the share and renames it to `results/<job_id>`, so a directory
+  without `.partial` is always complete — and only then acks. A `results/<job_id>` that already
+  exists means "done": ack without running. That is property 1's idempotency, now living here.
+- **Two NFS traps.** The lock never lives on the share (above). A root-squashed export turns the
+  container's root-owned write into a permission error, which is one more reason the agent, not
+  the container, does the copy.
+- Not decided: whether the rigs can mount the share, which protocol, and whether the checkpoint
+  cron already uses it — Still open 8.
+
+---
+
+## Why the agent holds no state
+
+*(Was "Why the rig half is a service rather than an SSH command". Nothing calls the agent any more,
+so nothing listens; the three properties below are what survive, unchanged.)* Three properties are
+worth having and all three come from the same choice — **the agent holds no state of its own**:
 
 - Every answer it gives is read back off disk: the log file, the exit-code file, and the
   per-scenario record directory. `rig/session.py:458-521` is the reference for this and is worth
   reading before writing it.
-- So a runner restarted mid-run still describes that run correctly, and adoption after a restart is
+- So an agent restarted mid-run still describes that run correctly, and adoption after a restart is
   **the same code path** as a normal poll rather than a special case.
 - And a run is owned by the Docker daemon, not by the service: `start_new_session` escapes a
   process group but not a PID namespace or a cgroup, so a 25-minute run must not be a child of
   anything that can be restarted. `rig/session.py:236-258` paid for that lesson.
 
-**A runner that keeps progress in a variable breaks restart recovery silently.** Same reason
+**An agent that keeps progress in a variable breaks restart recovery silently.** Same reason
 `rig/progress.py` has no table: progress is derived, never stored.
 
 ---
 
 ## Steps
 
-Each is buildable and verifiable on its own, and the order is deliberate: **the rig half first**,
-because it can be driven by hand with `curl` long before a queue is involved. Step 0 is the one
-exception, because nothing on this side of the queue can be tested on a laptop without it.
+Each is buildable and verifiable on its own, and the order is deliberate: **the run session
+first**, because `scenariobank agent --once job.json` drives it from a file long before a queue is
+involved; **the real queue last**, at Step 7, because there is no access to it yet. Step 0 comes
+first only because the loop in Step 5 cannot be tested on a laptop without it.
 
-### Step 0 — a queue on the bench ⬜  *(added 2026-09-08)*
+### Step 0 — a local `wfqueue` replica ⬜  *(added 2026-09-08; made runnable 2026-09-13)*
 
 The NAS is not routable from the development machine (`No route to host` on
 `192.168.1.90:9090`, measured 2026-09-08), `wfqueue` is not installed here, and the colleague
-shared the client, not the server. So before the orchestrator can be tested at all:
+shared the client, not the server. So before the agent's loop can be tested at all:
 
 1. **Ask the colleague for the server** — the `wfqueue` package (the client's own docstring says
    `from wfqueue import QueueClient  # or from the installed package`, so one exists), its single
@@ -4496,10 +4982,14 @@ shared the client, not the server. So before the orchestrator can be tested at a
    `WFQUEUE_URL=http://localhost:9090`.
 2. **Until it arrives, `tests/support/fake_wfqueue.py`**: a stdlib `http.server` + `threading`
    double of the *documented* contract only — `put` (with `dedupe_key`), `lease` (visibility
-   timeout, `wait`), `ack`, `nack` (backoff, `retry_after`, `dead`, `max_attempts`), `extend`,
-   `stats`, `list`, `requeue`, and `409` on a stale `lease_id`. ~200 lines, test-only, never
-   imported by `src/`. It exists to exercise *our* orchestrator, not to stand in for the queue in
-   any claim.
+   timeout, `wait`, the `consumer` label), `ack`, `nack` (backoff, `retry_after`, `dead`,
+   `max_attempts`), `extend`, `stats`, `list` (with `state=leased` and the label), `requeue`, and
+   `409` on a stale `lease_id`. ~250 lines, never imported by `src/`. **Runnable, not only
+   importable** *(2026-09-13)*: `python -m tests.support.fake_wfqueue --port 9090`, SQLite-backed
+   so a restart keeps its messages, because Keith has no access to the real queue and the studio's
+   submit (Phase 2c Step 12) and the agent (Step 5) are developed against it on the laptop with
+   `WFQUEUE_URL=http://localhost:9090`. It exists to exercise *our* code, not to stand in for the
+   queue in any claim: when the real server disagrees with it, the replica is wrong.
 3. **One contract test file, two backends.** `tests/unit/test_queue_contract.py` runs the same
    assertions against the fake by default and against `$WFQUEUE_URL` when it is set (a
    `needs_queue` marker in the house per-file style, no `conftest.py`). The assertions are the
@@ -4512,20 +5002,20 @@ shared the client, not the server. So before the orchestrator can be tested at a
 **Verify alone:** `uv run pytest tests/unit/test_queue_contract.py -q` green offline; the same
 with `WFQUEUE_URL` pointing at the colleague's server (or at the NAS, from a machine that can
 route to it) green with the marker taking effect. Step 7's round trip stays the gate and stays
-on the real NAS.
+on the real NAS — and is the **first and only** step that touches it.
 
 ### Step 1 — the container image and entrypoint ⬜
 
 Extends Phase 5. The container reads a `Job` file (Phase 4 Step 3's model: the same JSON the
 queue carries), calls `run_bank()`, writes `results.json`, exits 0. Four additions, all so a supervisor never has to parse prose:
 
-**And one question this step inherits, deliberately unanswered until here.** Phase 5 reuses
-`metadrive-wingfin-sim`, an image built by the converter repo and published to no registry. That
-is right for a laptop, where the image is already present. A rig is the other case, and it has two
-answers: carry the image across (`docker save | gzip`, the way `bridge.sh save` already does for
-the bridge — 13.4 GB), or build a runner image from **our** `uv.lock`, which owes the converter
-nothing and drops the ~10 GB of osmnx, geopandas, torch and TensorRT a `run` never imports. Decide
-it when there is a rig to decide it on; do not pre-empt it in Phase 5.
+**The question this step used to inherit is answered** *(Keith, 2026-09-13)*: **the rig clones
+this repo and builds both images from it** — `bridge.sh build` for the bridge, `sim-image.sh build`
+for the sim image, which with no converter checkout beside the repo builds `docker/Dockerfile` as
+`scenariobank-sim:latest`; `SIM_IMAGE=scenariobank-sim:latest` in the agent's environment. No
+converter checkout, no `docker save`. The line the agent runs is `scripts/sim-run.sh`'s (Phase 5
+Step 1). Not yet verified in that image: the model on the GPU — the Phase 4 Step 7 probe on a
+rig is the first thing to run after the build.
 
 - **Structured JSON lines on stdout.** One object per event. No regexes — his `rig/progress.py`
   scrapes four prose patterns out of CARLA's log because it has no choice; we do not.
@@ -4538,7 +5028,8 @@ it when there is a rig to decide it on; do not pre-empt it in Phase 5.
   on the normal path. The `KeyboardInterrupt`-into-`env.close()` wedge and the stop-timeout
   budget are described there *(moved 2026-09-08)*. The entrypoint adds nothing but the file read.
 
-**Verify alone:** `docker run` it by hand with a one-scenario `Job` file; get a `results.json`.
+**Verify alone:** `sim-run.sh` it by hand with a one-scenario `Job` file; get a `results.json`;
+then the probe inside `scenariobank-sim:latest` on a rig's GPU.
 
 ### Step 2 — the lock helper (R1: our own, same paths) ⬜
 
@@ -4555,11 +5046,14 @@ Advisory `flock`, **exclusion by inode**, one lock file per GPU. ~150 lines.
 **Verify alone:** hold it from a shell (`bash wing-sim/deployment/with_rig_lock.sh sleep 60 &`),
 confirm the helper reports it foreign and refuses.
 
-### Step 3 — the rig session (R1: our own) ⬜
+### Step 3 — the run session, driven by a job file (R1: our own) ⬜
 
-Takes the lock, launches the run as a sibling container, supervises, tears down. ~300 lines. His
-`rig/session.py` is the reference, but it takes `presets=` and emits CARLA compose commands, so this
-is a sibling rather than a reuse.
+Takes the lock, starts this card's bridge if it is not up, launches the run as a sibling container,
+supervises, delivers, tears down. ~300 lines. His `rig/session.py` is the reference, but it takes
+`presets=` and emits CARLA compose commands, so this is a sibling rather than a reuse.
+**Testable with no queue at all**: `scenariobank agent --once job.json` runs one job from a file
+through the whole session on the laptop (`NO_GPU=1`, `ExpertPolicy`), which is how the rig half is
+proven before Step 5 wraps it in a loop.
 
 - **Sibling container, not a detached child** — see above.
 - **Never inherit the environment wholesale.** His `rig/compose.py::child_environment` returns only
@@ -4568,68 +5062,82 @@ is a sibling rather than a reuse.
 - **Own compose project name, container prefix and labels**, so a stray-container sweep on either
   side can never reach the other. Label with the job id and the attempt, as he does — that is what
   makes a sweep able to tell whose container it found.
-- The zapeta bridge listens on 5558 in both stacks and both use host networking. **Pick a different
-  port**, so a collision is an error rather than a wrong number — on a shared rig they *can* now
-  run at the same time on different cards.
+- **One bridge per running simulation** (Phase 5 Step 3: the server holds one connection). The
+  worker starts `bridge-gpu<N>` on `BRIDGE_PORT` = base + N and passes it to the simulator as
+  `run --bridge-port`. The zapeta bridge listens on 5558 in wing-sim's stack too and both use host
+  networking, so **the base port is not 5558** — a collision with his is then an error rather than
+  a wrong number, and on a shared rig the two stacks can run at once on different cards.
+- **Validation before the card**: the payload parses as a `Job`, the bank id is on the share and
+  its manifest carries that id, exactly one checkpoint under the models root with a matching
+  suffix, and any uploaded `modifiers.py` **parsed to AST and never imported**. A job that fails
+  this can never run and is dead-lettered (Step 5), never retried.
 
-**Verify alone:** one scenario end to end, driven from a Python REPL. No HTTP anywhere yet.
+**Verify alone:** one scenario end to end from `agent --once job.json`: the lock taken, the bridge
+up on its card's port, the container run, `results/<job_id>` renamed into place, the lock released.
+No queue anywhere yet.
 
-### Step 4 — `metadrive-runner`: the service on each rig ⬜
+### Step 4 — ~~`metadrive-runner`: the service on each rig~~ retired 2026-09-13
 
-The thing the orchestrator calls. Small, and stateless by construction.
+There is no HTTP service on the rig. It existed so a NAS orchestrator could ask a rig for a card
+and be told `busy`; with the worker leasing only when it already holds the card, the queue **is**
+the API, and nothing calls the rig. What this step listed survives elsewhere: idempotency by
+`job_id` is the `results/<job_id>` check (**Files**); validation before the card is in Step 3; the
+`/health` facts — per-card lock state, disk, image label, agent version — are a **status file per
+card** the worker writes beside the results (Step 6), so the studio's "what is running where" is a
+file read and no port is open on a rig. The bearer token went with the port.
 
-```
-POST   /runs                    {job: <Job>, gpu}   -- Phase 4 Step 3's model, plus the card
-GET    /runs/{job_id}           state, per-scenario progress, exit code
-GET    /runs/{job_id}/results   results.json once it exists
-DELETE /runs/{job_id}           cancel: stop the container, keep what was scored
-GET    /health                  per-GPU lock state, disk, image tag, runner version
-```
+### Step 5 — the rig agent: lock, lease, run, deliver, ack ⬜
 
-- **`POST /runs` is idempotent on `job_id`** — property 1. In flight → return the existing run.
-  Already finished → return its result. Never a second container for one id.
-- **Structural validation before the job can take a card**: the options file parses, the bank
-  manifest is readable, exactly one checkpoint at the given path with a suffix that matches, and
-  `modifiers.py` **parsed to AST and never imported** — it is a file an authenticated stranger
-  uploaded.
-- **Lock held by anything → `409 busy`**, naming which GPU and whether the holder is ours. Do not
-  tear down, do not signal.
-- Every `GET` answer is read off disk, so the service can restart under a running job.
-- Own auth: a bearer token per rig, checked against a hashed value (~20 lines). Not because the
-  network is hostile, but because "the orchestrator" and "someone's laptop" must not be the same
-  caller.
+*(Rewritten 2026-09-13 from "the orchestrator: the lease loop", which ran on the NAS. Keith's
+shape: one container per rig — `docker compose up agent`, the sim image, no GPU — with one worker
+per card, each polling its card's availability and only then the queue for a job.)*
+`QueueClient` from `docs/queue-docs/`, one topic (`metadrive`), long-polled. `WFQUEUE_URL` and, if
+the server is ever started with one, `WFQUEUE_TOKEN` come from the environment. Per worker:
 
-**Verify alone:** `curl` a two-scenario job; poll it; cancel one; **restart the service mid-run and
-confirm the next `GET` describes the same run.** That last one is the whole design in one test.
-
-### Step 5 — the orchestrator: the lease loop ⬜
-
-On the NAS. `QueueClient` from `docs/queue-docs/`, one topic (`metadrive`), long-polled.
-`WFQUEUE_URL` and, if the server is ever started with one, `WFQUEUE_TOKEN` come from the
-environment: `QueueClient(url, token=token)`. Nothing here knows an address.
-
-1. **Before leasing anything, ask every rig what it is running.** That is the recovery path, and it
-   is the same code path as a normal poll — no special case, no reconciliation table.
-2. `consume("metadrive", poll_interval=0, wait=20, consumer=<hostname>)`, one message at a time.
-   `poll_interval=0` matters: the client's default is a 60 s sleep after every empty poll.
-3. The payload is a `Job` (Phase 4 Step 3); validate it first — a payload that does not parse is
-   a job that can never run, and goes to step 7 without touching a rig. Choose a rig and a GPU
-   from the plan; `POST /runs`.
-4. `409 busy` → `nack(retry_after=...)` and move on. **Not a failure.**
-5. Extend the lease on a timer while polling `GET /runs/{job_id}`; stop extending the moment it ends.
-   The client has no timer of its own.
-6. Fetch results, save them (Step 6), `ack`.
-6b. `ack` raising `QueueHTTPError` with `409` after a run completed → `GET /messages/{id}`;
-   `state == "done"` means the first ack landed and the client's own retry is noise. Anything
-   else is a real lease loss: the job was redelivered, and property 1 on the rig is what kept it
+0. **On start, adopt before leasing anything.** Any container carrying our label for this card is
+   a run in flight: wait on it and deliver its results as if this worker had started it. That is
+   the recovery path and it is the same code path as a normal run, not a special case.
+1. **Take this card's lock** (Step 2). Held — by us, by CARLA, by a hand-run script — → sleep and
+   retry. Never nack: no job was taken.
+2. `consume("metadrive", poll_interval=0, wait=20, consumer=f"{host}:gpu{n}")`, one message at a
+   time. `poll_interval=0` matters: the client's default is a 60 s sleep after every empty poll.
+3. **Validate** (Step 3's list). A payload that can never run → `nack(dead=True)`, the lock
+   released, back to 1.
+4. `results/<job_id>` already on the share → `ack`, release, back to 1 (the redelivery guard).
+5. Resolve names → paths: `bank.path` = the share's `banks/<bank_id>` mounted read-only, no copy;
+   `checkpoint_path` and `model_config_path` under the models root.
+6. Start `bridge-gpu<n>` if not up; `sim-run.sh run … --bridge-port` on card *n*, results to the
+   rig's local `/out/<job_id>`.
+7. **Extend the lease on a timer** while the container runs; stop the instant it exits. The client
+   has no timer of its own.
+8. **Deliver, then ack, then release.** `deliver(job_id, result_dir)` is one function behind one
+   interface, because where results finally live is not decided — most likely a database on the
+   NAS, shape unknown (Still open 7). The first implementation is the share copy (**Files**); when
+   the database exists `deliver` writes to it as well or instead and the loop does not change.
+   Ack only after delivery succeeds, so a failed delivery is a retried job, never a lost result.
+8b. `ack` raising `QueueHTTPError` with `409` after a run completed → `GET /messages/{id}`;
+   `state == "done"` means the first ack landed and the client's own retry is noise. Anything else
+   is a real lease loss: the job was redelivered, and step 4 on the other worker is what keeps it
    from running twice.
-7. A run that failed *for a reason that will recur* → `nack(dead=True)`. Everything else retries.
+9. Any other failure → `nack(retry_after=…)`, release. Throughout, write a **status file per
+   card** beside the results: job id, scenario progress (derived from the record directory, never
+   stored), lock holder, disk, image label, agent version.
 
-**Verify alone:** `put()` a job by hand and watch it land on a rig, with both rigs' runners up.
+**Verify alone:** against Step 0's replica, on the laptop, `NO_GPU=1`, `ExpertPolicy`, two fake
+cards: `put()` two jobs and watch each worker take one; hold one card from a shell and watch
+only the other worker lease; kill the agent mid-run and restart it — it adopts, delivers, acks,
+and no second container appears.
 
 ### Step 6 — results storage on the NAS ⬜
 
-Our own SQLite plus a results tree. Not his schema, and no mapping — the shape is ours.
+**The agent delivers, the NAS stores** *(2026-09-13)*. `deliver()` on the agent is the only writer.
+Its first target is `results/<job_id>/` on the share (**Files**); its intended target is a database
+on the NAS whose shape is not yet decided (Still open 7). Whatever that database is, the rules
+below are the requirements on it, and the studio is what reads it — including the **push to
+Tyrone's webapp**, a studio background task that takes each newly complete result from the NAS
+store and POSTs it (endpoint, auth and payload unknown, Still open 7). Downstream of delivery;
+never the agent's job. Our own SQLite plus a results tree until then. Not his schema, and no
+mapping — the shape is ours.
 
 - **Per-scenario rows, not columns on a job.** A job legitimately ends with 30 of 35 scored, and
   `skipped` is a real outcome distinct from `failed`, because "never ran" and "ran and failed" lead
@@ -4651,8 +5159,9 @@ Our own SQLite plus a results tree. Not his schema, and no mapping — the shape
 Before the bank is correct, prove the whole path with a stub:
 
 1. The Step 1 image, taking one scenario and writing a `results.json`.
-2. A real message on the real queue, leased by the real orchestrator.
-3. Dispatched to one real rig, results saved on the NAS, message acked.
+2. A real message on the real queue — **the first and only use of it**, the one step waiting on
+   access (Still open 9) — leased by the agent on one real rig.
+3. Results delivered to the NAS, renamed into place, message acked; the studio's push picks it up.
 
 Then wire the real bank behind it. **A green round-trip against a stub is worth more than a correct
 bank nothing can run**, and here it also proves the routing before either side is finished.
@@ -4661,9 +5170,8 @@ bank nothing can run**, and here it also proves the routing before either side i
 
 - **The six axes served as data**, so a frontend renders the form from the schema instead of
   hard-coding it. This is what keeps the picker in step when an axis is recalibrated in Phase 4b.
-  **Two consumers**, not one: the wing-sim webapp and our own studio's submit screen (Phase 2c,
-  Step 12). Two producers onto the queue, for the same reason — the webapp is no longer the only
-  way a run gets enqueued.
+  One consumer: our studio's submit screen (Phase 2c, Step 12), the only producer onto the queue
+  since 2026-09-13; the wing-sim webapp reads results, not options.
 - **The ETA.** Bootstrap from measured per-category wall time — Phase 4b's calibration runs produce
   it for free — keyed on `(category, tier)`, then replace it with a **median** of the last N real
   runs. Median, not mean: one degraded run is a 5x outlier that poisons a mean for weeks. At the
@@ -4681,22 +5189,21 @@ Four failures that are all **silent**, which is why each gets an explicit test r
 ```bash
 # lease with a short visibility_timeout and then do nothing; let it expire mid-run
 python3 -c "import os; from client import QueueClient; QueueClient(os.environ['WFQUEUE_URL']).lease('metadrive', visibility_timeout=5)"
-curl -s rig-a:9000/runs | jq 'length'      # expect 1, still 1 after redelivery
+docker ps --filter label=scenariobank.job=<id> | wc -l   # on the rig: expect 1, still 1 after redelivery
 ```
 
 **A busy rig must not fail a job** — hold the card from outside both queues:
 ```bash
 bash wing-sim/deployment/with_rig_lock.sh sleep 120 &      # on rig A, not a queued job
 curl -s $WFQUEUE_URL/topics/metadrive/stats | jq '.dead'   # expect 0 throughout
-curl -s rig-b:9000/runs | jq '.[].job_id'                  # it went to the other rig
+curl -s $WFQUEUE_URL/topics/metadrive/messages?state=leased | jq '.[].consumer'   # rigB:gpu0 — the other rig took it
 ```
 
-**The two orchestrators must not interfere** — queue a CARLA job and a MetaDrive job together; each
-is leased by its own orchestrator only, and the rig lock serialises them on a shared card.
+**The two stacks must not interfere** — queue a CARLA job and a MetaDrive job together; each is
+leased by its own consumer only, and the rig lock serialises them on a shared card.
 
-**Restart recovery, on both halves** — kill the orchestrator mid-run and restart it; separately kill
-a rig runner mid-run and restart it. Both must adopt the run rather than orphan it, and no second
-container may appear.
+**Restart recovery** — kill the agent mid-run and restart it. It must adopt the run rather than
+orphan it, deliver and ack it, and no second container may appear.
 
 **Parity with the CLI** — `put()` a two-scenario job and assert the stored result is identical to
 the `results.json` the CLI produces for the same inputs. Both are callers of `run_bank()`; if they
@@ -4770,6 +5277,21 @@ already covers it.
 4. **Bank size beyond 5 seeds.** 35 is the shipping bank. `--count` is a flag, so growing it is one
    regeneration away — but `CONTRACT.md` states the 20% granularity, so growing it later changes
    what a success rate means to the frontend. Decide before handoff, not after.
+5. **One bridge per running simulation** *(2026-09-13)*. The server holds one connection; a rig
+   running one simulation per card runs one bridge per card. `run --bridge-port` on the client,
+   a container name per card in `bridge.sh`, and a base port that is not wing-sim's 5558.
+6. **How the NAS exposes the studio to browsers** *(2026-09-13)*. `cli.py` binds loopback only, by
+   design, because its routes run subprocesses that write into the repo with no authentication.
+   On the NAS someone other than localhost must reach it: a reverse proxy, a tunnel, or a
+   deliberate loosening with auth. Decide before the NAS deploy.
+7. **Where results finally live, and how they reach Tyrone's webapp** *(2026-09-13)*. Most likely a
+   database on the NAS; its shape, and the webapp's endpoint, auth and payload, are all unknown.
+   The agent's `deliver()` is the seam: the share copy now, the database when it exists. Decide
+   the database before Phase 7 Step 6; ask about the webapp before the push is written.
+8. **The NAS share** *(2026-09-13)*. Protocol, mountable on both rigs, root-squash or not, and
+   whether the checkpoint cron already uses it. Decide before Phase 7 Step 3.
+9. **Queue access** *(2026-09-13)*. None yet. Everything up to Phase 7 Step 7 runs against the
+   Step 0 replica; Step 7 waits on a key from the colleague.
 
 ---
 

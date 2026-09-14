@@ -1,0 +1,69 @@
+{
+  "schema_version": "1.4",
+  "bank_id": "studio-check",
+  "created_utc": "2026-09-14T04:59:41Z",
+  "source": "pg",
+  "metadrive": {
+    "edition": "MetaDrive v0.4.3",
+    "dist_version": "0.4.3",
+    "commit": "85e5dadc6c7436d324348f6e3d8f8e680c06b4db",
+    "asset_version": "0.4.3"
+  },
+  "base_config": {
+    "use_render": false,
+    "agent_observation": "metadrive.obs.state_obs.StateObservation",
+    "vehicle_config": {
+      "lidar": {
+        "num_lasers": 0,
+        "distance": 0,
+        "num_others": 0
+      },
+      "side_detector": {
+        "num_lasers": 0,
+        "distance": 50
+      },
+      "lane_line_detector": {
+        "num_lasers": 0,
+        "distance": 20
+      }
+    },
+    "traffic_density": 0.0,
+    "random_traffic": false,
+    "accident_prob": 0.0,
+    "random_spawn_lane_index": true,
+    "horizon": 1000,
+    "log_level": 30
+  },
+  "drive_side": "left",
+  "options": {
+    "traffic": "none",
+    "cones": "none",
+    "barriers": "none",
+    "pedestrians": "none",
+    "cyclists": "none",
+    "lights": "none"
+  },
+  "categories": {
+    "curve": {
+      "description": "Two consecutive curves, each followed by a straight. A MetaDrive `Curve` block is an arc *and* a trailing straight of drawn length -- `create_bend_straight` returns both and `pgblock/curve.py` builds both -- so the road runs straight, arc, straight, arc, straight. The two blocks draw radius, arc and *direction* independently, so what the seed picks is a pair: seeds 0-4 cover all four of left-left, left-right, right-right and right-left, with left-left drawn twice. Net rotation runs from +67.5 to +239.5 degrees -- two of the five sweep past a U-turn, which is a consequence of the pairing rather than an accident of it.",
+      "block_seq": "CC",
+      "exit_rule": "only",
+      "max_steps": 1200,
+      "scenarios": [
+        {
+          "scenario_id": "curve_0000",
+          "seed": 1,
+          "destination": "2C0_1_",
+          "spawn_lane_index": 1,
+          "route_length_m": 340.09,
+          "net_rotation_deg": 81.33,
+          "turn_pairs": "LR",
+          "thumbnail": "thumbs/curve_0000.png",
+          "exit_rule": null,
+          "exit_node": null,
+          "max_steps": null
+        }
+      ]
+    }
+  }
+}

@@ -139,3 +139,44 @@ def test_build_pairs_each_tag_with_its_own_recipe():
     assert 'docker build -t "$tag" -f "$recipe" "$context"' in code
     assert 'docker build -t "$IMAGE"' not in code
     assert 'IMAGE="${SIM_IMAGE:-metadrive-wingfin-sim:latest}"' in code
+
+
+def test_compose_runs_the_sim_as_root_and_only_the_studio_as_the_host_uid():
+    # Phase 5 Step 1: as the host uid the scored AV3 row hung for four hours, as root it drove;
+    # so `user:` and the passwd mount belong to the studio alone, which writes banks into the
+    # repo and must own them. `run` gets the models mount it never had, `agent` the socket and
+    # the share, under a profile so `docker compose up` on the laptop never starts it. The
+    # script a rig executes, `scripts/sim-run.sh`, must say the same things as `run`.
+    compose = (ROOT / "compose.yaml").read_text()
+    code = _code_lines(compose)
+    services = re.split(r"^  (?=[a-z]+:$)", code.split("\nservices:\n", 1)[1], flags=re.MULTILINE)
+    by_name = {
+        block.split(":", 1)[0]: block
+        for block in services
+        if re.match(r"[a-z]+:$", block.split("\n", 1)[0])
+    }
+    assert set(by_name) == {"run", "studio", "agent"}
+    assert "user:" in by_name["studio"] and "/etc/passwd:/etc/passwd:ro" in by_name["studio"]
+    assert "user:" not in by_name["run"] and "/etc/passwd" not in by_name["run"]
+    assert "user:" not in by_name["agent"]
+    assert "gpus: all" in by_name["run"]
+    assert "gpus" not in by_name["studio"] and "gpus" not in by_name["agent"]
+    assert "- .:/work:ro" in by_name["run"] and "- .:/work\n" in by_name["studio"]
+    assert '"${MODELS_DIR:-../models}:/models:ro"' in by_name["run"]
+    assert "/var/run/docker.sock" in by_name["agent"]
+    assert "/var/run/docker.sock" not in by_name["studio"]
+    assert 'profiles: ["rig"]' in by_name["agent"]
+    assert "build:" not in by_name["agent"]
+    script = _code_lines((ROOT / "scripts" / "sim-run.sh").read_text())
+    assert 'IMAGE="${SIM_IMAGE:-metadrive-wingfin-sim:latest}"' in script
+    assert '-v "$REPO:/work:ro"' in script
+    assert '-v "$OUT_DIR:/out"' in script
+    assert '-v "$MODELS_DIR:/models:ro"' in script
+    assert "-v /etc/localtime:/etc/localtime:ro" in script
+    assert "--network host" in script
+    assert "--user" not in script, "the sim container runs as root"
+    assert 'gpus=(--gpus "device=$GPU")' in script
+    assert '"$IMAGE" -m scenariobank "$@"' in script and "--entrypoint python" in script
+    # The guard comes before the run: sim-image.sh's status check is invoked, and earlier in
+    # the file than docker run.
+    assert script.index("sim-image.sh status") < script.index("exec docker run")

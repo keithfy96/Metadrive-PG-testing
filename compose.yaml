@@ -3,6 +3,13 @@
 #   docker compose run --rm run doctor
 #   docker compose run --rm run generate --category curve --count 3 --out /out/curve
 #   docker compose up studio          # http://127.0.0.1:8770/
+#   docker compose --profile rig up -d agent    # on a rig only (Phase 7); see the service
+#
+# **Compose is the NAS's and the laptop's; the rig runs one line.** On a rig, Phase 7's agent
+# starts each job as a sibling container with one `docker run`, and that line is
+# `scripts/sim-run.sh`: image, mounts, user, environment, entrypoint, written once and used by
+# the laptop, the Phase 5 Step 4 gate and the rig alike. The `run` service below is the laptop
+# alias of that line, kept in step with it by hand; it is not the rig's launcher.
 #
 # `scripts/sim-image.sh` first, on a machine that has never done this -- the `run` service names an
 # image built by the converter repo, and compose's own error for a missing image says only "pull
@@ -20,29 +27,21 @@
 #
 name: scenariobank
 
-# Everything both services share. `run` and `studio` differ in exactly three ways: the image, the
-# writability of /work, and the network.
+# Everything the services share. `run` and `studio` differ in four ways: the image, the
+# writability of /work, the network, and the user -- the studio runs as the host's uid, the
+# runner as root (see each service).
 x-common: &common
   working_dir: /work
-  # The host's uid, or every bank and PNG written through the mount belongs to root. There is no
-  # matching entry in the image's /etc/passwd, which is why HOME is set below.
-  user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
   volumes:
-    # The host's user list, read-only. The container runs as the host's uid and the image has no
-    # passwd entry for it, so `pwd.getpwuid(os.getuid())` raises -- and `torch_tensorrt` calls it
-    # at module scope, so `import torch_tensorrt` dies with `KeyError: getpwuid(): uid not found`
-    # before the model can load. Only the name field is read. Measured in the converter's own
-    # container; inherited here along with the image.
-    - /etc/passwd:/etc/passwd:ro
     # Without this the image has no zoneinfo and glibc falls back to UTC, so a bank's
     # `generated_utc` and a result's `started_utc` come out hours adrift of the same run made
     # outside the container. Docker resolves the host's symlink and mounts the TZif file itself,
     # which is all glibc needs when TZ is unset.
     - /etc/localtime:/etc/localtime:ro
   environment:
-    # The uid has no home. panda3d caches compiled shaders and matplotlib writes a font list;
-    # both need somewhere to go. The image already sets these -- repeated here so that overriding
-    # `user:` cannot silently take them away.
+    # panda3d caches compiled shaders and matplotlib writes a font list; both need somewhere to
+    # go, and the studio's uid has no home. The image already sets these -- repeated here so
+    # that nothing else in this file can silently take them away.
     HOME: /tmp
     MPLCONFIGDIR: /tmp/matplotlib
 
@@ -61,9 +60,13 @@ services:
     # top-down rendering is pygame on the CPU. Comment this out on a machine with no NVIDIA
     # runtime and everything except those two steps still works.
     gpus: all
+    # **Root, deliberately** (Phase 5 Step 1, closing Phase 4 Step 7 note 7). As the host uid,
+    # with /etc/passwd mounted, the scored AV3 row hung for four hours; as root it drove on the
+    # laptop and on the rig. The cause is unexplained and root is the documented form. Results
+    # under /out come out root-owned; on a rig the agent reads them and owns the copy to the
+    # share. `scripts/sim-run.sh` runs the same way, and this service must keep matching it.
     volumes:
       - !reset null
-      - /etc/passwd:/etc/passwd:ro
       - /etc/localtime:/etc/localtime:ro
       # **Read-only, and that is the test.** A runner reads a bank and writes results; if it can
       # also rewrite the bank it is scoring, "the same numbers on your machine and on the
@@ -78,6 +81,11 @@ services:
       # Where results go, and the only writable path. Set OUT_DIR in the environment to send them
       # somewhere outside the repo.
       - "${OUT_DIR:-./out}:/out"
+      # The AV3 checkpoint and model config, read-only: `--model-config /models/model_dev.yml
+      # --checkpoint /models/step_440000_trt_direct_full.ep`. The models directory sits beside
+      # the repo on the laptop and on the rig; MODELS_DIR moves it. (Added 2026-09-13: before
+      # this a scored run had no way to reach the model at all.)
+      - "${MODELS_DIR:-../models}:/models:ro"
     entrypoint: ["python", "-m", "scenariobank"]
 
   # The authoring studio: FastAPI, uvicorn, and the page. The one image this repo builds.
@@ -90,8 +98,16 @@ services:
         # The base the studio layers on: the same image `run` uses, so the two never disagree.
         SIM_IMAGE: "${SIM_IMAGE:-metadrive-wingfin-sim:latest}"
     image: scenariobank-studio:85e5dad
+    # The host's uid -- the studio alone. It writes banks and PNGs into the repo through the
+    # mount below, and they must belong to whoever runs it, not to root. There is no matching
+    # entry in the image's /etc/passwd, which is why HOME is /tmp and why passwd is mounted.
+    user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
     volumes:
       - !reset null
+      # The host's user list, read-only. The container runs as the host's uid and the image has
+      # no passwd entry for it, so `pwd.getpwuid(os.getuid())` raises -- and `torch_tensorrt`
+      # calls it at module scope, so a job that imports it dies with `KeyError: getpwuid(): uid
+      # not found` before the model can load. Only the name field is read.
       - /etc/passwd:/etc/passwd:ro
       - /etc/localtime:/etc/localtime:ro
       # **Writable, unlike `run` above.** The studio's whole purpose is authoring: `generate`
@@ -106,3 +122,40 @@ services:
     # http://127.0.0.1:8770/.
     network_mode: host
     command: ["python", "-m", "scenariobank", "studio"]
+
+  # The rig agent (Phase 7 owns the code; Phase 5 owns the container). One per rig, a worker per
+  # GPU: each worker takes its card's rig-local lock, only then leases one job from the NAS's
+  # wfqueue, and runs it as two sibling containers -- the openpilot bridge and `scripts/sim-run.sh`
+  # -- before delivering the results and acking. The sim image with no GPU; no fourth image.
+  #
+  # Under the `rig` profile so `docker compose up` on the laptop or the NAS never starts it:
+  # `docker compose --profile rig up -d agent` on a rig, and nowhere else.
+  #
+  # **The three roots are HOST paths.** The agent starts siblings through the docker socket,
+  # and a sibling's bind mounts are resolved by the daemon on the host -- so the agent must
+  # hand `docker run` the host's directories, never its own mount points. It reads the share
+  # through /share for itself (validation, the results copy) and passes SCENARIOBANK_* to the
+  # sibling. The socket mount is acceptable here where it was rejected for the studio: the agent
+  # serves no HTTP.
+  agent:
+    <<: *common
+    profiles: ["rig"]
+    image: "${SIM_IMAGE:-metadrive-wingfin-sim:latest}"
+    restart: always
+    network_mode: host
+    volumes:
+      - !reset null
+      - /etc/localtime:/etc/localtime:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      # The NAS share: banks/<bank_id>, models/, results/<job_id>. Still open 8.
+      - "${SCENARIOBANK_SHARE:-/mnt/scenariobank}:/share"
+      # The per-card locks. Rig-local by design -- never on the share (Phase 7).
+      - /var/lock/scenariobank:/var/lock/scenariobank
+    environment:
+      SCENARIOBANK_BANKS: "${SCENARIOBANK_SHARE:-/mnt/scenariobank}/banks"
+      SCENARIOBANK_MODELS: "${SCENARIOBANK_SHARE:-/mnt/scenariobank}/models"
+      SCENARIOBANK_RESULTS: "${SCENARIOBANK_SHARE:-/mnt/scenariobank}/results"
+      SCENARIOBANK_LOCKS: /var/lock/scenariobank
+      WFQUEUE_URL: "${WFQUEUE_URL:-http://localhost:9090}"
+      SIM_IMAGE: "${SIM_IMAGE:-metadrive-wingfin-sim:latest}"
+    command: ["python", "-m", "scenariobank", "agent"]

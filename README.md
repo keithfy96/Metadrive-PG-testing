@@ -6,6 +6,8 @@ run-time difficulty options — plus the runner that scores a camera model again
 **The studio is the way in.** `scenariobank studio` serves a local web page: pick a scenario type,
 build a bank, look at every scenario in it, and swap a poor seed. That is the product;
 [`docs/web-setup.md`](docs/web-setup.md) is how to install and run it.
+[`docs/running-the-application.md`](docs/running-the-application.md) is what to run on the NAS, the
+laptop and a rig -- images, containers, the studio -- and how to tell that it worked.
 
 The CLI underneath is how the studio executes rather than a second product. MetaDrive's engine is a
 per-process singleton, so every simulation has to be a subprocess, and that subprocess is this
@@ -575,8 +577,9 @@ needed on a rig). Neither image holds the checkpoint, a bank or a result; those 
    The engine inside the `.ep` is compiled for one GPU architecture; on a different one it
    fails to deserialize, and rebuilding it is the converter's job, not this repo's.
 4. Build both images (above), regenerate a bank (`scenariobank generate`, below), and run the
-   sim container **as root** -- the default for `docker run`; `compose.yaml` sets `user:` to
-   the host uid, and under that uid `torch_tensorrt` hung a scored row for four hours.
+   sim container **as root** -- which is what `scripts/sim-run.sh` and compose's `run` service
+   do; under the host uid `torch_tensorrt` hung a scored row for four hours. Only the `studio`
+   service sets `user:` to the host uid, because it writes banks into the repo.
 
 ## What gets generated, and where
 

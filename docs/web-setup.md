@@ -44,6 +44,8 @@ uv run scenariobank studio
 
 Then open <http://127.0.0.1:8770/>. Stop it with Ctrl-C.
 
+In a container, and on the NAS, see [`docs/running-the-application.md`](running-the-application.md).
+
 | flag | default | |
 |---|---|---|
 | `--banks-root` | `banks` | where the bank list is read from |
