@@ -5075,11 +5075,15 @@ and code arrives with the mount. "The container reads a `Job` file" was already
 | `--job` with `--bank` (a usage error) | process `2`, file `2`, `permanent: true` |
 | `tests/unit/test_events.py` (new, 14), six added to `test_results.py` with two there extended, two added to `test_runner.py` | green offline, no simulator |
 | `ruff check`, and `docs/reference/commands.md` regenerated | clean; `--events` in the reference |
+| the probe inside `scenariobank-sim:latest` on the rig's RTX 5080 (`GPU=0`), 2026-09-15 | commit `85e5dad`, obs `Box(-0.0, 1.0, (19,))`, `drive_side: left` |
+| the same one-scenario job on that card | five events, the same seven files, `exit_code` `0`, `t_junction_0000` arrived in 139 steps (0.331 s, against the laptop's 0.788 s) |
+| the rig's scored row against the laptop's | equal in every field but `actions_digest`, `reward` (sixth decimal) and `wall_time_s` — Phase 5 Step 4's cross-machine finding, not this step's |
 
-**Still to do on a rig**, and it needs this committed and pulled there: the probe inside
-`scenariobank-sim:latest` on a GPU with this entrypoint. The image itself was verified on the
-first rig on 2026-09-14 (Phase 5 Step 4, checks 4.3–4.4) and nothing here changes it, so what the
-rig has left to say is only that the same files appear beside a GPU run.
+**Done on the rig too, 2026-09-15.** Committed as `90a361d`, pulled on the first rig
+(`116.12.220.99`, one RTX 5080, checkout clean at `5d75340` before the pull, no compute process on
+the card), then the probe and the same job file on `GPU=0`. The entrypoint behaves there exactly
+as here: the same five events, the same seven files, `exit_code` `0`. The image was untouched by
+this step and needed no rebuild, which the probe reporting the same commit confirms.
 
 The worked round trip, the file table and the two traps are in
 `docs/running-the-application.md`, "One job, one container".
