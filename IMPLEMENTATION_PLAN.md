@@ -5126,17 +5126,20 @@ device, he takes `.wing-sim.gpu<N>.lock`, this exact path, and our shared rig lo
 untouched. **The ask for him is one sentence:** take `.wing-sim.gpu<N>.lock` for the card you are
 using, and keep taking `.wing-sim.gpu.lock` (exclusive) for anything that needs the machine.
 
-- **`flock(2)` is the authority and `/proc/locks` is a witness -- and in a container a blind
-  one.** Measured with `scenariobank-sim:latest` against a lock held by a host process: without
-  `--pid host` the container is refused correctly *and* reads **zero rows for the whole machine**
-  (`locks_show()` skips every row whose pid it cannot translate into the reader's namespace, so a
-  private namespace does not get a filtered list, it gets an empty one); with `--pid host` it is
-  refused and sees all 436 rows, ours among them. So **acquisition is always an attempt and never
-  a look**, which is answered correctly across namespaces, and **the agent's container needs
-  `--pid host`** or it can still never double-book a card but can no longer
-  say who has one -- so `compose.yaml`'s `agent` service now carries `pid: host`. The
-  device:inode key is identical on both sides of the mount, because a bind
-  mount shares the superblock -- that part was the risk, and it is measured, not argued.
+- **`flock(2)` is the authority and `/proc/locks` is a witness -- and in a container a partly
+  blind one.** `locks_show()` skips every row whose pid it cannot translate into the reader's
+  namespace, so **a container sees the locks taken inside it and none of the host's**. Measured
+  on the rig with `scenariobank-sim:latest`, against a host holding 18 locks: without `--pid
+  host` it is refused correctly, reads **0 rows** before locking and **2** after -- its own, both
+  naming pid `1`; with `--pid host` it reads 23 then 25, naming its real host pid. *(The first
+  version of this bullet said "zero rows for the whole machine". That was the before-state only,
+  and the rig disproved it -- the confirmation passes in a namespace because our own row is
+  always there.)* So **acquisition is always an attempt and never a look**, which is answered
+  correctly across namespaces, and **the agent's container needs `--pid host`** -- not to prevent
+  a double-booking, which `flock` prevents anyway, but so that a **foreign** holder can be named
+  at all. `compose.yaml`'s `agent` service carries `pid: host`. The device:inode key is identical
+  on both sides of the mount, because a bind mount shares the superblock -- that part was the
+  risk, and it is measured, not argued.
 - **Confirming the lock has three outcomes, not two.** Our row is in `/proc/locks` (confirmed);
   no rows at all (blind -- keep the lock, `confirmed=False`, and a note naming `--pid host`);
   rows but not ours (a contradiction -- `LockError`, both locks dropped, and the message asks
@@ -5177,6 +5180,11 @@ using, and keep taking `.wing-sim.gpu.lock` (exclusive) for anything that needs 
 | the same with `--pid host` | refused; 436 rows, ours among them; same `103:03:9460376` key as the host |
 | the agent image (`--pid host`, `SIMULATION_ROOT=/simulation`) while the host held the rig lock | refused, scope `rig`, verdict `foreign`, naming the **host's** pid |
 | the same container holding card 0, then `with_rig_lock.sh` on the host | exit 99. It printed no pid: our container is root and his `fuser` cannot read another user's descriptors, so the holder file is what names us -- worth knowing on a shared rig |
+| **on the rig** (`sim`, RTX 5080, `$HOME` on ext4), `test_lock.py` inside `scenariobank-sim:latest` | 20 passed, 2.02 s |
+| a container there holding card 0 (`--pid host`), probed from the rig's own shell | exclusive on the rig lock **1** (their GitLab job's syscall), shared on it **0**, exclusive on card 0 **1**; after release both **0** and the record gone |
+| the host's `/proc/locks` during that hold | `FLOCK ADVISORY READ 619155 103:02:37879864` and `FLOCK ADVISORY WRITE 619155 103:02:37879865` -- the container's own pid, both inodes. The cross-boundary check the laptop cannot make |
+| the record the container wrote onto the rig's disk | `job_id: rig-check`, `pid` 619155, mode 0644; the lock files 0666 |
+| the same container **without** `--pid host` | 0 of the host's 18 rows, its own 2 after locking (pid `1`), `confirmed=True`, and a second taker still refused |
 | `tests/unit/test_lock.py` (new, 20) | green offline -- no simulator, no GPU, no docker; every exclusion assertion made from a second process |
 | the offline suite | 843 passed, 9 skipped, 457.15s |
 | `ruff check src tests scripts` | clean |
@@ -5186,6 +5194,13 @@ two things an operator sees on a rig, the by-hand "who has card 0", and `--pid h
 `compose.yaml`'s `agent` service was corrected with it -- it mounted a lock directory of its own,
 `/var/lock/scenariobank`, which excludes nobody; it now mounts the rig's `SIMULATION_ROOT` and
 runs `pid: host`, both pinned by `test_images.py` so neither can drift back.
+
+**Done on the rig too, 2026-09-15.** Committed as `2d78bf5` and pulled on the first rig, which
+turned out to be a **GitLab runner host for wing-sim** (`runner-czkjgi56y-project-84835806-…`,
+their `wing-sim-*:prod` images) with no wing-sim checkout and no `~/simulation` at all -- so the
+lock directory was created there by us, and the exclusive taker in the checks above is `flock -n`
+making the same syscall on the same inode their CI job makes. The one finding is the corrected
+bullet above: a container is not blind to its own locks, only to the host's.
 
 ### Step 3 — the run session, driven by a job file (R1: our own) ⬜
 

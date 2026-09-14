@@ -143,11 +143,11 @@ services:
     image: "${SIM_IMAGE:-metadrive-wingfin-sim:latest}"
     restart: always
     network_mode: host
-    # /proc/locks is filtered by PID namespace, and a container without this reads ZERO rows for
-    # the whole machine -- measured with this image against a lock held on the host. The flock
-    # that prevents a double-booking works either way, so nothing can be double-booked without
-    # it; what is lost is the agent's ability to say WHO holds a card, and to confirm its own
-    # lock rather than trust the call that took it (Phase 7 Step 2).
+    # /proc/locks is filtered by PID namespace: a container sees the locks taken INSIDE it and
+    # none of the host's -- measured on a rig, 0 rows against a host holding 18. The flock that
+    # prevents a double-booking works either way, and the agent still confirms its own lock; what
+    # is lost without this flag is the agent's ability to say WHO holds a card when the holder is
+    # anything other than itself -- CARLA, a GitLab job, a hand-run script (Phase 7 Step 2).
     pid: host
     volumes:
       - !reset null

@@ -310,12 +310,13 @@ for scope in ('rig', 'card'):
 ```
 
 **The agent container must run with `--pid host`** (`pid: host` in `compose.yaml`).
-`/proc/locks` is filtered by PID namespace, and a container without it sees zero rows for the
-whole machine -- measured, with this repo's sim image. The `flock` that stops a double-booking
-works there regardless, so nothing can be double-booked; what is lost is the ability to *name* a
-holder, and the lock reports itself
-unconfirmed rather than pretending. For the same reason the lock directory must be local disk:
-on an NFS or SMB mount `flock(2)` is emulated and excludes nobody.
+`/proc/locks` is filtered by PID namespace: a container sees the locks taken inside it and none
+of the host's. Measured on the rig with this repo's sim image -- 0 rows against a host holding
+18, then its own 2 once it locked. Nothing can be double-booked without the flag, because `flock`
+answers correctly across namespaces, and the lock still confirms itself. What is lost is the
+answer to *who* has a card: a holder outside the container becomes invisible, and the helper then
+says "held, by whom this process cannot see" rather than "free". For a separate reason the lock
+directory must be local disk: on an NFS or SMB mount `flock(2)` is emulated and excludes nobody.
 
 ## One job, one container
 

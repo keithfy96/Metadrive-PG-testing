@@ -33,21 +33,23 @@ directory is a different file and gives exactly zero exclusion while appearing t
 same reason the lock directory must be **local disk** -- on an NFS or SMB mount `flock(2)` is
 emulated or ignored, and the emulation does not show up in `/proc/locks` at all.
 
-**`flock` is the authority; `/proc/locks` is a witness, and in a container it is a blind one.**
-Both were measured here, on this kernel, with the image the agent actually runs
-(`scenariobank-sim:latest`), against a lock held by a process on the host:
+**`flock` is the authority; `/proc/locks` is a witness, and in a container it is a partly blind
+one.** `locks_show()` skips every row whose pid it cannot translate into the reading process's
+pid namespace, so **a container sees the locks taken inside it and none of the host's**. Measured
+on a rig, with the image the agent runs (`scenariobank-sim:latest`), against a host holding 18
+locks of its own:
 
-| what the container did | no `--pid host` | `--pid host` |
+| what the container saw | no `--pid host` | `--pid host` |
 |---|---|---|
-| a non-blocking `flock(LOCK_SH)` | refused -- correct | refused -- correct |
-| rows in `/proc/locks` | **0, for the whole machine** | 436, ours among them |
+| a non-blocking `flock` against a lock held on the host | refused -- correct | refused -- correct |
+| rows in `/proc/locks` before taking anything | **0** | 23 |
+| rows after taking its own two | 2, both naming pid **1** | 25, naming its real host pid |
 
-`locks_show()` skips every row whose pid it cannot translate into the reading process's pid
-namespace, so a private namespace does not see a *filtered* list, it sees an empty one. Two
-consequences run through everything below. Acquisition is always an attempt to take the lock and
-never a look at who has it -- an attempt is answered correctly across namespaces, and a look is
-not. And the agent's own container must run with `--pid host`, or it can still never
-double-book a card but can no longer say *who* has one.
+Two consequences run through everything below. Acquisition is always an attempt to take the lock
+and never a look at who has it -- an attempt is answered correctly across namespaces, and a look
+is not. And the agent's own container must run with `--pid host`: without it nothing can be
+double-booked and the lock still confirms, but a **foreign** holder becomes invisible, so the
+question "who has this card" has no answer beyond "somebody".
 
 **Confirm the lock, do not trust the call.** After `flock(2)` returns we look for our own pid
 against this inode in `/proc/locks`. Three outcomes, and each is a different thing to do:
@@ -447,10 +449,14 @@ class CardLock:
         """Find our own lock in `/proc/locks`, and say plainly when we cannot.
 
         The step this implements says to confirm by finding the process in `/proc/locks` rather
-        than by trusting a return value. That is right, and it has one honest failure: in a pid
-        namespace the file is empty for every lock on the machine, our own included. So an empty
-        file is not a contradiction -- it is a witness that cannot see, and a run must not be
-        refused over it, because the `flock` that refuses a double-booking works there anyway.
+        than by trusting a return value. Our own row is visible wherever we are -- a container
+        without `--pid host` hides the host's locks but not the ones taken inside it -- so this
+        does its job in a namespace as well as outside one. What it cannot do there is name a
+        foreign holder; that is `Holding`'s business, and it says so in as many words.
+
+        An empty file is the remaining case, seen under a *user* namespace: nothing is visible,
+        our own lock included. That is a witness that cannot see, not a contradiction, and a run
+        must not be refused over it -- the `flock` that refuses a double-booking works anyway.
 
         Rows present without ours among them IS a contradiction, and the likeliest cause by far
         is a lock directory on a network mount, where `flock(2)` is emulated and excludes nobody.
@@ -460,9 +466,9 @@ class CardLock:
             return False, "/proc/locks cannot be read, so the lock is taken but unconfirmed"
         if not rows:
             return False, (
-                "/proc/locks is empty for the whole machine, so the lock is taken but "
-                "unconfirmed and no foreign holder can be named -- run this container with "
-                "--pid host"
+                "/proc/locks shows nothing at all, not even the lock just taken, so it is held "
+                "but unconfirmed and no other holder can ever be named here -- a user namespace, "
+                "or a kernel that does not report flock(2)"
             )
         mine = os.getpid()
         missing = [

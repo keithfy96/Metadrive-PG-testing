@@ -11,9 +11,10 @@ The two properties the design rests on, and the reason this file exists:
 - CARLA does not share, so an exclusive taker -- `deployment/with_rig_lock.sh`, a hand-run
   script, a GitLab job -- is refused while either of ours is up, and refuses us while it is.
 
-`/proc/locks` is a witness and not the authority, and in a container it is a blind one (measured:
-zero rows for the whole machine without `--pid host`). So the tests that read it check what it
-is *for* -- naming a holder -- and the tests about exclusion never touch it.
+`/proc/locks` is a witness and not the authority: a container without `--pid host` sees the locks
+taken inside it and none of the host's (measured on a rig -- 0 of the host's 18, then its own 2).
+So the tests that read it check what it is *for* -- naming a holder -- and the tests about
+exclusion never touch it.
 """
 
 from __future__ import annotations
@@ -296,16 +297,17 @@ def test_a_lock_the_kernel_does_not_report_is_a_contradiction(tmp_path, monkeypa
 
 
 def test_a_blind_witness_keeps_the_lock_and_says_so(tmp_path, monkeypatch):
-    """A container without `--pid host` sees zero rows for the whole machine -- measured.
+    """`/proc/locks` showing nothing at all, not even the lock we just took.
 
-    The `flock` that stops a double-booking works there anyway, so the run goes ahead; what is
-    lost is the ability to name a holder, and the note says which flag brings it back.
+    Measured under a user namespace; a plain container is not this case -- it hides the host's
+    locks but still shows its own, so the confirmation there passes. Either way the `flock` that
+    stops a double-booking works, so the run goes ahead and the helper says what it cannot see.
     """
     lock = CardLock(gpu=0, root=tmp_path)
     monkeypatch.setattr("scenariobank.agent.lock._proc_locks", lambda: [])
     with lock.acquire() as held:
         assert held.confirmed is False
-        assert "--pid host" in held.note
+        assert "not even the lock just taken" in held.note
         assert not takes(lock.card_file), "the lock is real whether or not we can see it"
 
         # and with no witness, a holder cannot be named -- "unknown", never "free"
