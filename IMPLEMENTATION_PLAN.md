@@ -5219,12 +5219,23 @@ proven before Step 5 wraps it in a loop.
   side can never reach the other. Label with the job id and the attempt, as he does — that is what
   makes a sweep able to tell whose container it found.
 - **One bridge per running simulation** (Phase 5 Step 3: the server holds one connection). The
-  worker starts `bridge-gpu<N>` on `BRIDGE_PORT` = base + N and passes it to the simulator as
-  `run --bridge-port`. The zapeta bridge listens on 5558 in wing-sim's stack too and both use host
-  networking, so **the base port is not 5558** — a collision with his is then an error rather than
-  a wrong number, and on a shared rig the two stacks can run at once on different cards.
-- **Validation before the card**: the payload parses as a `Job`, the bank id is on the share and
-  its manifest carries that id, exactly one checkpoint under the models root with a matching
+  worker starts `bridge-gpu<N>` on `BRIDGE_PORT` = **5600 + N** — gpu0 on 5600, gpu1 on 5601
+  *(Keith, 2026-09-15)* — and passes it to the simulator as `run --bridge-port`. The zapeta
+  bridge listens on 5558 in wing-sim's stack too and both use host networking, so **the base port
+  is deliberately not 5558**: a collision with his is then an error rather than a wrong number,
+  and on a shared rig the two stacks can run at once on different cards. `bridge.sh` needs no
+  change — it reads `BRIDGE_PORT` and `BRIDGE_NAME` already.
+- **The bank root is a plain directory** *(Keith, 2026-09-15)*: `SCENARIOBANK_BANKS`, as
+  `compose.yaml` declares it. Whether that path is a mounted share or a local directory is the
+  deployment's business and not this step's (Still open 8), which is what makes
+  `agent --once job.json` runnable on the laptop and on a rig with nothing mounted.
+- **The lock directory is a deployment prerequisite, not code.** `~/simulation` on the first rig
+  is owned by `metadrive`, mode 755 *(measured 2026-09-15)*. wing-sim's script creates the rig
+  lock with `umask 000`, but it still needs write permission on the **directory** — so if their
+  GitLab runner runs as another user, one of the two sides cannot create the file at all. That
+  directory wants mode 777, or an agreed owner, before Step 5 runs unattended.
+- **Validation before the card**: the payload parses as a `Job`, the bank id is under the bank
+  root and its manifest carries that id, exactly one checkpoint under the models root with a matching
   suffix, and any uploaded `modifiers.py` **parsed to AST and never imported**. A job that fails
   this can never run and is dead-lettered (Step 5), never retried.
 
@@ -5464,9 +5475,14 @@ that list already covers it.
 4. **Bank size beyond 5 seeds.** 35 is the shipping bank. `--count` is a flag, so growing it is one
    regeneration away — but the results notes state the 20% granularity, so growing it later changes
    what a success rate means to the webapp. Decide before the push is written, not after.
-5. **One bridge per running simulation** *(2026-09-13)*. The server holds one connection; a rig
-   running one simulation per card runs one bridge per card. `run --bridge-port` on the client,
-   a container name per card in `bridge.sh`, and a base port that is not wing-sim's 5558.
+5. ~~One bridge per running simulation~~ **resolved 2026-09-15**: the base port is **5600**, so
+   gpu0's bridge is 5600 and gpu1's is 5601 — clear of wing-sim's 5558/5559, which makes a
+   collision with their bridge an error rather than our simulator driving against their planner.
+   The container name per card needs no change to `bridge.sh`: it already reads `BRIDGE_PORT`
+   and `BRIDGE_NAME` from the environment (`scripts/bridge.sh:38`, `:40`), so the agent passes
+   both. `run --bridge-port` on the client stays as written. The rest — one bridge per *running*
+   simulation, because the server holds one connection — is Phase 5 Step 3's finding and is
+   built in Phase 7 Step 3.
 6. **How the NAS exposes the studio to browsers** *(2026-09-13)*. `cli.py` binds loopback only, by
    design, because its routes run subprocesses that write into the repo with no authentication.
    On the NAS someone other than localhost must reach it: a reverse proxy, a tunnel, or a
@@ -5476,7 +5492,11 @@ that list already covers it.
    The agent's `deliver()` is the seam: the share copy now, the database when it exists. Decide
    the database before Phase 7 Step 6; ask about the webapp before the push is written.
 8. **The NAS share** *(2026-09-13)*. Protocol, mountable on both rigs, root-squash or not, and
-   whether the checkpoint cron already uses it. Decide before Phase 7 Step 3.
+   whether the checkpoint cron already uses it. **It no longer blocks Step 3** *(2026-09-15)*:
+   Step 3 reads `SCENARIOBANK_BANKS` as a plain directory, which is what `compose.yaml` already
+   declares, so `agent --once job.json` runs on the laptop and on a rig with nothing mounted.
+   Mounting the share is then a path change and not a code change. Still to decide for Step 6,
+   which delivers into it.
 9. **Queue access** *(2026-09-13)*. None yet. Everything up to Phase 7 Step 7 runs against the
    Step 0 replica; Step 7 waits on a key from the colleague.
 
