@@ -182,6 +182,13 @@ bash scripts/bridge.sh start
 GPU=0 BRIDGE_PORT=5558 bash scripts/sim-run.sh run …  # the AV3 line above
 ```
 
+A rig that *does* have the converter checkout beside the repo -- the first one did, on
+2026-09-14 -- gets the converter's image from `sim-image.sh build`, not this repo's. To build
+what a bare rig would build, point the script away from it: `CONVERTER_DIR=/nonexistent bash
+scripts/sim-image.sh build`. Both images give the same results on the same machine (checked
+on the laptop and on the rig, byte for byte); the choice is about what the rig has to clone,
+not about the numbers.
+
 The rig has no studio and no compose service to start today. A rig with two busy cards will run
 five containers -- the agent, two bridges, two simulators -- and nothing on it listens on a port
 other than the bridges on 127.0.0.1.
@@ -202,6 +209,19 @@ bash scripts/sim-run.sh doctor
 
 The commit and the requested commit agree, and `drive_side` is `left`. Anything else is the wrong
 image.
+
+**Two machines agree on a bank** -- the check `IMPLEMENTATION_PLAN.md` Phase 5 Step 4 calls the
+gate. Run the expert on the same bank on both, copy one `results.json` beside the other, and
+compare the outcome fields. Do not compare `actions_digest` or `reward` across machines: on
+2026-09-14 an Intel laptop and an AMD rig agreed on every step count, status, route completion,
+cost and collision, and disagreed on every action digest and on rewards in the seventh
+significant digit. The digest hashes actions at six decimals, and two CPUs do not round the
+same way. On one machine the digest is exact, and the two images give identical files.
+
+```bash
+FIELDS='.results[] | {scenario_id, status, steps, route_completion, cost, collisions, failure_reason, actor_layout_digest}'
+diff <(jq "$FIELDS" out/gate/results.json) <(jq "$FIELDS" out/gate-rig/results.json) && echo "the two machines agree"
+```
 
 **The studio answers**, on the NAS and the laptop, with the same commit:
 

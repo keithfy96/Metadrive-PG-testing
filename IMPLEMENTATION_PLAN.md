@@ -4141,7 +4141,7 @@ command is for, when it is re-run and how is `docs/calibrating-levels.md`.
 
 ---
 
-# Phase 5 — Containers ⬜
+# Phase 5 — Containers ✅  ⟵ *Steps 1–4 met 2026-09-10 → 2026-09-14 on the laptop and one rig; 2.4, the NAS's own `compose up`, waits on Still open 6*
 
 > **Machine-run.** These are entered by CI, by the rig agent and by the studio's own worker, not
 > by a person at a terminal — with one exception, `docker compose up studio`, which serves a page a
@@ -4625,7 +4625,7 @@ there means the waypoint count is outside `AV3_MPC_MENU`. The same row through `
 Step 1's 1.7; a second bridge on `BRIDGE_PORT=5559` cannot be started yet because
 `bridge.sh` fixes the container name (Still open 5), so the two-bridge check is Phase 7's.
 
-### Step 4 — laptop and rig agree ⬜  ⟵ *gate*
+### Step 4 — laptop and rig agree ✅  ⟵ *met 2026-09-14 on the rig, with one finding: outcomes agree across machines, action digests do not*
 
 *(Rewritten 2026-09-13: the command used to name `pg-bank-2026-08` and `ceiling.json`, neither of
 which exists, and compared a host to a container on one machine. The claim that matters is across
@@ -4643,6 +4643,12 @@ Those four are the only volatile fields (checked against a real record, `out/sim
 `bank.path` differs by mount and is a label, not a score. **Expect: empty.** If it is not, the diff
 names the field, and that is the finding to write down before anything else — the bank is not
 portable and the premise needs revisiting before the studio submits a job.
+
+*(2026-09-14: it was not empty, and the field it named was `actions_digest` on every row, with
+`reward` behind it in the seventh significant digit. What that turned out to mean is in the run
+below: the bank **is** portable — every outcome field agrees — but two CPUs do not produce the
+same floats, so the exact-diff form of this gate is the wrong instrument across machines. The
+comparison that holds is the outcome fields; `docs/running-the-application.md` has the jq line.)*
 
 There is no `selftest` command and this phase no longer asks for one. It was going to build a known
 seed and assert left-side drive as a build check for an image we now do not build — and `doctor`
@@ -4663,6 +4669,11 @@ SIM_IMAGE=scenariobank-sim:latest bash scripts/sim-image.sh status   # "ready.",
 
 Expect: `sim-image.sh build` says it is building the fallback under its own tag, never
 `metadrive-wingfin-sim` (`test_images.py` pins this); `status` ends in `ready.`
+
+*(2026-09-14: the first rig had the converter checkout beside the repo after all, so `build`
+would have made the converter's image — which it already had, 21.5 GB, from the 2026-09-12
+session. The fallback was forced with `CONVERTER_DIR=/nonexistent`. The premise "a rig has this
+repo and nothing else" is the design's, not necessarily the machine's.)*
 
 **4.2 (rig) The gate: the same bank, the same numbers.** The laptop half is Step 1's 1.4.
 
@@ -4716,6 +4727,37 @@ sleep 20; nvidia-smi --query-compute-apps=pid,gpu_uuid --format=csv; wait
 
 Expect: two rows with two different UUIDs while both run, both exits 0. Both on one UUID means
 `--gpus device=$GPU` is not reaching `docker run` and the agent would stack every job on card 0.
+
+*(2026-09-14: the first rig has **one** card, so the two-container form waits for a two-card rig.
+The one-card substitute below proves the half that can be proved here: the index the script is
+given is the device the container asks for and gets. Note also that a `replay` with cameras shows
+**no** process in `nvidia-smi --query-compute-apps` — offscreen rendering is not a compute
+context — so the sampling has to catch a CUDA process, the model's, not the renderer's.)*
+
+**Run 2026-09-14 (rig: `116.12.220.99`, one RTX 5080 16 GB, Ryzen 9 9950X3D, 58 GB; laptop:
+i7-13700H).** The rig's checkout was two commits behind and nothing was pushed, so the two
+commits went over as a `git bundle` and a fast-forward to `5d75340`, the laptop's HEAD — same
+SHAs, nothing through GitHub. Banks compared by digest first (`t-junction` 3f5918e1…, `curve`
+18a33be6…, equal on both). The laptop half of 4.2 was re-run at the same commit
+(`out/gate-head/`) and is byte-identical to the 2026-09-13 run in `out/gate/`.
+
+| check | result | evidence |
+|---|---|---|
+| 4.1 | **met.** `scenariobank-sim:latest` built from `docker/Dockerfile` on the rig (~35 min; converter checkout present, fallback forced with `CONVERTER_DIR=/nonexistent`); the bridge rebuilt entirely from cache, same image; `status` ends `ready.`, label `sim gpu model` | rig `../build-sim.log`, `../build-bridge.log` |
+| 4.2 | **met, with the finding.** 5/5 `ok` on both. The strict diff names `actions_digest` on all five rows and `reward` on four (≤ 1.5e-7 relative); `steps`, `status`, `route_completion`, `cost`, `collisions`, `failure_reason`, `actor_layout_digest` equal on every row. Cause isolated to the CPU, not the image: on the laptop the converter's image and the fallback give byte-identical files; on the rig the fallback and the converter's image give byte-identical files; across machines both pairs differ the same way. The digest hashes each action at six decimals (`runner.py`), so a last-place float difference in the expert's steering flips it and the closed loop carries it forward without changing the outcome. | laptop `out/gate-head/`, `out/gate-fallback/`, `out/gate-rig/results.json`, `out/gate-rig/results-converter.json` |
+| 4.3 | **met.** Probe in the fallback image on the rig's card: six cameras, six buffers, engine loaded in **4.0 s**, forward pass median **131 ms** (laptop ~1.1 s), the model's known `result FAILED` at the end. Scored row: `ready` from the bridge, `status: ok`, 3200 steps, `max_step`, route 0.0664 (laptop 0.0659), three heartbeats at 30 s, **100.5 s** wall (laptop 815 s), 1 m 49 s end to end including the engine load; `results.json` root-owned. | rig `../av3-probe-rig.log`, `../av3-rig.log`, `out/av3-rig/` |
+| 4.4 | **met, one-card form.** The `sim-run.sh replay` container's `HostConfig.DeviceRequests` is `DeviceIDs ["0"]`, capabilities `gpu`, user root; the replay exits 0 (1200 steps, the bank's cap). A CUDA process under the same `--gpus device=0` shows in `nvidia-smi` on `GPU-3a5ceef2…`, the rig's one card. The two-card claim is open until a rig has two cards. | rig `../card-check.json`, `../card-check.log` |
+
+What the numbers mean for Phase 7: the engine loads in seconds on the rig, and a 3200-step row
+takes under two minutes, so a lease `visibility_timeout` of a few minutes with an extend every
+30 s (the heartbeat) covers a row with room to spare; the laptop's 815 s was the laptop's card.
+
+What 4.2 changes: the gate's exact diff stays as the **same-machine** regression (it is exact
+there, across images too). Across machines the claim is "every outcome field equal", and that
+is what the studio can promise about a job scored on any rig. `actions_digest` remains what it
+was built for — the same-machine determinism pin in `test_camera_rig.py` — and is not a
+cross-machine identity. Nothing in code changes for this; `CONTRACT.md` (Phase 6) should say
+which fields are comparable across machines. Nothing committed.
 
 **Done when:** the diff is empty between the laptop and a rig (4.2), the read-only mount refuses
 a write (1.3), and the studio image serves a page that can launch a job (2.3) — from the NAS's
