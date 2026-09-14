@@ -165,6 +165,14 @@ def test_compose_runs_the_sim_as_root_and_only_the_studio_as_the_host_uid():
     assert '"${MODELS_DIR:-../models}:/models:ro"' in by_name["run"]
     assert "/var/run/docker.sock" in by_name["agent"]
     assert "/var/run/docker.sock" not in by_name["studio"]
+    # The GPU locks are the same files wing-sim opens, so the host path is its SIMULATION_ROOT
+    # and never a directory of our own -- exclusion is a property of the inode, and a lock file
+    # of our own next to theirs would exclude nobody while looking right. And `pid: host`,
+    # without which /proc/locks reads zero rows for the whole machine and no holder can be
+    # named (Phase 7 Step 2).
+    assert '"${SIMULATION_ROOT:-$HOME/simulation}:/simulation"' in by_name["agent"]
+    assert "SIMULATION_ROOT: /simulation" in by_name["agent"]
+    assert "pid: host" in by_name["agent"]
     assert 'profiles: ["rig"]' in by_name["agent"]
     assert "build:" not in by_name["agent"]
     script = _code_lines((ROOT / "scripts" / "sim-run.sh").read_text())

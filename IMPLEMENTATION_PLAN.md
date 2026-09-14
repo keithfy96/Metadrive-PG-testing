@@ -586,7 +586,8 @@ metadrive-PG/
                             #   NAS dispatches, nothing on the rig listens.
       loop.py               #   per worker: lock the card, lease one job, run, deliver, ack.
                             #   A held lock is a sleep, never a nack.
-      lock.py               #   flock per GPU, holder file kept separate, /proc/locks check
+      lock.py               #   the rig lock shared + this card's exclusive, holder file
+                            #   kept separate, /proc/locks as a witness and never an authority
       session.py            #   bridge up on this card's port, sibling sim container via
                             #   scripts/sim-run.sh, supervise, tear down. `agent --once job.json`
       supervise.py          #   log file + exit-code file + status file per card. No state held.
@@ -4199,7 +4200,12 @@ Two compose services over one image, the rig's `docker run` line as a script, pl
   writes banks into the repo and must own them; `run` has neither. On a rig, `/out` is read by
   the agent, which then owns the copy to the share, so root-owned results cost nothing.
 - **The `agent` service** *(2026-09-13; Phase 7 owns the code, this phase owns the container)*:
-  the sim image, no GPU, `/var/run/docker.sock`, the NAS share, `/var/lock/scenariobank`;
+  the sim image, no GPU, `/var/run/docker.sock`, the NAS share, and the lock directory --
+  which is **`${SIMULATION_ROOT:-$HOME/simulation}`, not the `/var/lock/scenariobank` this
+  bullet first said** *(corrected 2026-09-15, Phase 7 Step 2)*: the rig lock is wing-sim's file,
+  exclusion is a property of the inode, and a lock directory of our own would exclude nobody
+  while looking entirely right. The service also runs **`pid: host`**, without which
+  `/proc/locks` reads zero rows for the whole machine;
   environment `SCENARIOBANK_BANKS`, `SCENARIOBANK_MODELS`, `SCENARIOBANK_RESULTS` as **host**
   paths (a sibling's bind mounts are the host's, never the agent's own mount points),
   `WFQUEUE_URL`, `SIM_IMAGE`. The socket mount is acceptable here where Step 2 rejected it for
@@ -5088,7 +5094,7 @@ this step and needed no rebuild, which the probe reporting the same commit confi
 The worked round trip, the file table and the two traps are in
 `docs/running-the-application.md`, "One job, one container".
 
-### Step 2 — the lock helper (R1: our own, same paths) ⬜
+### Step 2 — the lock helper (R1: our own, same paths) ✅  *(built 2026-09-15)*
 
 Advisory `flock`, **exclusion by inode**, one lock file per GPU. ~150 lines.
 
@@ -5102,6 +5108,84 @@ Advisory `flock`, **exclusion by inode**, one lock file per GPU. ~150 lines.
 
 **Verify alone:** hold it from a shell (`bash wing-sim/deployment/with_rig_lock.sh sleep 60 &`),
 confirm the helper reports it foreign and refuses.
+
+**Done 2026-09-15.** `src/scenariobank/agent/lock.py`, and with it the `agent/` package. It
+imports `scenariobank.events` (for the one timestamp format every record here is stamped with)
+and nothing else of ours, so the dependency runs one way: the agent launches runs, and must keep
+working when the run it launched has died.
+
+**The finding that shaped the file: the rig lock is taken SHARED.** Two GPUs on a rig are two
+resources and the rig is one, and both are true at the same time -- a CARLA evaluation takes the
+whole machine, one of our runs takes one card. That is a reader-writer relation, so a run holds
+**two** locks: `.wing-sim.gpu.lock` shared and `.wing-sim.gpu<N>.lock` exclusive, rig first, card
+second, the same order everywhere. Measured rather than assumed: with one shared holder, an
+exclusive `flock -n` is refused and a second `flock -s -n` is granted. This is what makes the
+per-device name *work* rather than merely exist -- a per-card lock alone would let us start
+beside a live CARLA stack, which is worse than serialising. And if Tyrone ever does name his per
+device, he takes `.wing-sim.gpu<N>.lock`, this exact path, and our shared rig lock keeps working
+untouched. **The ask for him is one sentence:** take `.wing-sim.gpu<N>.lock` for the card you are
+using, and keep taking `.wing-sim.gpu.lock` (exclusive) for anything that needs the machine.
+
+- **`flock(2)` is the authority and `/proc/locks` is a witness -- and in a container a blind
+  one.** Measured with `scenariobank-sim:latest` against a lock held by a host process: without
+  `--pid host` the container is refused correctly *and* reads **zero rows for the whole machine**
+  (`locks_show()` skips every row whose pid it cannot translate into the reader's namespace, so a
+  private namespace does not get a filtered list, it gets an empty one); with `--pid host` it is
+  refused and sees all 436 rows, ours among them. So **acquisition is always an attempt and never
+  a look**, which is answered correctly across namespaces, and **the agent's container needs
+  `--pid host`** or it can still never double-book a card but can no longer
+  say who has one -- so `compose.yaml`'s `agent` service now carries `pid: host`. The
+  device:inode key is identical on both sides of the mount, because a bind
+  mount shares the superblock -- that part was the risk, and it is measured, not argued.
+- **Confirming the lock has three outcomes, not two.** Our row is in `/proc/locks` (confirmed);
+  no rows at all (blind -- keep the lock, `confirmed=False`, and a note naming `--pid host`);
+  rows but not ours (a contradiction -- `LockError`, both locks dropped, and the message asks
+  whether the lock directory is on a network mount, which is the likeliest cause since `flock(2)`
+  on NFS or SMB is emulated and excludes nobody). A blind witness must not refuse a run: the
+  `flock` that prevents the double-booking works there anyway.
+- **`Busy` is not a failure.** It carries a `Holding` with three verdicts and no fourth -- `ours`
+  (a live record of ours matches the pid holding it), `foreign` (we can see, and it is not ours),
+  `unknown` (we cannot see). Nothing was taken, so there is nothing to release, nothing to nack
+  and nothing to report upstream: the worker sleeps and asks again (Step 5). And a card refused
+  **gives the rig lock straight back**, because holding it alone locks CARLA out of a machine we
+  are not using.
+- **It never blocks.** No `WAIT_FOR_GPU`, no `flock -w`. A worker waiting on a lock is a second
+  queue -- not FIFO, invisible to the real one, and able to overtake it -- so a held lock is a
+  sleep in the worker's own loop where the wait can be seen.
+- **The holder record is a separate file** (`.scenariobank.gpu<N>.holder.json`), written with
+  mkstemp + fsync + rename and chmod 0644 because the rig is shared. The rename is the whole
+  reason it is not the lock file: it gives the path a new inode, and a lock file that is replaced
+  excludes nobody, in complete silence. Named ours rather than `.wing-sim.*` -- the lock paths are
+  shared, the record format is private, and a file that looks like his but parses like ours is an
+  afternoon of somebody's time. It is published at acquisition with `job_id: null` (the card is
+  taken *before* the queue is asked for work), republished when the job is leased, and deleted on
+  release: a record with no lock is history.
+- **A dead pid in `/proc/locks` is never a stale lock.** The kernel records the pid that created
+  the open file description, and a child that inherited the descriptor keeps the lock alive long
+  after that pid exits -- `flock -n 9` in a sourced shell leaves exactly such a row. The only safe
+  reading of a row is "still locked", and nothing here deletes, steals or breaks a lock. A record
+  is believed only when the pid holds the lock, on this boot, for a process created at the
+  recorded moment; anything less is `foreign`, which is a perfectly good answer to wait on.
+
+| check | result |
+|---|---|
+| `bash wing-sim/deployment/with_rig_lock.sh sleep 60 &`, then `acquire()` | refused: scope `rig`, verdict `foreign`, naming his pid; nothing published, card untouched |
+| we hold card 0, then `with_rig_lock.sh true` | his exit **99**, *"the GPU is in use — this run did NOT start"*, naming our pid |
+| card 1 while card 0 is held | taken -- two cards at once, CARLA still shut out of both |
+| both released, then `with_rig_lock.sh true` | exit 0 |
+| `scenariobank-sim:latest`, lock held on the host, no `--pid host` | `flock` refused (correct); `/proc/locks` **0 rows for the machine** |
+| the same with `--pid host` | refused; 436 rows, ours among them; same `103:03:9460376` key as the host |
+| the agent image (`--pid host`, `SIMULATION_ROOT=/simulation`) while the host held the rig lock | refused, scope `rig`, verdict `foreign`, naming the **host's** pid |
+| the same container holding card 0, then `with_rig_lock.sh` on the host | exit 99. It printed no pid: our container is root and his `fuser` cannot read another user's descriptors, so the holder file is what names us -- worth knowing on a shared rig |
+| `tests/unit/test_lock.py` (new, 20) | green offline -- no simulator, no GPU, no docker; every exclusion assertion made from a second process |
+| the offline suite | 843 passed, 9 skipped, 457.15s |
+| `ruff check src tests scripts` | clean |
+
+`docs/running-the-application.md` gained **The two locks, and the rig you share**: the table, the
+two things an operator sees on a rig, the by-hand "who has card 0", and `--pid host`.
+`compose.yaml`'s `agent` service was corrected with it -- it mounted a lock directory of its own,
+`/var/lock/scenariobank`, which excludes nobody; it now mounts the rig's `SIMULATION_ROOT` and
+runs `pid: host`, both pinned by `test_images.py` so neither can drift back.
 
 ### Step 3 — the run session, driven by a job file (R1: our own) ⬜
 

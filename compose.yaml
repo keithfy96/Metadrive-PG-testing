@@ -143,19 +143,30 @@ services:
     image: "${SIM_IMAGE:-metadrive-wingfin-sim:latest}"
     restart: always
     network_mode: host
+    # /proc/locks is filtered by PID namespace, and a container without this reads ZERO rows for
+    # the whole machine -- measured with this image against a lock held on the host. The flock
+    # that prevents a double-booking works either way, so nothing can be double-booked without
+    # it; what is lost is the agent's ability to say WHO holds a card, and to confirm its own
+    # lock rather than trust the call that took it (Phase 7 Step 2).
+    pid: host
     volumes:
       - !reset null
       - /etc/localtime:/etc/localtime:ro
       - /var/run/docker.sock:/var/run/docker.sock
       # The NAS share: banks/<bank_id>, models/, results/<job_id>. Still open 8.
       - "${SCENARIOBANK_SHARE:-/mnt/scenariobank}:/share"
-      # The per-card locks. Rig-local by design -- never on the share (Phase 7).
-      - /var/lock/scenariobank:/var/lock/scenariobank
+      # The GPU locks (Phase 7 Step 2): `.wing-sim.gpu.lock` for the rig, taken shared, and
+      # `.wing-sim.gpu<N>.lock` for each card, taken exclusive. The rig lock is wing-sim's, by
+      # name and by path, and exclusion is a property of the INODE -- so this must be the same
+      # file CARLA's `deployment/with_rig_lock.sh` opens, which is why the host path is its
+      # `SIMULATION_ROOT` and not a directory of our own. Rig-local by design: never the share,
+      # and never any other network mount, where flock(2) is emulated and excludes nobody.
+      - "${SIMULATION_ROOT:-$HOME/simulation}:/simulation"
     environment:
       SCENARIOBANK_BANKS: "${SCENARIOBANK_SHARE:-/mnt/scenariobank}/banks"
       SCENARIOBANK_MODELS: "${SCENARIOBANK_SHARE:-/mnt/scenariobank}/models"
       SCENARIOBANK_RESULTS: "${SCENARIOBANK_SHARE:-/mnt/scenariobank}/results"
-      SCENARIOBANK_LOCKS: /var/lock/scenariobank
+      SIMULATION_ROOT: /simulation
       WFQUEUE_URL: "${WFQUEUE_URL:-http://localhost:9090}"
       SIM_IMAGE: "${SIM_IMAGE:-metadrive-wingfin-sim:latest}"
     command: ["python", "-m", "scenariobank", "agent"]

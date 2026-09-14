@@ -268,6 +268,55 @@ The rig has no studio and no compose service to start today. A rig with two busy
 five containers -- the agent, two bridges, two simulators -- and nothing on it listens on a port
 other than the bridges on 127.0.0.1.
 
+## The two locks, and the rig you share
+
+A rig's cards are taken with `flock`, in `~/simulation` (`SIMULATION_ROOT`, the same variable
+wing-sim's `deployment/with_rig_lock.sh` reads). There are two lock files and they are not the
+same kind of lock:
+
+| file | who | how |
+|---|---|---|
+| `.wing-sim.gpu.lock` | the whole rig. wing-sim's, by name and by path | we take it **shared**, everyone else takes it exclusive |
+| `.wing-sim.gpu<N>.lock` | one card. ours | **exclusive** |
+
+A CARLA evaluation takes the whole machine, so it must not run beside us; two of our own cards
+are two resources, so they must run beside each other. A shared rig lock is exactly that
+relation. What you see on a rig:
+
+- while any card of ours is running, `with_rig_lock.sh` exits **99** -- its own words are
+  *"the GPU is in use — this run did NOT start"*. It names our pid when it can; our container
+  runs as root, so its `fuser` often cannot read our descriptors and prints the refusal with no
+  pid at all. The holder file below is then the thing to read;
+- while CARLA or a hand-run script holds the rig lock, **every** card of ours waits. Until
+  wing-sim names its lock per device, a two-GPU rig behaves as a one-GPU rig for as long as
+  CARLA is running, and not a second longer.
+
+Nothing of ours ever deletes, renames, steals or breaks a lock. Exclusion is a property of the
+inode, so a file that is replaced excludes nobody, silently -- which is also why who-holds-it is
+published in a *separate* file, `.scenariobank.gpu<N>.holder.json`, beside the lock. Read it to
+find the job, the attempt, the container and the host. It is advisory: believe it only while the
+lock is held.
+
+To ask who has a card, from the repo on the rig:
+
+```bash
+uv run python -c "
+from scenariobank.agent.lock import CardLock
+lock = CardLock(gpu=0)
+for scope in ('rig', 'card'):
+    holding = lock.look(scope)
+    print(holding.sentence() if holding else f'{scope}: free')
+"
+```
+
+**The agent container must run with `--pid host`** (`pid: host` in `compose.yaml`).
+`/proc/locks` is filtered by PID namespace, and a container without it sees zero rows for the
+whole machine -- measured, with this repo's sim image. The `flock` that stops a double-booking
+works there regardless, so nothing can be double-booked; what is lost is the ability to *name* a
+holder, and the lock reports itself
+unconfirmed rather than pretending. For the same reason the lock directory must be local disk:
+on an NFS or SMB mount `flock(2)` is emulated and excludes nobody.
+
 ## One job, one container
 
 The line a rig's agent will issue (Phase 7 Step 5) is the line you can issue by hand today. The
