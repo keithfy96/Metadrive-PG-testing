@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import time
+from pathlib import Path
 
 import pytest
 
@@ -1112,7 +1113,9 @@ def test_a_bank_name_that_is_not_a_name_never_becomes_a_path_on_the_options_writ
     # Same guard as every other bank-addressed route: the shape of the name is checked before it
     # touches the filesystem, rather than checking where the path landed afterwards.
     answer = client.post(f"/api/banks/{bank}/options", json={"traffic": "low"})
-    assert answer.status_code in (400, 404)
+    # `..` never reaches the route: the client resolves `/api/banks/../options` to
+    # `/api/options`, which is the axes schema and takes no POST (405). Not a name either way.
+    assert answer.status_code in (400, 404, 405)
 
 
 @pytest.mark.parametrize("scenario", [".ssh", "-lead", "a b"])
@@ -1302,3 +1305,72 @@ def test_the_rigs_are_the_status_files_and_nothing_else(client):
     ]
     # And the status directory is never a job.
     assert client.get("/api/results").json()["jobs"] == []
+
+
+def test_the_options_are_served_as_data_for_the_form(client):
+    from scenariobank.options import describe
+
+    assert client.get("/api/options").json() == describe()
+
+
+def test_the_eta_is_estimated_for_the_bank_at_the_levels_a_run_would_use(client):
+    import shutil
+
+    from scenariobank.calibration import CALIBRATION_DIR
+    from scenariobank.web.eta import WALL_TIMES
+    from tests.unit.test_results_store import deliver, record, scored
+
+    _bank(client.workdir / "banks", "roads", categories=("curve", "t_junction"), seeds=(0, 1, 2))
+    expert = "scenariobank.policies:ExpertPolicy"
+    # The records live under the directory the studio runs in, like the destinations document.
+    shutil.copytree(Path.cwd() / CALIBRATION_DIR, client.workdir / CALIBRATION_DIR)
+    shutil.copy(Path.cwd() / WALL_TIMES, client.workdir / WALL_TIMES)
+
+    # Nothing delivered: the expert is bootstrapped from the checked-in calibration records,
+    # which cover curve and t_junction; the camera model from the measured wall times, the
+    # rig's figure since no host is named; anything else is an honest none.
+    boot = client.get("/api/eta", params={"bank": "roads", "policy": expert}).json()
+    assert boot["scenarios"] == 6 and boot["complete"] is True and boot["seconds"] > 0
+    assert {c["source"] for c in boot["per_category"].values()} == {"calibration"}
+    av3 = client.get(
+        "/api/eta", params={"bank": "roads", "policy": "scenariobank.av3:AV3Policy"}
+    ).json()
+    assert av3["complete"] and av3["per_category"]["curve"]["source"] == "measured"
+    assert av3["per_category"]["curve"]["host"] is None and av3["seconds"] > 6 * 100
+    other = client.get("/api/eta", params={"bank": "roads", "policy": "x:Other"}).json()
+    assert other["seconds"] is None and other["missing"] == ["curve", "t_junction"]
+
+    # Rows delivered: the estimate is theirs, and a new delivery is indexed on the way in.
+    rows = [scored(f"curve_{i:04d}", category="curve", wall_time_s=4.0) for i in range(3)]
+    deliver(client.results_root, "j1", record("j1", rows, levels={"traffic": "high"}),
+            host="sim")
+    hard = client.get(
+        "/api/eta", params={"bank": "roads", "policy": expert, "tier": "hard", "host": "sim"}
+    ).json()
+    curve = hard["per_category"]["curve"]
+    assert curve["source"] == "rows" and curve["host"] == "sim" and curve["seconds_each"] == 4.0
+    assert curve["levels_matched"] is False, "tier hard is six levels, the rows carried one"
+    assert hard["per_category"]["t_junction"]["source"] == "calibration"
+    assert hard["host"] == "sim" and hard["policy"] == expert
+
+    # A subset of the bank, and a subset that names something not in it.
+    two = client.get(
+        "/api/eta",
+        params={"bank": "roads", "policy": expert, "scenarios": "curve_0000,curve_0002"},
+    ).json()
+    assert two["scenarios"] == 2 and list(two["per_category"]) == ["curve"]
+    assert two["seconds"] == 8.0
+    missing = client.get(
+        "/api/eta", params={"bank": "roads", "policy": expert, "scenarios": "curve_0009"}
+    )
+    assert missing.status_code == 404 and "curve_0009" in missing.json()["detail"]
+
+    # The levels are resolved the way a run resolves them, refusals included.
+    refused = client.get(
+        "/api/eta", params={"bank": "roads", "policy": expert, "lights": "high"}
+    )
+    assert refused.status_code == 400 and "Phase 8" in refused.json()["detail"]
+    assert client.get(
+        "/api/eta", params={"bank": "roads", "policy": expert, "tier": "brutal"}
+    ).status_code == 400
+    assert client.get("/api/eta", params={"bank": "nope", "policy": expert}).status_code == 404

@@ -607,8 +607,8 @@ tree.
 ```bash
 uv run scenariobank results                       # the tree SCENARIOBANK_SHARE names, or out/results
 # /mnt/scenariobank/results: added 6, skipped 0, invalid 0; 6 in .studio/results.sqlite
-#   name        status    bank         n  success  delivered             policy
-#   rig-step5-1 complete  t-junction   1     1.00  2026-09-15T04:10:22Z  scenariobank.policies:ExpertPolicy
+#   name        status    bank         n  success  delivered             host  policy
+#   rig-step5-1 complete  t-junction   1     1.00  2026-09-15T04:10:22Z  sim   scenariobank.policies:ExpertPolicy
 #   …
 #   rig sim:gpu0: idle  (updated 2026-09-15T04:31:02Z)
 uv run scenariobank results                       # again: added 0, skipped 6
@@ -649,6 +649,58 @@ Open question 8):
 ```bash
 SCENARIOBANK_SHARE=/mnt/scenariobank DOCKER_UID=$(id -u) DOCKER_GID=$(id -g) docker compose up -d studio
 docker compose logs studio | tail -1     # "… (banks: banks, results: /mnt/scenariobank/results)"
+```
+
+The index carries a version (SQLite's `user_version`). An index of another version is dropped
+and read again from the tree the next time it is opened -- a schema change costs one rescan and
+never a migration, which is what a cache is for.
+
+## The options and the estimate
+
+Two more routes the submit screen (Phase 2c Step 12) is drawn from, both served by the same
+studio and needing no simulator:
+
+- `GET /api/options` is the six option axes as data: each axis's label, its four level names
+  with the number behind each, whether a raw number may be given instead and what shape it must
+  take, and `choices`, the levels that run today -- `lights` offers `none` alone until Phase 8
+  and says why in `restricted`. The tiers are there too, as the six names each expands to. A
+  form drawn from this cannot drift from the resolver, because the resolver reads the same
+  tables (`options.describe()`).
+- `GET /api/eta?bank=<name>&policy=<path>[&tier=hard][&traffic=high…][&scenarios=a,b][&host=sim]`
+  is how long a run would take, in seconds. The levels are resolved the way `run` resolves them
+  (the bank's pinned block, then the tier, then any axis named), so a level that would be
+  refused at run time is refused here too, as a 400.
+
+The estimate is a **median** of the newest scored rows in the results index -- median, not
+mean, because one degraded run is a 5x outlier that would poison a mean for weeks -- for the
+same policy on the same road. Wall time depends first on the policy (the camera model through
+the bridge is two orders slower than the bundled expert), then on the rig, then on the
+difficulty, so the rows are narrowed to the named `host` and the resolved levels when there are
+enough of them (three), and widened one step at a time when there are not; each category in
+the answer says which subset it came from (`host`, `levels_matched`, `n`, `note`). Before any
+run of a policy has been delivered there are two measured stand-ins, and each answer names the
+one it used in `source`:
+
+- `calibration`: the sweeps under `docs/reference/calibration/`, for the expert only. They are
+  the expert driving one axis at a time with the rest at `none`, so for a difficulty that sets
+  several the slowest axis is taken rather than the sum.
+- `measured`: `docs/reference/wall-times.json`, the camera model's per-scenario time as
+  measured on the rig (and, not by default, on the laptop) -- one road's figure, copied there
+  with its provenance rather than re-measured, because a bank of that model is an hour and an
+  absent estimate is a visible gap. With no `host` named, the rigs' figure is what a submit
+  screen shows; a laptop's never is.
+
+`complete` is false when a category has no number at all, and `seconds` is then a floor;
+`missing` names the categories. The first delivered run of a policy on a road replaces every
+stand-in for it. The rig that scored a delivery is read off its `events.jsonl`
+(`run.started.host`), which is why `scenariobank results` now shows a `host` column and why
+the per-rig narrowing works without the agent writing anything new.
+
+```bash
+uv run --group web scenariobank studio
+curl -s 'http://127.0.0.1:8770/api/options' | jq '.axes[] | {name, choices}'
+curl -s 'http://127.0.0.1:8770/api/eta?bank=t-junction&policy=scenariobank.policies:ExpertPolicy' \
+  | jq '{seconds, complete, per_category}'
 ```
 
 ## Did it work?

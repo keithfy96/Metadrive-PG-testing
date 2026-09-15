@@ -59,6 +59,12 @@ PARTIAL_SUFFIX = ".partial"
 #: mistake it for the result (`session.delivery_name`).
 _ATTEMPT = re.compile(r"^(?P<job_id>.+)\.attempt(?P<attempt>\d+)$")
 
+#: The shape of the index, stamped into the file as SQLite's `user_version`. An index at any
+#: other version is dropped and read again from the tree on open: the tree is the truth and the
+#: index is a cache of it, so a schema change costs one rescan and never a migration.
+#: 1: Step 6. 2: `host` on a job and `category` on a row, for the estimate (Step 8).
+INDEX_VERSION = 2
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
     name          TEXT PRIMARY KEY,
@@ -69,6 +75,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     bank_id       TEXT,
     policy        TEXT,
     model         TEXT,
+    host          TEXT,
     options_json  TEXT,
     n             INTEGER,
     summary_json  TEXT,
@@ -78,6 +85,7 @@ CREATE TABLE IF NOT EXISTS jobs (
 CREATE TABLE IF NOT EXISTS rows (
     job_id              TEXT NOT NULL,
     scenario_id         TEXT NOT NULL,
+    category            TEXT NOT NULL,
     status              TEXT NOT NULL,
     success             INTEGER NOT NULL,
     steps               INTEGER NOT NULL,
@@ -92,12 +100,12 @@ CREATE TABLE IF NOT EXISTS rows (
 """
 
 _JOB_COLUMNS = (
-    "name", "job_id", "attempt", "kind", "status", "bank_id", "policy", "model",
+    "name", "job_id", "attempt", "kind", "status", "bank_id", "policy", "model", "host",
     "options_json", "n", "summary_json", "delivered_at", "error",
 )
 _ROW_COLUMNS = (
-    "job_id", "scenario_id", "status", "success", "steps", "route_completion", "cost",
-    "collisions", "failure_reason", "wall_time_s", "actor_layout_digest",
+    "job_id", "scenario_id", "category", "status", "success", "steps", "route_completion",
+    "cost", "collisions", "failure_reason", "wall_time_s", "actor_layout_digest",
 )
 
 
@@ -120,6 +128,16 @@ class Ingested:
 
 
 @dataclass(frozen=True)
+class Sample:
+    """One scored row's wall time, with what the estimate narrows on: the rig and the levels."""
+
+    wall_time_s: float
+    host: str | None
+    levels: dict[str, str]
+    delivered_at: str
+
+
+@dataclass(frozen=True)
 class _Read:
     """One directory, read: the job row and the score rows that go with it."""
 
@@ -135,6 +153,14 @@ class ResultsStore:
         self.results_root = Path(results_root)
         self.index.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:
+            version = connection.execute("PRAGMA user_version").fetchone()[0]
+            if version != INDEX_VERSION:
+                # An index of another shape (or a fresh file, version 0): start it over. The
+                # next `ingest` reads the whole tree, which is what the tree is for.
+                connection.executescript(
+                    "DROP TABLE IF EXISTS rows; DROP TABLE IF EXISTS jobs;"
+                    f"PRAGMA user_version = {INDEX_VERSION};"
+                )
             connection.executescript(_SCHEMA)
 
     def _connect(self) -> sqlite3.Connection:
@@ -223,6 +249,37 @@ class ResultsStore:
             ).fetchall()
         return [_row_dict(row) for row in found]
 
+    def samples(self, policy: str, category: str, *, limit: int = 2000) -> list[Sample]:
+        """The wall time of every scored row of one category under one policy, newest first.
+
+        What the estimate (`web/eta.py`) reads. A row that errored is left out: its wall time
+        is the time to a traceback, not to a drive. Each sample carries the host that scored it
+        and the option levels it ran under, off the job row, so the caller can narrow to one rig
+        or one difficulty before taking a median. Newest first and capped, because the estimate
+        wants the last few dozen and the index may hold thousands.
+        """
+        with self._connect() as connection:
+            found = connection.execute(
+                "SELECT r.wall_time_s, j.host, j.options_json, j.delivered_at "
+                "FROM rows r JOIN jobs j ON j.name = r.job_id "
+                "WHERE j.policy = ? AND r.category = ? AND r.status = 'ok' "
+                "AND j.kind = 'result' "
+                "ORDER BY j.delivered_at DESC, r.rowid DESC LIMIT ?",
+                (policy, category, limit),
+            ).fetchall()
+        samples = []
+        for row in found:
+            options = _loads(row["options_json"]) or {}
+            samples.append(
+                Sample(
+                    wall_time_s=row["wall_time_s"],
+                    host=row["host"],
+                    levels=dict(options.get("levels") or {}),
+                    delivered_at=row["delivered_at"],
+                )
+            )
+        return samples
+
     def rigs(self) -> list[dict[str, Any]]:
         """Each card's status file under `results/status/`, as the agents last wrote them.
 
@@ -253,8 +310,9 @@ def _read(directory: Path) -> _Read:
     delivered_at = _mtime(directory)
     base: dict[str, Any] = {
         "name": name, "job_id": name, "attempt": None, "kind": "result", "status": "invalid",
-        "bank_id": None, "policy": None, "model": _model(directory), "options_json": None,
-        "n": None, "summary_json": None, "delivered_at": delivered_at, "error": None,
+        "bank_id": None, "policy": None, "model": _model(directory), "host": _host(directory),
+        "options_json": None, "n": None, "summary_json": None, "delivered_at": delivered_at,
+        "error": None,
     }
     attempt = _ATTEMPT.match(name)
     if attempt:
@@ -287,6 +345,7 @@ def _read(directory: Path) -> _Read:
         {
             "job_id": name,
             "scenario_id": result.scenario_id,
+            "category": result.category,
             "status": result.status,
             "success": int(result.success),
             "steps": result.steps,
@@ -308,6 +367,29 @@ def _model(directory: Path) -> str | None:
         return json.loads((directory / "job.json").read_text()).get("checkpoint_path")
     except (OSError, ValueError, AttributeError):
         return None
+
+
+def _host(directory: Path) -> str | None:
+    """The machine that scored this run, off `events.jsonl`'s `run.started` line.
+
+    The one thing a delivered result cannot otherwise say about where it was scored: the
+    record has no host field, and the runner's `run.started` event carries
+    `socket.gethostname()`, which with `--network host` is the rig's own name (`events.py`).
+    `None` when there is no such line, and never an error: a host is a nicety, not a result.
+    """
+    try:
+        with (directory / "events.jsonl").open() as stream:
+            for line in stream:
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(event, dict) and event.get("event") == "run.started":
+                    host = event.get("host")
+                    return host if isinstance(host, str) and host else None
+    except OSError:
+        pass
+    return None
 
 
 def _attempt_error(directory: Path) -> str:
@@ -347,4 +429,13 @@ def _loads(text: str | None) -> Any:
     return None if text is None else json.loads(text)
 
 
-__all__ = ["INDEX_NAME", "PARTIAL_SUFFIX", "STATUS_DIR", "Ingested", "ResultsStore", "UnknownJob"]
+__all__ = [
+    "INDEX_NAME",
+    "INDEX_VERSION",
+    "PARTIAL_SUFFIX",
+    "STATUS_DIR",
+    "Ingested",
+    "ResultsStore",
+    "Sample",
+    "UnknownJob",
+]

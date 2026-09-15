@@ -147,6 +147,20 @@ TIERS: dict[str, dict[str, Level]] = {
 #: The `lights` level each tier takes once Phase 8 lands. `easy` stays at `none`.
 PHASE_8_LIGHTS: dict[str, Level] = {"medium": "low", "hard": "medium"}
 
+#: What each axis is called where a person reads it: the `--traffic` flag's help and the
+#: studio's form both take the words from here, so the two cannot say different things.
+LABELS: dict[str, str] = {
+    "traffic": "Moving traffic",
+    "cones": "Coned-off lanes",
+    "barriers": "Barriers and breakdowns",
+    "pedestrians": "People on foot",
+    "cyclists": "People on bikes",
+    "lights": "Traffic lights",
+}
+
+#: Bumped when `describe()` adds, removes or changes the meaning of a key.
+OPTIONS_SCHEMA_VERSION = 1
+
 #: What a recorded bank runs with instead of the six axes: `ScenarioEnv`'s three replay switches,
 #: all off, so the recording plays back as recorded. `env.replay_config` spreads this into the
 #: env config and the resolver copies it into the record, so the two cannot drift apart.
@@ -331,6 +345,53 @@ def resolve_options(
     )
 
 
+def describe() -> dict[str, Any]:
+    """The six axes as data, for a form that renders itself from them.
+
+    A hand-written copy of the axes on a page is a second declaration of them, and the second
+    one is what goes stale when a level is recalibrated. So the studio's submit screen asks for
+    this and draws what it gets: one entry per axis in form order, the four level names with the
+    number behind each, whether a raw number may be given instead (and what shape it must be),
+    and `choices` -- the levels that run today. `lights` offers `none` alone until Phase 8, and
+    says why, so a form greys the axis out instead of knowing which phase it is in. The tiers
+    are here too, as the six names each expands to, because a form that offers "hard" must be
+    able to show what hard is.
+    """
+    axes = []
+    for axis in AXES:
+        numeric = axis in NUMERIC_AXES
+        choices = ["none"] if axis == "lights" else list(LEVEL_NAMES)
+        axes.append(
+            {
+                "name": axis,
+                "label": LABELS[axis],
+                "numeric": numeric,
+                "levels": {name: LEVELS[axis][name] for name in LEVEL_NAMES},
+                "raw": (
+                    {
+                        "minimum": 0,
+                        "integer": axis != "traffic",
+                        "floor": TRAFFIC_FLOOR if axis == "traffic" else None,
+                    }
+                    if numeric
+                    else None
+                ),
+                "choices": choices,
+                "restricted": (
+                    "the Lights axis is Phase 8: `none` is the one level with something to run on"
+                    if axis == "lights"
+                    else None
+                ),
+            }
+        )
+    return {
+        "schema_version": OPTIONS_SCHEMA_VERSION,
+        "level_names": list(LEVEL_NAMES),
+        "axes": axes,
+        "tiers": {tier: dict(levels) for tier, levels in TIERS.items()},
+    }
+
+
 def options_for(
     resolved: ResolvedOptions,
     entry: CategoryEntry | RealWorldEntry,
@@ -350,9 +411,11 @@ def options_for(
 
 __all__ = [
     "AXES",
+    "LABELS",
     "LEVELS",
     "LEVEL_NAMES",
     "NUMERIC_AXES",
+    "OPTIONS_SCHEMA_VERSION",
     "PHASE_8_LIGHTS",
     "REPLAY_FLAGS",
     "TIERS",
@@ -362,6 +425,7 @@ __all__ = [
     "OptionError",
     "Origin",
     "ResolvedOptions",
+    "describe",
     "nearest_level",
     "options_for",
     "resolve_options",

@@ -1,0 +1,28 @@
+{
+  "about": "Measured per-scenario wall times, the estimate's bootstrap for a policy the calibration sweeps did not drive. Read by src/scenariobank/web/eta.py after the delivered rows (which replace these as they arrive) and the sweeps (the expert's own bootstrap). Each entry says where and when it was measured, and IMPLEMENTATION_PLAN.md (Phase 4 Step 8) is the table they were copied from. `default` marks the entries a submit screen assumes when the rig is not yet known: the rigs', never a laptop's.",
+  "measurements": [
+    {
+      "default": true,
+      "host": "sim",
+      "measured_utc": "2026-09-12",
+      "note": "no video; 3200 steps at 100 Hz, 640 decisions; RTX 5080; two runs",
+      "policy": "scenariobank.av3:AV3Policy",
+      "scenario": "t_junction_0000",
+      "simulated_s": 32.0,
+      "source": "IMPLEMENTATION_PLAN.md, Phase 4 Step 8, measured on the rig",
+      "wall_time_s": [100.0, 102.2]
+    },
+    {
+      "default": false,
+      "host": "keith-82y7",
+      "measured_utc": "2026-09-10",
+      "note": "no video; 3200 steps at 100 Hz, 640 decisions; RTX 4050 Laptop 6 GB",
+      "policy": "scenariobank.av3:AV3Policy",
+      "scenario": "t_junction_0000",
+      "simulated_s": 32.0,
+      "source": "IMPLEMENTATION_PLAN.md, Phase 4 Step 8, out/av3/ on the laptop",
+      "wall_time_s": [912.5]
+    }
+  ],
+  "schema_version": 1
+}

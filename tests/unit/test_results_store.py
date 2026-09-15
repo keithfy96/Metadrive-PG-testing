@@ -31,10 +31,17 @@ from scenariobank.web.results import (
 )
 
 
-def scored(scenario_id: str, *, success: bool = True, steps: int = 40) -> ScenarioResult:
+def scored(
+    scenario_id: str,
+    *,
+    success: bool = True,
+    steps: int = 40,
+    category: str = "t_junction",
+    wall_time_s: float = 0.25,
+) -> ScenarioResult:
     return ScenarioResult(
         scenario_id=scenario_id,
-        category="t_junction",
+        category=category,
         seed=7,
         status="ok",
         success=success,
@@ -43,14 +50,21 @@ def scored(scenario_id: str, *, success: bool = True, steps: int = 40) -> Scenar
         actions=steps,
         reward=12.5,
         cost=0.0 if success else 1.0,
-        wall_time_s=0.25,
+        wall_time_s=wall_time_s,
         collisions={"vehicle": 0, "human": 0},
         route_completion=1.0 if success else 0.4,
         actor_layout_digest="abc123",
     )
 
 
-def record(job_id: str, rows: list[ScenarioResult], *, stopped: bool = False) -> Results:
+def record(
+    job_id: str,
+    rows: list[ScenarioResult],
+    *,
+    stopped: bool = False,
+    policy: str = "scenariobank.policies:ExpertPolicy",
+    levels: dict[str, str] | None = None,
+) -> Results:
     """A `Results` the way `run_bank` assembles one, for a queue job."""
     return Results(
         schema_version=1,
@@ -60,8 +74,8 @@ def record(job_id: str, rows: list[ScenarioResult], *, stopped: bool = False) ->
         attempt=1,
         stopped=stopped,
         bank=BankInfo(path="/bank", id="t-junction", source="pg", schema_version="1.1"),
-        policy="scenariobank.policies:ExpertPolicy",
-        options=ResolvedOptions(kind="pg"),
+        policy=policy,
+        options=ResolvedOptions(kind="pg", levels=levels or {}),
         env=EnvInfo(
             observation_shape_before=(19,),
             observation_shape_after=(19,),
@@ -74,10 +88,23 @@ def record(job_id: str, rows: list[ScenarioResult], *, stopped: bool = False) ->
     )
 
 
-def deliver(root: Path, name: str, results: Results, *, checkpoint: str | None = None) -> Path:
-    """What `RunSession.deliver` leaves under `results/`: the record and the job beside it."""
+def deliver(
+    root: Path,
+    name: str,
+    results: Results,
+    *,
+    checkpoint: str | None = None,
+    host: str | None = None,
+) -> Path:
+    """What `RunSession.deliver` leaves under `results/`: the record, the job beside it, and
+    with `host` the runner's `events.jsonl`, whose `run.started` line names the machine."""
     directory = root / name
     write_json(directory / "results.json", results)
+    if host is not None:
+        started = {"schema_version": 1, "event": "run.started", "job_id": name, "host": host}
+        (directory / "events.jsonl").write_text(
+            json.dumps(started) + "\n" + json.dumps({"event": "batch.started"}) + "\n"
+        )
     (directory / "job.json").write_text(
         json.dumps({"job_id": results.job_id, "checkpoint_path": checkpoint}) + "\n"
     )
@@ -148,6 +175,7 @@ def test_a_row_carries_the_outcome_fields_and_only_those(store, tree):
     assert row == {
         "job_id": "j1",
         "scenario_id": "t_junction_0000",
+        "category": "t_junction",
         "status": "ok",
         "success": True,
         "steps": 40,
@@ -166,6 +194,7 @@ def test_a_row_carries_the_outcome_fields_and_only_those(store, tree):
     assert job["summary"]["success_rate"] == 1.0
     assert job["options"]["kind"] == "pg"
     assert job["attempt"] == 1 and job["job_id"] == "j1" and job["error"] is None
+    assert job["host"] is None, "no events.jsonl beside the record, so no host claimed"
 
 
 def test_a_stopped_batch_is_listed_as_stopped(store, tree):
@@ -295,6 +324,99 @@ def test_the_index_is_a_file_where_it_was_asked_for_and_survives_reopening(tmp_p
     again = ResultsStore(index, tree)
     assert again.ingest() == Ingested(added=0, skipped=1, invalid=0, total=1)
     assert len(again.rows("j1")) == 1
+
+
+def test_the_host_is_read_off_the_run_started_event_and_nothing_else(store, tree):
+    # The record has no host field; the runner's first event carries `socket.gethostname()`,
+    # which under `--network host` is the rig's own name. A directory with no events, or one
+    # whose events are not JSON, is a delivered result all the same.
+    deliver(tree, "j1", record("j1", [scored("t_junction_0000")]), host="sim")
+    deliver(tree, "j2", record("j2", [scored("t_junction_0000")]))
+    j3 = deliver(tree, "j3", record("j3", [scored("t_junction_0000")]))
+    (j3 / "events.jsonl").write_text("not json\n{\"event\": \"batch.started\"}\n")
+    attempt(tree, "j4.attempt1")
+    (tree / "j4.attempt1" / "events.jsonl").write_text(
+        json.dumps({"event": "run.started", "host": "rig-b"}) + "\n"
+    )
+    store.ingest()
+    hosts = {job["name"]: job["host"] for job in store.jobs()}
+    assert hosts == {"j1": "sim", "j2": None, "j3": None, "j4.attempt1": "rig-b"}
+
+
+def test_an_index_of_another_version_is_started_over_on_open(tmp_path, tree):
+    import sqlite3
+
+    from scenariobank.web.results import INDEX_VERSION
+
+    deliver(tree, "j1", record("j1", [scored("t_junction_0000")]))
+    index = tmp_path / ".studio" / "results.sqlite"
+    assert ResultsStore(index, tree).ingest().added == 1
+
+    # A Step 6 index: the same tables without the columns this version added, and no stamp.
+    with sqlite3.connect(index) as connection:
+        connection.executescript(
+            "DROP TABLE rows; DROP TABLE jobs; PRAGMA user_version = 0;"
+            "CREATE TABLE jobs (name TEXT PRIMARY KEY, delivered_at TEXT NOT NULL);"
+            "INSERT INTO jobs VALUES ('stale', '2026-01-01T00:00:00Z');"
+        )
+    reopened = ResultsStore(index, tree)
+    assert reopened.ingest() == Ingested(added=1, skipped=0, invalid=0, total=1), (
+        "the old index was dropped and the tree read again; the stale row is gone"
+    )
+    assert [job["name"] for job in reopened.jobs()] == ["j1"]
+    with sqlite3.connect(index) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == INDEX_VERSION
+    # And the version stamp is what makes reopening at this version keep the index.
+    assert ResultsStore(index, tree).ingest().skipped == 1
+
+
+def test_samples_are_the_scored_rows_of_one_category_under_one_policy_newest_first(store, tree):
+    expert = "scenariobank.policies:ExpertPolicy"
+    deliver(
+        tree,
+        "old",
+        record(
+            "old",
+            [
+                scored("curve_0000", category="curve", wall_time_s=1.0),
+                scored("curve_0001", category="curve", wall_time_s=2.0),
+                scored("t_junction_0000", wall_time_s=9.0),
+            ],
+            levels={"traffic": "high"},
+        ),
+        host="rig-a",
+    )
+    os.utime(tree / "old", (1_700_000_000, 1_700_000_000))
+    # An errored row's wall time is the time to a traceback, not to a drive.
+    errored = scored("curve_0001", category="curve", wall_time_s=50.0, success=False)
+    errored = errored.model_copy(update={"status": "error", "traceback": "boom"})
+    deliver(
+        tree,
+        "new",
+        record("new", [scored("curve_0000", category="curve", wall_time_s=3.0), errored]),
+        host="rig-b",
+    )
+    deliver(
+        tree,
+        "other",
+        record(
+            "other",
+            [scored("curve_0000", category="curve", wall_time_s=100.0)],
+            policy="scenariobank.policies:StraightPolicy",
+        ),
+    )
+    attempt(tree, "gone.attempt1")
+    store.ingest()
+
+    samples = store.samples(expert, "curve")
+    assert [(s.wall_time_s, s.host, s.levels) for s in samples] == [
+        (3.0, "rig-b", {}),
+        (2.0, "rig-a", {"traffic": "high"}),
+        (1.0, "rig-a", {"traffic": "high"}),
+    ], "newest delivery first and last row first, the errored row and the other policy out"
+    assert store.samples(expert, "t_junction")[0].wall_time_s == 9.0
+    assert store.samples(expert, "roundabout") == []
+    assert store.samples(expert, "curve", limit=1) == samples[:1]
 
 
 def test_the_results_command_runs_on_a_machine_with_no_web_group(tmp_path, tree, monkeypatch):

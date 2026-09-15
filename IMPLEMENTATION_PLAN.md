@@ -603,7 +603,11 @@ metadrive-PG/
                             #   against docs/queue-docs/ so a server-side change to the client is
                             #   noticed rather than absorbed. Do not reimplement.
     web/ (Phase 7 additions)
-      options.py            #   GET /options: the six axes as data, for the studio's submit form
+      eta.py                #   GET /api/eta (built 2026-09-15): a median of the newest delivered
+                            #   rows per (policy, road), narrowed to the rig and the levels;
+                            #   the sweeps for the expert and docs/reference/wall-times.json for
+                            #   the camera model before any run. GET /api/options is
+                            #   `options.describe()` and needed no module of its own.
       results.py            #   the store (built 2026-09-15): the results tree on the share is the
                             #   truth, `.studio/results.sqlite` on the studio's own disk is the
                             #   index; `scenariobank results`, GET /api/results, GET /api/rigs.
@@ -1972,12 +1976,16 @@ generated: a hand-written copy of the six axes is a second declaration of them.
 
 **The payload is Phase 4 Step 3's `Job`, and the topic is `metadrive`** (pinned under **How this
 ships**, 2026-09-08). The studio mints `job_id` (uuid4) *before* `put()` and passes it as
-`dedupe_key`, so the client's own POST retry cannot enqueue a run twice. **Still blocked on Phase
-7 Step 8's `GET /options`** for the form. Recorded here rather than in Phase 7 because the screen
+`dedupe_key`, so the client's own POST retry cannot enqueue a run twice. ~~**Still blocked on Phase
+7 Step 8's `GET /options`** for the form.~~ *(served since 2026-09-15; see below)* Recorded here rather than in Phase 7 because the screen
 is ours and the queue is not.
 
 **Test in the page:** submit a run and see it appear in the queue's own `/admin` console, with the
 bank, the model and the options in the payload.
+
+*(2026-09-15: `GET /api/options` and `GET /api/eta` exist -- Phase 7 Step 8 was built before its
+Step 7, since it needs neither the queue nor the NAS. The form's data and its "about an hour"
+are served; what this step still waits on is the queue (Open question 9) to `put()` onto.)*
 
 ---
 
@@ -5812,7 +5820,7 @@ Before the bank is correct, prove the whole path with a stub:
 Then wire the real bank behind it. **A green round-trip against a stub is worth more than a correct
 bank nothing can run**, and here it also proves the routing before either side is finished.
 
-### Step 8 — `GET /options` and the ETA ⬜
+### Step 8 — `GET /options` and the ETA ✅  *(built 2026-09-15, before Step 7: it needs neither the queue nor the NAS)*
 
 - **The six axes served as data**, so a frontend renders the form from the schema instead of
   hard-coding it. This is what keeps the picker in step when an axis is recalibrated in Phase 4b.
@@ -5824,6 +5832,63 @@ bank nothing can run**, and here it also proves the routing before either side i
   measured 100 s per 32 s scenario on the rig (Phase 4 Step 8's table; 9x that on the laptop) a
   35-scenario run is an hour, long enough that an absent estimate is a visible gap.
   Two rigs means the estimate is per rig, or it is wrong on the slower one.
+
+**Built 2026-09-15.** Two routes on the studio, no new command, no simulator, no agent change:
+
+- **`GET /api/options`** is `options.describe()`, unshaped: one entry per axis in form order
+  with its label, the four level names and the number behind each (`LEVELS`, read, not
+  copied), whether a raw number may stand in and its shape (`minimum`, `integer`, `floor`),
+  `choices` -- the levels that run today, `["none"]` for `lights` with the reason in
+  `restricted` -- and the tiers as the six names each expands to. The labels moved out of
+  `cli.py` into `options.LABELS`, so the `--traffic` flag's help and the form's caption are
+  one string (a test holds the flags to it).
+- **`GET /api/eta`** takes a bank, a policy, an optional tier and axes, an optional scenario
+  subset and an optional `host`, resolves the levels with `resolve_options` exactly as `run`
+  does (a refusal is a 400), and answers from `web/eta.py`.
+
+*What differs from the text above, and why:*
+
+1. **The key is `(policy, category)` first, then host, then levels -- not `(category, tier)`.**
+   Wall time is set first by the policy (the camera model through the bridge is two orders
+   slower than the expert: 100 s against ~1 s per row), then by the rig, then by the
+   difficulty, then by the road. A key that started at the category would average the expert
+   and AV3 together. So the samples for one `(policy, category)` are narrowed to the requested
+   host and the resolved six levels when at least three exist, and widened one step at a time
+   (host alone, levels alone, everything) when they do not; the answer says which subset it
+   used (`host`, `levels_matched`, `n`, `note`). "Per rig or wrong on the slower one" holds
+   when the rig is known (the rig page); at submit time it is not, and the number is over both.
+2. **The median is over the newest 20 scored rows** (`LAST`), errored rows excluded -- their
+   wall time is the time to a traceback. Everything comes off the results index: the store
+   gained `host` on a job (read off the delivery's `events.jsonl`, whose `run.started` line
+   carries `socket.gethostname()`, the rig's own name under `--network host`) and `category`
+   on a row, and a version stamp (`INDEX_VERSION`, SQLite's `user_version`): an index of
+   another version is dropped and rescanned on open, which the laptop's Step 6 index was.
+3. **The calibration sweeps bootstrap the expert only.** They were driven by the expert with
+   one axis moving and the rest at `none`, so for a difficulty that sets several the slowest
+   axis is taken, not the sum. Applied to a camera model they would be fifty times too small,
+   which is worse than no number.
+4. **The camera model's bootstrap is `docs/reference/wall-times.json`**, the figures in Phase 4
+   Step 8's table copied with their provenance (rig, date, road, what was measured) rather than
+   re-measured -- that step said Phase 7 Step 8 reads them, the plan's own exception to the
+   re-measure rule, because an hour-long bank with no estimate is the visible gap this step
+   exists to close. Entries marked `default` (the rig's, never the laptop's 912 s) are what a
+   submit screen shows with no host named; a host with its own entry gets its own. One road's
+   figure, and the note says so.
+5. **An honest none for anything else.** A policy with no rows, no sweep and no measurement
+   answers `seconds: null` with the reason per category; a run with some categories known
+   answers a floor with `complete: false` and `missing`. The first delivered run of a policy
+   on a road replaces every stand-in for it (a test drives that replacement).
+
+Laptop, 2026-09-15, against the real banks and the 15 deliveries under `out/results` (through
+`TestClient`, no server): `t-junction` under the expert 5.7 s for 5 rows from 26 samples,
+`host=keith-82y7` narrowing to that host and `tier=hard` widening back with "at other option
+levels"; `curve` under the expert at `hard` 76.7 s from the sweeps (15.34 s a row, the traffic
+axis, `levels_matched`); `curve` under AV3 101.1 s a row from the rig's measured figure with
+`host: null`, and `x:Other` `seconds: null`. `scenariobank results` on the same tree reported
+`added 15` on its first run against the Step 6 index (the version bump rescanned it) and shows
+every delivery's host. Unit tests: `tests/unit/test_eta.py` (13), `describe()` and the labels
+in `test_options.py`, the store's host, version and `samples()` in `test_results_store.py`,
+and the two routes in `test_web.py`.
 
 ---
 

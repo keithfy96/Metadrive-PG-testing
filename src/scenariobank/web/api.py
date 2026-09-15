@@ -32,7 +32,10 @@ from scenariobank.bank import (
     set_max_steps,
     set_options,
 )
+from scenariobank.calibration import CALIBRATION_DIR
 from scenariobank.cli import DESTINATIONS_DOC, EXAMPLES_DIR
+from scenariobank.options import AXES, OptionError, describe, resolve_options
+from scenariobank.web.eta import WALL_TIMES, estimate, load_bootstrap, load_measurements
 from scenariobank.web.invoke import NOT_RUNNABLE, InvokeError, build_argv, catalog
 from scenariobank.web.jobs import JobBusy, JobNotFound, Jobs
 from scenariobank.web.results import INDEX_NAME, ResultsStore, UnknownJob
@@ -568,6 +571,86 @@ def create_app(
         state change and every ten seconds, and this is the studio's whole view of the rigs.
         """
         return _results().rigs()
+
+    @app.get("/api/options")
+    def options() -> dict:
+        """The six option axes as data, for the submit screen to render its form from.
+
+        `options.describe()`, unshaped: the level names, the number behind each, which axes
+        take a raw number, which levels run today (`lights` offers `none` alone until Phase 8),
+        and what each tier expands to. A form drawn from this cannot drift from the resolver,
+        because the resolver reads the same tables.
+        """
+        return describe()
+
+    @app.get("/api/eta")
+    def eta(
+        bank: str,
+        policy: str,
+        tier: str | None = None,
+        host: str | None = None,
+        scenarios: str | None = None,
+        traffic: str | None = None,
+        cones: str | None = None,
+        barriers: str | None = None,
+        pedestrians: str | None = None,
+        cyclists: str | None = None,
+        lights: str | None = None,
+    ) -> dict:
+        """How long a run of `bank` under `policy` would take, from what the rigs delivered.
+
+        The levels are resolved the way `run` resolves them -- the bank's pinned block, then
+        the tier, then any axis named here -- so the estimate is for the difficulty the run
+        would actually use, and a level that would be refused at run time is refused here (400).
+        `scenarios` is a comma list to estimate a subset; `host` narrows to one rig's own
+        numbers when the rig is known. The answer is a median of the newest delivered rows,
+        widened to other rigs and other levels when there are too few; before any run exists,
+        the calibration sweeps for the expert and the measured wall times in
+        `docs/reference/wall-times.json` for the camera model. Each category says which.
+        `complete` is false when a category has no number at all; `seconds` is then a floor.
+        """
+        try:
+            manifest = read_manifest(_bank_dir(bank))
+        except (BankError, ValueError) as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        given = dict(
+            zip(AXES, (traffic, cones, barriers, pedestrians, cyclists, lights), strict=True)
+        )
+        levels = {axis: level for axis, level in given.items() if level is not None}
+        try:
+            resolved = resolve_options(manifest, tier=tier, levels=levels)
+        except OptionError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+        by_scenario = {
+            row.scenario_id: name
+            for name, entry in manifest.categories.items()
+            for row in entry.scenarios
+        }
+        if scenarios:
+            wanted = [one.strip() for one in scenarios.split(",") if one.strip()]
+            unknown = sorted(set(wanted) - set(by_scenario))
+            if unknown:
+                raise HTTPException(
+                    status_code=404, detail=f"not in {bank!r}: {', '.join(unknown)}"
+                )
+        else:
+            wanted = list(by_scenario)
+        counts: dict[str, int] = {}
+        for scenario in wanted:
+            counts[by_scenario[scenario]] = counts.get(by_scenario[scenario], 0) + 1
+
+        store = _results()
+        store.ingest()
+        return estimate(
+            store,
+            policy=policy,
+            categories=counts,
+            levels=resolved.levels or None,
+            host=host,
+            records=load_bootstrap(workdir / CALIBRATION_DIR),
+            measurements=load_measurements(workdir / WALL_TIMES),
+        ).as_dict()
 
     def _looks() -> Path:
         """Where a candidate seed's picture is drawn. Under the state directory rather than in a

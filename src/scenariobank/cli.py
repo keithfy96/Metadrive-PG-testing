@@ -11,6 +11,7 @@ from scenariobank.doctor import DoctorError, collect, format_report, has_simulat
 from scenariobank.doctor import check as check_report
 from scenariobank.importing import DEFAULT_RATE, EXAMPLE_WORKSPACE, IMPORTING_DOC
 from scenariobank.logging import configure_logging
+from scenariobank.options import LABELS
 from scenariobank.sockets import SocketError, read_sockets, select_exit
 from scenariobank.workspace import WorkspaceError
 
@@ -590,22 +591,22 @@ def budget_cmd(
 #: One axis's flag, declared six times because a flag is what the reference, the studio's form and
 #: `invoke.build_argv` all key on -- a single `--option axis=level` would be one flag with six
 #: meanings, and none of the three could offer a dropdown for it.
-def _axis(axis: str, label: str) -> Any:
+def _axis(axis: str) -> Any:
     return Annotated[
         str | None,
-        typer.Option(f"--{axis}", help=f"{label} level runs of this bank default to."),
+        typer.Option(f"--{axis}", help=f"{LABELS[axis]} level runs of this bank default to."),
     ]
 
 
 @app.command("options")
 def options_cmd(
     bank: BankDir,
-    traffic: _axis("traffic", "Moving traffic") = None,
-    cones: _axis("cones", "Coned-off lanes") = None,
-    barriers: _axis("barriers", "Barriers and breakdowns") = None,
-    pedestrians: _axis("pedestrians", "People on foot") = None,
-    cyclists: _axis("cyclists", "People on bikes") = None,
-    lights: _axis("lights", "Traffic lights") = None,
+    traffic: _axis("traffic") = None,
+    cones: _axis("cones") = None,
+    barriers: _axis("barriers") = None,
+    pedestrians: _axis("pedestrians") = None,
+    cyclists: _axis("cyclists") = None,
+    lights: _axis("lights") = None,
     show: Annotated[
         bool, typer.Option("--show", help="Print the levels this bank pins and change nothing.")
     ] = False,
@@ -1369,10 +1370,12 @@ def av3(
 
 
 #: One axis's level flag on `run`, where it overrides the bank's pinned level for this run only.
-def _run_axis(axis: str, label: str) -> Any:
+def _run_axis(axis: str) -> Any:
     return Annotated[
         str | None,
-        typer.Option(f"--{axis}", help=f"{label} level for this run, over the bank's pinned one."),
+        typer.Option(
+            f"--{axis}", help=f"{LABELS[axis]} level for this run, over the bank's pinned one."
+        ),
     ]
 
 
@@ -1456,12 +1459,12 @@ def run(
     tier: Annotated[
         str | None, typer.Option("--tier", help="Expand a tier to its six levels first.")
     ] = None,
-    traffic: _run_axis("traffic", "Moving traffic") = None,
-    cones: _run_axis("cones", "Coned-off lanes") = None,
-    barriers: _run_axis("barriers", "Barriers and breakdowns") = None,
-    pedestrians: _run_axis("pedestrians", "People on foot") = None,
-    cyclists: _run_axis("cyclists", "People on bikes") = None,
-    lights: _run_axis("lights", "Traffic lights") = None,
+    traffic: _run_axis("traffic") = None,
+    cones: _run_axis("cones") = None,
+    barriers: _run_axis("barriers") = None,
+    pedestrians: _run_axis("pedestrians") = None,
+    cyclists: _run_axis("cyclists") = None,
+    lights: _run_axis("lights") = None,
     traffic_density: _run_raw("traffic-density", "traffic", "Traffic density") = None,
     cones_count: _run_raw("cones-count", "cones", "How many cone corridors") = None,
     barriers_count: _run_raw("barriers-count", "barriers", "How many barrier scenes") = None,
@@ -2101,14 +2104,14 @@ def results(
     if listed:
         typer.echo(
             f"  {'name':<28} {'status':<9} {'bank':<20} {'n':>4} {'success':>8}  "
-            f"{'delivered':<20} policy"
+            f"{'delivered':<20} {'host':<10} policy"
         )
     for job in listed:
         rate = "" if job["summary"] is None else f"{job['summary']['success_rate']:.2f}"
         n = "" if job["n"] is None else str(job["n"])
         typer.echo(
             f"  {job['name']:<28} {job['status']:<9} {job['bank_id'] or '':<20} {n:>4} "
-            f"{rate:>8}  {job['delivered_at']:<20} {job['policy'] or ''}"
+            f"{rate:>8}  {job['delivered_at']:<20} {job['host'] or '':<10} {job['policy'] or ''}"
         )
         if job["error"]:
             typer.echo(f"    {job['error'].splitlines()[0]}")
