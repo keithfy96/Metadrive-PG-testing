@@ -51,7 +51,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-from scenariobank.agent.jobs import CONTAINER_OUT, Resolved, Roots, checkout
+from scenariobank.agent.jobs import CONTAINER_OUT, JobRefused, Resolved, Roots, checkout, parse_job
 from scenariobank.events import (
     BATCH_FILE,
     EVENTS_FILE,
@@ -267,6 +267,81 @@ class ContainerState:
     exit_code: int | None
 
 
+@dataclass(frozen=True)
+class Managed:
+    """One container of ours on one card, as its labels describe it. Running or exited."""
+
+    name: str
+    job_id: str
+    attempt: int | None
+
+
+def managed(commands: Commands, gpu: int) -> list[Managed]:
+    """Every container carrying our labels for this card, running or not.
+
+    The adopt query, by label and not by name: the container outlives the supervisor by design,
+    and after a restart this is the only thing that says whose it is without consulting a record
+    that could be stale. A module function rather than a method because Step 5 asks it before it
+    has a job -- it is how an agent finds out what it was doing when it was last stopped.
+    """
+    code, output = commands(
+        [
+            "docker", "ps", "--all", "--no-trunc",
+            "--filter", f"label={LABEL_MANAGED}={MANAGED_BY}",
+            "--filter", f"label={LABEL_GPU}={gpu}",
+            "--format",
+            "{{.Names}}\t{{.Label \"" + LABEL_JOB + "\"}}\t{{.Label \"" + LABEL_ATTEMPT + "\"}}",
+        ]
+    )  # fmt: skip
+    if code != 0:
+        raise SessionError(f"cannot list our containers: {output.strip()}")
+    found = []
+    for row in output.splitlines():
+        if not row.strip():
+            continue
+        name, job_id, attempt = (row.split("\t") + ["", ""])[:3]
+        try:
+            number: int | None = int(attempt.strip())
+        except ValueError:
+            number = None
+        found.append(Managed(name=name.strip(), job_id=job_id.strip(), attempt=number))
+    return found
+
+
+def adoptable(roots: Roots, gpu: int, commands: Commands) -> list[Resolved]:
+    """The runs in flight on this card, rebuilt from what is on disk, ready to be supervised.
+
+    A container of ours names its job in a label, and the job it was given is `job.json` in the
+    run's own directory -- written there at launch precisely so the run carries it. Together they
+    are enough to make the `Resolved` a session needs, with no validation: the bank may since
+    have been renamed on the share and the run is still worth harvesting. A container whose
+    `job.json` cannot be read is left alone, running or not; it is somebody's evidence and a
+    `launch()` onto its name still refuses.
+    """
+    found = []
+    for container in managed(commands, gpu):
+        if not container.job_id:
+            continue
+        out_dir = roots.out / container.job_id
+        try:
+            job = parse_job((out_dir / JOB_FILE).read_text())
+        except (OSError, JobRefused):
+            continue
+        attempt = container.attempt or job.attempt or 1
+        found.append(
+            Resolved(
+                job=job.model_copy(update={"attempt": attempt}),
+                job_id=container.job_id,
+                attempt=attempt,
+                bank_dir=roots.banks / (job.bank.id or ""),
+                models_dir=roots.models if job.checkpoint_path or job.model_config_path else None,
+                out_dir=out_dir,
+                gpu=gpu,
+            )
+        )
+    return found
+
+
 class RunSession:
     """One job in one container, supervised from outside it.
 
@@ -402,27 +477,9 @@ class RunSession:
     def ours(self) -> list[tuple[str, str]]:
         """`(container name, job id)` for every container of ours on this card, running or not.
 
-        The adopt query. By label and not by name: the container outlives the supervisor by
-        design, and after a restart this is the only thing that says whose it is without
-        consulting a record that could be stale.
+        `managed()`, for this card. The adopt query.
         """
-        code, output = self.commands(
-            [
-                "docker", "ps", "--all", "--no-trunc",
-                "--filter", f"label={LABEL_MANAGED}={MANAGED_BY}",
-                "--filter", f"label={LABEL_GPU}={self.resolved.gpu}",
-                "--format", "{{.Names}}\t{{.Label \"" + LABEL_JOB + "\"}}",
-            ]
-        )  # fmt: skip
-        if code != 0:
-            raise SessionError(f"cannot list our containers: {output.strip()}")
-        found = []
-        for row in output.splitlines():
-            if not row.strip():
-                continue
-            name, _, job_id = row.partition("\t")
-            found.append((name.strip(), job_id.strip()))
-        return found
+        return [(item.name, item.job_id) for item in managed(self.commands, self.resolved.gpu)]
 
     # -- the bridge ---------------------------------------------------------------------------
 
@@ -804,10 +861,13 @@ __all__ = [
     "STOP_GRACE_S",
     "Commands",
     "ContainerState",
+    "Managed",
     "OnceReport",
     "Outcome",
     "Progress",
     "RunSession",
     "SessionError",
     "SessionResult",
+    "adoptable",
+    "managed",
 ]

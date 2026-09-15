@@ -761,14 +761,23 @@ uv run scenariobank calibrate --bank ./banks/curve --axis cones --values 0,1,2,3
 
 ### `agent`
 
-The rig agent: hold a card, run one job in a container, deliver the result.
+The rig agent: hold a card, lease a job, run it in a container, deliver, ack.
 
 **One agent per rig, one worker per card, and the worker holding the card is the only thing
 that asks for work** (Phase 7). Nothing on the NAS dispatches and nothing on a rig listens:
 the queue knows messages and has no word for a GPU, so the only process that can know a card
-is free is the one holding it. `--once` is that worker with a file where the queue will be,
-and it is the whole run session -- lock, bridge, container, supervision, delivery, teardown
--- with the loop left out.
+is free is the one holding it. With no `--once` this is the loop (Step 5): each worker takes
+its card, leases one message, runs it, delivers, acks or nacks, releases, and goes again --
+and a card it cannot take is a sleep, never a nack, because no job was taken. `--once` is
+that same worker with a file where the queue is, and it is the whole run session -- lock,
+bridge, container, supervision, delivery, teardown -- with the loop left out.
+
+**Stopping the loop leaves a run driving.** SIGTERM or Ctrl-C tells every worker to stop
+leasing; a worker mid-run extends its lease once more, leaves the holder record beside the
+lock, and exits with the container still going. The restarted agent finds that container by
+its labels, picks the lease back up from the record, and acks the job when it ends. That is
+what `docker stop` on the agent container does. `--once` is the other way round: Ctrl-C
+stops the container with a 30 s grace and delivers the partial result.
 
 **Validation happens before the card is taken.** A job whose bank is not on this share, whose
 manifest disagrees about which bank it is, or whose checkpoint name matches two files can
@@ -794,22 +803,28 @@ Set `SCENARIOBANK_SHARE` and the first three default to `banks/`, `models/` and 
 under it; set none of them and they are this checkout's own `banks/`, `../models` and
 `out/`, which is what makes a laptop clone able to run this with nothing mounted.
 
-Exit codes: **0** ran (a stopped run included), **1** the run or the rig failed, **2** the
-command line was wrong, **3** the job is refused and must be dead-lettered, **4** the card
-is busy.
+Exit codes for `--once`: **0** ran (a stopped run included), **1** the run or the rig
+failed, **2** the command line was wrong, **3** the job is refused and must be
+dead-lettered, **4** the card is busy. The loop exits **0** when stopped and prints how
+many jobs it settled.
 
 | flag | | repeats | meaning |
 |---|---|---|---|
 | `--once <path>` | optional |  | Run one job from this file and stop: take the card, start its bridge if the job needs one, run it as a sibling container, deliver the results, release. No queue is involved. |
-| `--gpu <int>` | default `0` |  | Which card to take and run on. Names its lock, its bridge port (5600 + this) and its container. |
+| `--gpu <int>` | optional | yes | A card to run on: its lock, its bridge port (5600 + this) and its container. Repeat it for a worker per card (the loop); --once takes the first. Unset, SCENARIOBANK_GPUS (`0,1`) decides, and failing that card 0. |
 | `--no-gpu` | default `false` |  | Take the card's lock but give the container no GPU. The laptop, and any check that only needs ExpertPolicy. |
 | `--no-bridge` | default `false` |  | Never start the openpilot bridge, even for a policy that talks to one. For a machine where it is already up, or has no image for it. |
 | `--deliver/--no-deliver` | default `true` |  | Copy the run's directory to the results root and rename it into place. --no-deliver leaves it on local disk, for a look before it goes anywhere. |
 | `--json` | default `false` |  | Print the report as JSON instead of aligned text. |
+| `--queue <str>` | optional |  | The wfqueue server, for the loop. Default WFQUEUE_URL, then http://localhost:9090. WFQUEUE_TOKEN is sent as the bearer token when set. |
+| `--topic <str>` | default `metadrive` |  | The topic the workers lease from. |
+| `--max-jobs <int>` | default `0` |  | The loop: stop each worker after this many settled jobs, adopted ones included. 0 runs until stopped, which is what a rig wants. |
 
 ```bash
-uv run scenariobank agent --once out/j7/job.json --gpu 0 --no-gpu  # one job, no queue, no card needed
-uv run scenariobank agent --once out/j7/job.json --gpu 1 --json    # on a rig: card 1, its own bridge on 5601
+uv run scenariobank agent --once out/j7/job.json --gpu 0 --no-gpu        # one job, no queue, no card needed
+uv run scenariobank agent --once out/j7/job.json --gpu 1 --json          # on a rig: card 1, its own bridge on 5601
+uv run scenariobank agent --gpu 0 --gpu 1 --queue http://127.0.0.1:9090  # the loop: a worker per card, leasing from the queue until stopped
+uv run scenariobank agent --gpu 0 --no-gpu --max-jobs 1                  # one job off the queue on a laptop, then stop
 ```
 
 ## Do all of it in a page

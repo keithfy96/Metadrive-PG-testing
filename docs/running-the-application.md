@@ -512,6 +512,87 @@ machine built it under another name.
 together, run two containers, and deliver two results -- which is the shared rig lock working
 (above). A third on either card exits 4.
 
+## The loop: `agent`
+
+`agent` with no `--once` is the rig's service (Phase 7 Step 5): one process, one worker per card,
+each doing what `--once` does with a queue message where the file was -- take the card, lease one
+job, run it, deliver, ack, release, again. The queue is the replica above until the real one is
+reachable (Open question 9), and the whole loop runs on a laptop with `--no-gpu`.
+
+```bash
+uv run python -m tests.support.fake_wfqueue --port 9091          # one terminal, from the repo root
+
+uv run python - <<'EOF'                                          # put two jobs
+from scenariobank.agent.wfqueue_client import QueueClient
+q = QueueClient("http://127.0.0.1:9091")
+q.create_topic("metadrive")
+for job_id in ("loop-1", "loop-2"):
+    q.put("metadrive", {"schema_version": 1, "job_id": job_id,
+                        "bank": {"id": "t-junction", "path": "ignored on a rig"},
+                        "scenarios": ["t_junction_0000"],
+                        "policy": "scenariobank.policies:ExpertPolicy"}, dedupe_key=job_id)
+EOF
+
+uv run scenariobank agent --gpu 0 --gpu 1 --no-gpu --queue http://127.0.0.1:9091 --max-jobs 1
+```
+
+Two workers, one job each, two containers at once, two directories under `out/results/`, and
+the queue's `GET /topics/metadrive/messages` shows both `done` with `consumer` `<host>:gpu0`
+and `<host>:gpu1` -- that label is the "what is running where" view, and it survives the ack.
+`--max-jobs 1` stops each worker after one settled job; a rig runs without it, forever. On a rig
+the same thing is `docker compose --profile rig up -d agent`, with `SCENARIOBANK_GPUS=0,1`
+naming the cards and `WFQUEUE_URL` the queue.
+
+**Lock first, then lease, and the lock is held for milliseconds between jobs.** A worker takes
+its card, asks the queue for one message with no wait, and if there is none gives the card
+straight back and sleeps five seconds outside it. So an empty queue is a rig CARLA can have, and
+a card somebody else holds costs the queue nothing: the message stays `ready` with `attempts`
+0 until the card is free, and the status file says who has it.
+
+```bash
+flock -x -n ~/simulation/.wing-sim.gpu0.lock sleep 8 &            # somebody else's card, for 8 s
+uv run scenariobank agent --gpu 0 --no-gpu --queue http://127.0.0.1:9091 --max-jobs 1
+cat out/results/status/$(hostname)-gpu0.json                      # "busy", naming the holder's pid
+```
+
+**What the queue is told, and when.** Every answer is after delivery, so a lost copy is a retried
+job and never a lost result:
+
+| the run | delivered to | the message |
+|---|---|---|
+| `completed` or `stopped` | `results/<job_id>` | `ack` |
+| refused -- `permanent: true`, or a job the share cannot satisfy | `results/<job_id>.attempt<N>` (or nothing, if it never launched) | `nack(dead=True)`, with the reason as `last_error` |
+| failed, vanished, or the rig could not start it | `results/<job_id>.attempt<N>` | `nack(retry_after=60)`: back to `ready` for this rig or the other |
+| already at `results/<job_id>` | -- | `ack` without running |
+
+`<N>` is the queue's own `attempts`, not the payload's `attempt`: the container name, the holder
+record and the delivery name all follow the count the queue keeps.
+
+**Stopping the agent leaves the run driving, and the restarted agent finishes it.** This is the
+opposite of `--once`, on purpose: a rig's agent is restarted by `docker stop`, by a redeploy, by
+the machine, and none of those may cost a twenty-minute drive. On SIGTERM a worker mid-run
+extends its lease once more (ten minutes), leaves the holder record beside the card lock -- it
+carries the message id and the lease id -- and exits. The next agent finds the container by its
+labels before it leases anything, picks the lease up from the record (`extend` on a live lease
+is accepted), supervises the run to its end, delivers it and **acks it itself**. Measured both
+ways on the laptop with the five-scenario bank: `kill -9` on the agent mid-run, and SIGTERM
+mid-run; each restart logged `adopting … lease=live` and then `ack … completed, 5/5`, with
+exactly one `run.started` in the delivered `events.jsonl` and no container left behind. If the
+lease has expired by the time the agent is back, the run is still finished and delivered, and
+the redelivered message meets `results/<job_id>` and is acked without a run.
+
+**A lease is a clock.** The worker asks for a three-minute lease and extends it every thirty
+seconds for as long as the container runs; a lease lost mid-run (`409` on the extend) does not
+stop the run -- that would turn a duplicate into a loss -- and the ack afterwards asks the queue
+what became of the message: `done` means the first ack landed.
+
+**Two files the loop keeps.** `results/status/<host>-gpu<N>.json` on the share is rewritten
+whenever the card's state changes and every ten seconds while a run is up: the state (`idle`,
+`busy`, `running`, `handing over`, `stopped`), the job and its progress read off the record
+directory, the holder when busy, disk free on the rig's out root, the agent version. And the
+rig's own `SCENARIOBANK_OUT/<job_id>` is swept a day after delivery -- only where
+`results/<job_id>` exists on the share, and never while a container of ours names it.
+
 ## Did it work?
 
 Three checks, in the order the machines come up.

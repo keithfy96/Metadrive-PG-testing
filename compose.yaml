@@ -199,6 +199,13 @@ services:
       # empty directory and fail minutes later on a missing manifest.
       SCENARIOBANK_REPO: "${SCENARIOBANK_REPO:-$PWD}"
       SIMULATION_ROOT: /simulation
+      # The queue (Phase 7 Step 5): where it is, the token if its server was started with one,
+      # and which cards this rig runs a worker for -- `0,1` on a two-card rig. The loop takes
+      # each card's lock, leases one job, runs it, delivers, acks, releases; a card it cannot
+      # take is a sleep and never a nack. `docker stop` on this container leaves the runs
+      # driving and the restarted agent adopts them.
       WFQUEUE_URL: "${WFQUEUE_URL:-http://localhost:9090}"
+      WFQUEUE_TOKEN: "${WFQUEUE_TOKEN:-}"
+      SCENARIOBANK_GPUS: "${SCENARIOBANK_GPUS:-0}"
       SIM_IMAGE: "${SIM_IMAGE:-metadrive-wingfin-sim:latest}"
     command: ["python", "-m", "scenariobank", "agent"]

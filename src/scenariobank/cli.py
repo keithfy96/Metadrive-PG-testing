@@ -2089,9 +2089,14 @@ def agent(
         ),
     ] = None,
     gpu: Annotated[
-        int, typer.Option("--gpu", help="Which card to take and run on. Names its lock, its "
-                          "bridge port (5600 + this) and its container.")
-    ] = 0,
+        list[int] | None,
+        typer.Option(
+            "--gpu",
+            help="A card to run on: its lock, its bridge port (5600 + this) and its container. "
+            "Repeat it for a worker per card (the loop); --once takes the first. Unset, "
+            "SCENARIOBANK_GPUS (`0,1`) decides, and failing that card 0.",
+        ),
+    ] = None,
     no_gpu: Annotated[
         bool,
         typer.Option(
@@ -2119,15 +2124,43 @@ def agent(
     as_json: Annotated[
         bool, typer.Option("--json", help="Print the report as JSON instead of aligned text.")
     ] = False,
+    queue: Annotated[
+        str | None,
+        typer.Option(
+            "--queue",
+            help="The wfqueue server, for the loop. Default WFQUEUE_URL, then "
+            "http://localhost:9090. WFQUEUE_TOKEN is sent as the bearer token when set.",
+        ),
+    ] = None,
+    topic: Annotated[
+        str, typer.Option("--topic", help="The topic the workers lease from.")
+    ] = "metadrive",
+    max_jobs: Annotated[
+        int,
+        typer.Option(
+            "--max-jobs",
+            help="The loop: stop each worker after this many settled jobs, adopted ones "
+            "included. 0 runs until stopped, which is what a rig wants.",
+        ),
+    ] = 0,
 ) -> None:
-    """The rig agent: hold a card, run one job in a container, deliver the result.
+    """The rig agent: hold a card, lease a job, run it in a container, deliver, ack.
 
     **One agent per rig, one worker per card, and the worker holding the card is the only thing
     that asks for work** (Phase 7). Nothing on the NAS dispatches and nothing on a rig listens:
     the queue knows messages and has no word for a GPU, so the only process that can know a card
-    is free is the one holding it. `--once` is that worker with a file where the queue will be,
-    and it is the whole run session -- lock, bridge, container, supervision, delivery, teardown
-    -- with the loop left out.
+    is free is the one holding it. With no `--once` this is the loop (Step 5): each worker takes
+    its card, leases one message, runs it, delivers, acks or nacks, releases, and goes again --
+    and a card it cannot take is a sleep, never a nack, because no job was taken. `--once` is
+    that same worker with a file where the queue is, and it is the whole run session -- lock,
+    bridge, container, supervision, delivery, teardown -- with the loop left out.
+
+    **Stopping the loop leaves a run driving.** SIGTERM or Ctrl-C tells every worker to stop
+    leasing; a worker mid-run extends its lease once more, leaves the holder record beside the
+    lock, and exits with the container still going. The restarted agent finds that container by
+    its labels, picks the lease back up from the record, and acks the job when it ends. That is
+    what `docker stop` on the agent container does. `--once` is the other way round: Ctrl-C
+    stops the container with a 30 s grace and delivers the partial result.
 
     **Validation happens before the card is taken.** A job whose bank is not on this share, whose
     manifest disagrees about which bank it is, or whose checkpoint name matches two files can
@@ -2153,9 +2186,10 @@ def agent(
     under it; set none of them and they are this checkout's own `banks/`, `../models` and
     `out/`, which is what makes a laptop clone able to run this with nothing mounted.
 
-    Exit codes: **0** ran (a stopped run included), **1** the run or the rig failed, **2** the
-    command line was wrong, **3** the job is refused and must be dead-lettered, **4** the card
-    is busy.
+    Exit codes for `--once`: **0** ran (a stopped run included), **1** the run or the rig
+    failed, **2** the command line was wrong, **3** the job is refused and must be
+    dead-lettered, **4** the card is busy. The loop exits **0** when stopped and prints how
+    many jobs it settled.
     """
     import shutil
     import signal
@@ -2163,13 +2197,8 @@ def agent(
     from scenariobank.agent.jobs import JobRefused, Roots, read_job, resolve
     from scenariobank.agent.lock import Busy, CardLock, LockError
     from scenariobank.agent.session import OnceReport, Outcome, RunSession, SessionError
+    from scenariobank.agent.worker import Agent, gpus_from_environment, queue_from_environment
 
-    if once is None:
-        raise typer.BadParameter(
-            "the polling loop is Phase 7 Step 5 and is not built yet; name a job file with "
-            "--once, which runs the whole session without a queue",
-            param_hint="--once",
-        )
     # Said here rather than four lines into a shell script, because inside the agent container
     # the remedy is not the one `sim-run.sh` prints. The sim image the CONVERTER builds has no
     # docker CLI and is not ours to change; `docker/Dockerfile` installs one, which is why the
@@ -2185,6 +2214,36 @@ def agent(
         raise typer.Exit(code=1)
 
     roots = Roots.from_environment()
+    try:
+        cards = gpu or gpus_from_environment()
+    except ValueError as error:
+        raise typer.BadParameter(str(error), param_hint="--gpu") from error
+
+    if once is None:
+        import threading
+
+        stop = threading.Event()
+
+        def told_to_stop(number, _frame) -> None:
+            typer.echo(f"signal {number}: stopping after the current poll; runs stay up", err=True)
+            stop.set()
+
+        for number in (signal.SIGINT, signal.SIGTERM):
+            signal.signal(number, told_to_stop)
+        client = queue_from_environment(queue)
+        typer.echo(
+            f"agent: cards {', '.join(str(card) for card in cards)}, queue {client.base_url}, "
+            f"topic {topic}, results {roots.results}",
+            err=True,
+        )
+        agent = Agent(
+            cards, roots, client, topic=topic, stop=stop, no_gpu=no_gpu, bridge=not no_bridge
+        )
+        settled = agent.run(max_jobs=max_jobs)
+        typer.echo(f"agent: stopped, {settled} job(s) settled", err=True)
+        raise typer.Exit(code=0)
+
+    gpu = cards[0]
     # Everything that can refuse this job happens here, with the card still free.
     try:
         job = read_job(once)

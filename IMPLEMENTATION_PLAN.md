@@ -5448,7 +5448,7 @@ the API, and nothing calls the rig. What this step listed survives elsewhere: id
 card** the worker writes beside the results (Step 6), so the studio's "what is running where" is a
 file read and no port is open on a rig. The bearer token went with the port.
 
-### Step 5 — the rig agent: lock, lease, run, deliver, ack ⬜
+### Step 5 — the rig agent: lock, lease, run, deliver, ack ✅  *(built 2026-09-15)*
 
 *(Keith's shape, 2026-09-13: one container per rig — `docker compose up agent`, the sim image, no
 GPU — with one worker per card, each polling its card's availability and only then the queue for a
@@ -5508,6 +5508,74 @@ delivery, everything else → `nack(retry_after=…)`).
 cards: `put()` two jobs and watch each worker take one; hold one card from a shell and watch
 only the other worker lease; kill the agent mid-run and restart it — it adopts, delivers, acks,
 and no second container appears.
+
+**Done 2026-09-15.** `src/scenariobank/agent/worker.py` (~760 lines, half of it the
+docstrings that say why), and `scenariobank agent` with no `--once` is the loop: one process per
+rig, one `Worker` thread per card, each one `RunSession` with the lease before it, the extend
+timer on `on_tick`, and the ack or nack after. `--gpu` is now repeatable (`SCENARIOBANK_GPUS=0,1`
+in the compose file), `--queue`, `--topic` and `--max-jobs` join it, and `--once` is unchanged.
+The queue's own client runs as `src/scenariobank/agent/wfqueue_client.py`, a byte-identical copy
+of the vendored one that `test_worker.py` asserts equal and ruff is told not to touch, for the
+same reason the docs copy is excluded. 25 tests in `tests/unit/test_worker.py`, against the
+Step 0 replica over real HTTP and a fake daemon (`tests/support/fake_docker.py`, moved out of
+`test_session.py` so both can drive it), with real `flock`s under `tmp_path` for the card.
+
+Five things differ from the list above, each for a reason found while building it:
+
+1. **The lock is held for milliseconds between jobs, not for the 20 s long-poll.** Item 2 had
+   `consume(wait=20)` with the card held. The rig lock is shared between our cards and exclusive
+   for CARLA, so a worker long-polling on it would deny the machine to everybody else for as long
+   as our queue was empty -- and with two workers alternating it would never be free at all. The
+   worker takes the card, asks for one message with `wait=0`, and on nothing gives the card
+   straight back and sleeps five seconds outside it. Measured on the laptop: an exclusive
+   `flock -n` from a shell succeeds while the worker is polling. Latency to pick up a job is
+   the sleep; the cost is one request per five seconds per card.
+2. **Adoption keeps the lease, and stopping is a handover.** Item 0 said "deliver as if this
+   worker had started it"; on its own that leaves the dead agent's lease to expire and the
+   message to be redelivered -- possibly to the other rig, while this one is still driving it,
+   and property 1's guard only helps once the result is on the share. So the holder record beside
+   the card lock now carries `message_id` and `lease_id` (**lock schema 2**), the adopting worker
+   calls `extend` -- accepted for as long as the lease is alive -- and acks the job itself when
+   the run ends. And SIGTERM to the agent is the mirror image: a worker mid-run extends its lease
+   once more (ten minutes), leaves the record, closes its descriptors (`Held.abandon()`, which
+   is `release()` without the unlink) and exits with the container still driving. That is what
+   `docker stop` on the agent container does, and it is the opposite of `--once`'s Ctrl-C on
+   purpose: a rig's agent is restarted by redeploys and reboots, and none of those may cost a
+   twenty-minute drive. Measured both ways on the laptop with the five-scenario bank; the rig
+   table below has the container version.
+3. **The queue's `attempts` is the attempt.** The payload's `attempt` is the submitter's guess;
+   the container name, the holder record and a failed run's `<job_id>.attempt<N>` all follow the
+   count the queue keeps, so the second delivery of a message lands beside the first.
+4. **A rig that cannot start the run still delivers what there is.** `SessionError` out of
+   `launch()` or `ensure_bridge()` used to be a nack and nothing else; now whatever the run
+   directory holds (the job file, the driver's own message in `container.log`) goes to the share
+   as `<job_id>.attempt<N>` first, then the nack. Evidence first, then the retry, as bullet 8
+   already said for a run that ran.
+5. **The sweep found its own trap in a test.** On the laptop the results root is *inside* the
+   out root (`out/results`), so a delivered job called `results` would have made the share
+   itself look like an old, delivered run directory -- and the sweep deleted it, in `tmp_path`.
+   The share is never a run, whatever it is called; the guard is by path, not by name.
+
+Bullet 8's `scenariobank validate --results` before delivery is **not** in: the runner writes
+`results.json` through the same pydantic model the validator would read it with, and a row count
+that disagrees with the job is `run.finished`'s business (Phase 4 Step 3). It stays a Step 6
+question, where a store rather than a directory is what would refuse a bad file.
+
+| check (laptop, `--no-gpu`, the Step 0 replica on 9091, real containers) | result |
+|---|---|
+| `tests/unit/test_worker.py` | 25 passed, 4.0 s |
+| the four agent test files together | 108 passed |
+| two jobs put, `agent --gpu 0 --gpu 1 --max-jobs 1` | each worker took one, both `done` in 7 s, `consumer` `<host>:gpu0` / `:gpu1` |
+| the two results | `t_junction_0000`, 139 steps each, `job.json` beside them, one `run.started` each, no holder file, no container |
+| `kill -9` the agent mid-run (pid from the holder record), restart | `adopting … lease=live`, then `ack … completed, 5/5`; message 3 `done`, `attempts` 1 |
+| SIGTERM the agent mid-run | `handing over` logged, agent exited in under a second, container `Up`, record kept, lease extended to 600 s |
+| restart after that | adopted, `ack … completed, 5/5`, one `run.started`, no container left |
+| card 0 held by `flock -x` from a shell for 8 s, a job waiting | message stayed `ready`, `attempts` 0; status file `busy` naming the holder's pid; leased and acked the moment the hold ended |
+| a job naming a scenario the bank lacks | `dead` after one lease, `last_error` is the refusal, nothing launched, no holder file |
+| the topic's counts at the end | `done: 5, dead: 1`, nothing `ready` or `leased` |
+
+The worked commands, the ack/dead/retry table and the handover are written up in
+`docs/running-the-application.md`, "The loop: `agent`".
 
 ### Step 6 — results storage on the NAS ⬜
 

@@ -82,7 +82,7 @@ from scenariobank.events import utc_now
 
 #: Bumped when a field of `Holder` is added, removed or changes meaning, for the reason every
 #: other record in this project carries one: a reader validates rather than coerces.
-LOCK_SCHEMA_VERSION = 1
+LOCK_SCHEMA_VERSION = 2
 
 #: The environment variable `deployment/with_rig_lock.sh` reads, and the default it falls back
 #: to. Named identically on both sides on purpose -- one root, computed twice, never configured
@@ -204,13 +204,20 @@ class Holder(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal[1] = LOCK_SCHEMA_VERSION
+    schema_version: Literal[2] = LOCK_SCHEMA_VERSION
     gpu: int
     #: The queue message and its attempt, when this worker has leased one. `None` between taking
     #: the card and leasing a job, which is a state that exists on purpose: the worker locks the
     #: card first and only then asks the queue for work.
     job_id: str | None = None
     attempt: int | None = None
+    #: The queue's own names for that job, once leased *(schema 2, Phase 7 Step 5)*. They are
+    #: what lets an agent restarted mid-run pick the lease back up -- `extend` with a live
+    #: `lease_id` is accepted, so the adopted run is acked by the worker that finishes it rather
+    #: than redelivered to the other rig while this one is still driving it. `None` for a job
+    #: that came from a file.
+    message_id: int | None = None
+    lease_id: str | None = None
     pid: int
     pgid: int
     boot_id: str
@@ -390,6 +397,8 @@ class CardLock:
         attempt: int | None = None,
         container: str | None = None,
         out: str | None = None,
+        message_id: int | None = None,
+        lease_id: str | None = None,
     ) -> Held:
         """Take the rig lock shared and this card exclusive, or raise `Busy` having taken neither.
 
@@ -413,7 +422,10 @@ class CardLock:
         held = Held(self, rig, card)
         try:
             held.confirmed, held.note = self._confirm()
-            held.publish(job_id=job_id, attempt=attempt, container=container, out=out)
+            held.publish(
+                job_id=job_id, attempt=attempt, container=container, out=out,
+                message_id=message_id, lease_id=lease_id,
+            )  # fmt: skip
         except BaseException:
             held.release()
             raise
@@ -541,6 +553,21 @@ class Held:
             raise
         self.holder = holder
         return holder
+
+    def abandon(self) -> None:
+        """Close the descriptors and leave the record: this process is going, the run is not.
+
+        The handover, when the agent is stopped with a run in flight (Phase 7 Step 5). The run is
+        a sibling container and keeps driving; the record beside the lock is what the restarted
+        agent reads to find its lease again. Closing the descriptors is what the kernel would do
+        at exit anyway -- it is done here so a worker in a test can hand over and a second worker
+        in the same process can take the card, which flock refuses between two open file
+        descriptions even when one process holds both.
+        """
+        self.released = True
+        for handle in (self._card, self._rig):
+            with contextlib.suppress(OSError):
+                os.close(handle)
 
     def release(self) -> None:
         """Drop the card, then the rig, and take the holder record with them.

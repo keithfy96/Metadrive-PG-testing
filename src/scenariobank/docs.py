@@ -321,6 +321,14 @@ EXAMPLES: dict[str, tuple[tuple[str, str], ...]] = {
             "uv run scenariobank agent --once out/j7/job.json --gpu 1 --json",
             "on a rig: card 1, its own bridge on 5601",
         ),
+        (
+            "uv run scenariobank agent --gpu 0 --gpu 1 --queue http://127.0.0.1:9090",
+            "the loop: a worker per card, leasing from the queue until stopped",
+        ),
+        (
+            "uv run scenariobank agent --gpu 0 --no-gpu --max-jobs 1",
+            "one job off the queue on a laptop, then stop",
+        ),
     ),
     "studio": (
         ("uv run --group web scenariobank studio", "then open http://127.0.0.1:8770/"),
