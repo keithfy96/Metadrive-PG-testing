@@ -5724,8 +5724,9 @@ are comparable across machines, and nothing that is not.
 *Verify* — the unit tests; the offline suite still green (Open question 12's two files excluded);
 laptop `uv run scenariobank results` against `out/results`, which already holds the Step 5
 deliveries, twice, counts unchanged; rig `docker compose --profile rig run --rm -T agent python -m
-scenariobank results --results-root /home/metadrive/scenariobank/share/results --index /tmp/i.sqlite`
-ingests the six results there and a second run reports `added 0`.
+scenariobank results --results-root /home/metadrive/scenariobank/share/results --index
+$SCENARIOBANK_OUT/i.sqlite` ingests the six results there and a second run reports `added 0`
+*(not `/tmp` for the index: a `--rm` container's `/tmp` does not reach the second run)*.
 
 **Built 2026-09-15** as decided above, with three things the decision did not say:
 
@@ -5766,6 +5767,36 @@ file as one `invalid` row with the scan continuing and the row healing on `--reb
 `rebuild()` dropping a deleted directory where `ingest()` keeps it, the status directory as
 rigs and never as a job, a tree that is not there yet, the index surviving a reopen) and the
 three routes in `test_web.py`. `web/archive.py` in the tree below is retired (difference 6).
+
+**Verified on the rig 2026-09-15** (`sim`, the agent image, the stand-in share, checkout
+`11c2130`), `docker compose --profile rig run --rm -T agent python -m scenariobank results`:
+
+| scan | root | added | skipped | invalid | in index |
+|---|---|---|---|---|---|
+| first | `--results-root /home/metadrive/scenariobank/share/results` | 6 | 0 | 0 | 6 |
+| second | resolved from `SCENARIOBANK_SHARE`, no flag | 0 | 6 | 0 | 6 |
+
+The six are `rig-step3-1`, `rig-step3-full`, `rig-step5-1`, `rig-step5-full`, `rig-step5b-1`,
+`rig-step5b-full`, every one `complete`, bank `t-junction`, success rate 1.00; the status file
+`sim-gpu0` (`stopped`) is listed after them; nothing on the share is newer than the index. Two
+findings, both fixed before the second run and both pinned:
+
+- **`scenariobank results` died at `import fastapi` in the agent image.** The command took the
+  studio's `.studio` name from `web/api.py`, which imports FastAPI at the top, and a rig has no
+  web group. The constant now lives in `scenariobank.web` (`STATE_DIR_NAME`), and a test runs
+  the command in a subprocess with `fastapi` blocked out of `sys.modules`.
+- **The index cannot go to `/tmp` inside a `run --rm` container**, as the *Verify* line above
+  said: the container's `/tmp` is gone before the second run, which would then report `added 6`
+  again and prove nothing. It went to `$SCENARIOBANK_OUT/step6-index.sqlite`, mounted at its own
+  path, and was deleted after. The agent container runs as root, so the file was root-owned on
+  the rig's disk -- harmless for a scratch index, and not how the NAS runs it: the studio
+  service runs as `DOCKER_UID`, and its index lands in `.studio/` owned by that user.
+
+One thing about the script rather than the code: piped in as `bash -s`, the first `docker
+compose run -T` swallowed the rest of the script as the container's stdin, so the run stopped
+after the first scan. Copied to the rig and run by path, all four steps ran. And a leftover from
+Step 5's second run, a `scenariobank-agent-run-*` container in state `created` that never
+started (its command was the queue-check one-liner), was removed by hand.
 
 ### Step 7 — thin round-trip end to end ⬜  ⟵ *gate*
 
