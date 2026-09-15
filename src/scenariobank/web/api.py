@@ -37,10 +37,6 @@ from scenariobank.web.invoke import NOT_RUNNABLE, InvokeError, build_argv, catal
 from scenariobank.web.jobs import JobBusy, JobNotFound, Jobs
 from scenariobank.web.results import INDEX_NAME, ResultsStore, UnknownJob
 
-#: Where the studio keeps job logs and scratch figures. Gitignored: a job is re-runnable, so
-#: nothing here is worth keeping.
-STATE_DIR_NAME = ".studio"
-
 #: Where a candidate seed's picture is drawn, under the state directory. Scratch: the seed it
 #: draws has not been committed to any bank, and drawing the same one twice is a job away.
 LOOKS_DIR = "looks"

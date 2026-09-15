@@ -295,3 +295,24 @@ def test_the_index_is_a_file_where_it_was_asked_for_and_survives_reopening(tmp_p
     again = ResultsStore(index, tree)
     assert again.ingest() == Ingested(added=0, skipped=1, invalid=0, total=1)
     assert len(again.rows("j1")) == 1
+
+
+def test_the_results_command_runs_on_a_machine_with_no_web_group(tmp_path, tree, monkeypatch):
+    # A rig has the agent image and no FastAPI. Found there on 2026-09-15: the first run of
+    # `scenariobank results` died importing the studio's api module for one constant.
+    import subprocess
+    import sys
+
+    deliver(tree, "j1", record("j1", [scored("t_junction_0000")]))
+    code = (
+        "import sys; sys.modules['fastapi'] = None; sys.modules['uvicorn'] = None\n"
+        "from typer.testing import CliRunner\n"
+        "from scenariobank.cli import app\n"
+        f"r = CliRunner().invoke(app, ['results', '--results-root', {str(tree)!r}, "
+        f"'--index', {str(tmp_path / 'i.sqlite')!r}])\n"
+        "print(r.output); sys.exit(r.exit_code)"
+    )
+    done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "added 1, skipped 0, invalid 0; 1 in" in done.stdout
+    assert "j1" in done.stdout

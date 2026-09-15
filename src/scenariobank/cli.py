@@ -2071,7 +2071,7 @@ def results(
     Needs no simulator.
     """
     from scenariobank.agent.jobs import Roots
-    from scenariobank.web.api import STATE_DIR_NAME
+    from scenariobank.web import STATE_DIR_NAME
     from scenariobank.web.results import INDEX_NAME, ResultsStore
 
     root = results_root if results_root is not None else Roots.from_environment().results
@@ -2162,7 +2162,8 @@ def studio(
         raise typer.Exit(code=1) from error
 
     from scenariobank.agent.jobs import Roots
-    from scenariobank.web.api import STATE_DIR_NAME, create_app
+    from scenariobank.web import STATE_DIR_NAME
+    from scenariobank.web.api import create_app
 
     # The share's results tree, resolved the way the agent resolves it -- from
     # `SCENARIOBANK_SHARE` -- so the studio reads where the rigs deliver (Phase 7 Step 6).
