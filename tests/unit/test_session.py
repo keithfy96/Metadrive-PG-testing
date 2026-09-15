@@ -594,15 +594,46 @@ def test_delivering_nothing_is_an_error_and_not_an_empty_directory(rig):
         session_for(rig, FakeDocker()).deliver()
 
 
-def test_a_failed_run_is_delivered_too(rig):
-    # Evidence first. Step 5 nacks afterwards; the result of a failure is worth more than the
-    # disk it costs.
+def test_a_failed_run_is_delivered_beside_the_jobs_name_and_never_under_it(rig):
+    # Evidence first -- but NOT under the name the redelivery guard reads. `results/<job_id>`
+    # existing means "done, ack without running", so a failed run delivered there would tell the
+    # next worker that a job which must be retried is finished. Found on the rig by a job whose
+    # card did not exist: it vanished, was delivered, and the next attempt said already delivered.
     docker = FakeDocker()
     session = running_session(rig, docker)
     wrote(session.out_dir, done=1, exit_code=1, finished={"exit_code": 1})
     result = session.run(poll_s=0)
     assert result.outcome is Outcome.FAILED
-    assert result.delivered == rig.results / "j7"
+    assert result.delivered == rig.results / "j7.attempt1"
+    assert not (rig.results / "j7").exists()
+    assert session.already_delivered() is False  # so the retry runs
+
+
+def test_a_vanished_run_does_not_look_finished_either(rig):
+    # An exited container with no exit code beside it: killed outright, and the job must be
+    # tried again somewhere.
+    docker = FakeDocker()
+    session = session_for(rig, docker)
+    (rig.out / "j7").mkdir(parents=True)
+    docker.add(
+        session.name,
+        running=False,
+        exit_code=137,
+        labels={LABEL_MANAGED: MANAGED_BY, LABEL_JOB: "j7", LABEL_GPU: "0"},
+    )
+    result = session.run(poll_s=0)
+    assert result.outcome is Outcome.VANISHED
+    assert result.delivered == rig.results / "j7.attempt1"
+    assert session.already_delivered() is False
+
+
+def test_a_stopped_run_does_take_the_jobs_name(rig):
+    # It ran: the rows before the stop are real, and the job is finished as far as the queue is
+    # concerned. Only `completed` and `stopped` are runs that ran.
+    docker = FakeDocker()
+    session = running_session(rig, docker)
+    wrote(session.out_dir, done=1, exit_code=0, finished={"exit_code": 0, "stopped": True})
+    assert session.run(poll_s=0).delivered == rig.results / "j7"
 
 
 def test_no_deliver_leaves_the_run_on_local_disk(rig):

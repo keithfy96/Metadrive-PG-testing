@@ -5412,14 +5412,28 @@ docker client. `SCENARIOBANK_SHARE=$HOME/scenariobank/share` with the bank copie
 | after it released: rig lock exclusive | **0** — CARLA can run again |
 | the same job a second time | `already delivered`, exit 0, before the lock is even attempted |
 | a hand-held rig lock, fresh job, card 1 | exit **4**, naming the holder's **host** pid — which only `pid: host` makes possible |
+| a card this rig does not have (`--gpus device=1`) | exit **1**, `launch_failed`, nothing left behind, the driver's message kept |
+| that job again, after the failure | it **runs** — a failure is not a delivery (see below) |
 
-**And one bug the rig found that the laptop could not.** Asking a one-card rig for `--gpus
-device=1` fails — correctly — but `docker run --detach` has **created** the container by then, and
-it sits there exited 128. The next attempt adopted it and reported a run that *vanished*: two
-wrong answers, since the run never started and the reason was in a log nobody kept. `run()` now
-harvests after a failed launch — the log beside the results, the container removed — and there is
-a test for it. A worker configured for a card the rig does not have is a deployment error, and it
-now fails in about a second with the driver's own message kept on disk.
+**And two bugs the rig found that the laptop could not**, both from the same job: a card this
+rig does not have.
+
+1. Asking a one-card rig for `--gpus device=1` fails — correctly — but `docker run --detach` has
+   **created** the container by then, and it sits there exited 128. The next attempt adopted it
+   and reported a run that *vanished*: two wrong answers, since the run never started and the
+   reason was in a log nobody kept. `run()` now harvests after a failed launch — the log beside
+   the results, the container removed. A worker configured for a card the rig does not have is a
+   deployment error, and it now fails in about a second with the driver's own message on disk.
+2. **The bigger one, and it would have silently broken every retry in Step 5.** Delivery happens
+   whatever the outcome — the evidence of a failure is worth more than the disk — but it was
+   delivering *under the job's own name*, and `results/<job_id>` existing **is** the redelivery
+   guard. So that vanished run was delivered, and the next attempt at the same job reported
+   `already delivered` and exited 0 without running. On the queue that is an ack for a job that
+   never ran. Fixed by `RunSession.delivery_name`: **only a run that RAN — `completed` or
+   `stopped` — takes the job's name**; a failure, a refusal or a vanishing goes to
+   `results/<job_id>.attempt<N>`, a sibling that is never mistaken for the result and that the
+   next attempt lands beside rather than on top of. Step 5's own bullet 8 had the same flaw
+   written into it (`results/<job_id>/invalid/`) and is corrected there too.
 
 The worked round trip, the five environment variables, the exit-code table and the two recovery
 measurements are in `docs/running-the-application.md`, "One job, start to finish: `agent --once`".
@@ -5466,7 +5480,11 @@ the server is ever started with one, `WFQUEUE_TOKEN` come from the environment. 
    Before delivering, `scenariobank validate --results <dir>/results.json` (moved here from the
    retired Phase 6): the file parses against `Results`, every `failure_reason` is in the enum,
    the row count matches the job's scenario list. A file that fails is delivered anyway, into
-   `results/<job_id>/invalid/`, and the job is nacked — evidence first, then the retry.
+   **`results/<job_id>.attempt<N>/`** and never inside `results/<job_id>/`, and the job is nacked
+   — evidence first, then the retry. *(Corrected 2026-09-15, from Step 3: `results/<job_id>`
+   existing IS the redelivery guard, so anything delivered under that name says "done, ack
+   without running". Only a run that ran may take the job's own name; `RunSession.delivery_name`
+   is the one place that decides it.)*
 8b. `ack` raising `QueueHTTPError` with `409` after a run completed → `GET /messages/{id}`;
    `state == "done"` means the first ack landed and the client's own retry is noise. Anything else
    is a real lease loss: the job was redelivered, and step 4 on the other worker is what keeps it

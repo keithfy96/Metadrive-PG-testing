@@ -664,18 +664,36 @@ class RunSession:
         """
         return self.roots.delivered(self.resolved.job_id).exists()
 
-    def deliver(self) -> Path:
+    def delivery_name(self, outcome: Outcome | None = None) -> str:
+        """Where this run is delivered: the job's own name, or an attempt beside it.
+
+        **Only a run that RAN takes the job's name**, and this is load-bearing rather than tidy.
+        `results/<job_id>` existing is the redelivery guard's whole answer — "done, ack without
+        running" — so delivering a failed or vanished run under that name would tell the next
+        worker that a job which must be retried is finished, and the retry would be acked without
+        ever running. Found on the rig, 2026-09-15, by a job whose card did not exist: it
+        vanished, was delivered, and the next attempt reported `already delivered`.
+
+        So a failure goes to `<job_id>.attempt<N>` — a sibling, never mistaken for the result,
+        and the next attempt lands beside it rather than on top of it. The evidence is kept
+        either way; what changes is only which name means *finished*.
+        """
+        if outcome is None or outcome in (Outcome.COMPLETED, Outcome.STOPPED):
+            return self.resolved.job_id
+        return f"{self.resolved.job_id}.attempt{self.resolved.attempt}"
+
+    def deliver(self, outcome: Outcome | None = None) -> Path:
         """Copy the run's directory to the share and rename it into place. Returns the directory.
 
-        Copy to `<job_id>.partial`, then rename: a rename within one filesystem is atomic, so a
+        Copy to `<name>.partial`, then rename: a rename within one filesystem is atomic, so a
         directory without `.partial` is always complete, and a delivery interrupted half way
         leaves something a reader will never mistake for a result. Step 5 acks only after this
         returns, so a failed copy is a retried job and never a lost result.
 
         Delivered whatever the outcome, a refusal included: the evidence of a failure is worth
-        more than the disk it costs.
+        more than the disk it costs. `delivery_name` is what keeps that from meaning "done".
         """
-        job_id = self.resolved.job_id
+        job_id = self.delivery_name(outcome)
         final = self.roots.delivered(job_id)
         staging = self.roots.staging(job_id)
         if final.exists():
@@ -729,7 +747,7 @@ class RunSession:
         self.harvest()
         if not deliver:
             return result
-        delivered = self.deliver()
+        delivered = self.deliver(result.outcome)
         return SessionResult(
             outcome=result.outcome,
             exit_code=result.exit_code,

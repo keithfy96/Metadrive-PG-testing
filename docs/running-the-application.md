@@ -475,11 +475,16 @@ delivered like any other. The outcome says `stopped`, so nobody has to infer it 
 of 0.
 
 **Delivery is a copy and a rename.** The container writes to `SCENARIOBANK_OUT/<job_id>` on local
-disk; the agent copies that to `<results>/<job_id>.partial` and renames it into
-`<results>/<job_id>`. So a directory without `.partial` is always complete, and a
+disk; the agent copies that to `<results>/<name>.partial` and renames it into
+`<results>/<name>`. So a directory without `.partial` is always complete, and a
 `results/<job_id>` that already exists means *done* -- running the same job again prints
-`already delivered` and exits 0 without touching a card. Delete that directory to run it again. A
-**failed** run is delivered too: the evidence is worth more than the disk.
+`already delivered` and exits 0 without touching a card. Delete that directory to run it again.
+
+**A failed run is delivered too, but never under the job's own name.** `completed` and `stopped`
+land at `results/<job_id>`; a failure, a refusal or a vanishing lands at
+`results/<job_id>.attempt<N>` beside it. The evidence is kept either way -- what changes is which
+name means *finished*, because that name is the redelivery guard, and a failure delivered under it
+would tell the next worker to ack a job that has to be tried again.
 
 What one finished job looks like -- the run's own seven files, plus two the agent adds:
 
