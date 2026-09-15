@@ -27,6 +27,7 @@ Every command is `uv run scenariobank <command>`.
 | score a policy against every scenario of a bank | [`run`](#run) |
 | see whether a camera rig's cameras are alive and aimed right | [`rig`](#rig) |
 | check the AV3 model's inputs and its output sign before a scored run | [`av3`](#av3) |
+| see what the rigs delivered, and what each card is doing | [`results`](#results) |
 | do all of that by looking rather than typing | [`studio`](#studio) |
 
 **Changing one scenario does not mean rebuilding the bank.** `replace` rebuilds exactly
@@ -620,7 +621,7 @@ uv run scenariobank commands  # rewrite this page
 
 ## Run it
 
-Score a policy against a bank. `run` is the one command that writes a result record, and the record is the same whether the run was started here, from the studio or from the queue; `calibrate` is `run` once per value of one option axis, and writes the level-calibration reference from what it measured. `agent` is what a rig runs: it holds one card's lock and drives `run` inside a container of its own.
+Score a policy against a bank. `run` is the one command that writes a result record, and the record is the same whether the run was started here, from the studio or from the queue; `calibrate` is `run` once per value of one option axis, and writes the level-calibration reference from what it measured. `agent` is what a rig runs: it holds one card's lock and drives `run` inside a container of its own; `results` reads what the agents delivered and what each card is doing.
 
 ### `run`
 
@@ -825,6 +826,32 @@ uv run scenariobank agent --once out/j7/job.json --gpu 0 --no-gpu        # one j
 uv run scenariobank agent --once out/j7/job.json --gpu 1 --json          # on a rig: card 1, its own bridge on 5601
 uv run scenariobank agent --gpu 0 --gpu 1 --queue http://127.0.0.1:9090  # the loop: a worker per card, leasing from the queue until stopped
 uv run scenariobank agent --gpu 0 --no-gpu --max-jobs 1                  # one job off the queue on a laptop, then stop
+```
+
+### `results`
+
+Index what the rigs have delivered and list it, and what each card is doing.
+
+The same store the studio serves at `/api/results`, from a terminal, so a rig or a laptop
+can be inspected with no studio up. The tree on the share is the truth and the index is a
+cache of it on this machine's own disk: reading the same tree twice adds nothing, and
+`--rebuild` starts the cache over. A `results.json` that does not validate is listed as
+`invalid` with its error rather than left out; an `<job_id>.attempt<N>` directory is a run
+that did not run, listed as `failed` with its exit code and no rows.
+
+Needs no simulator.
+
+| flag | | repeats | meaning |
+|---|---|---|---|
+| `--results-root <path>` | optional |  | The results tree the rigs deliver into. Defaults to results/ under SCENARIOBANK_SHARE, or out/results in this checkout when that is unset -- the same resolution the agent makes. |
+| `--index <path>` | optional |  | The SQLite index to read the tree into. Defaults to the studio's own, .studio/results.sqlite. Local disk, never the share. |
+| `--rebuild` | default `false` |  | Drop the index and read the whole tree again. |
+| `--json` | default `false` |  | Emit the store's answer as JSON instead of a table. |
+
+```bash
+uv run scenariobank results                                                  # what the rigs delivered, newest first
+uv run scenariobank results --results-root /mnt/scenariobank/results --json  # the share's tree, as the studio serves it
+uv run scenariobank results --rebuild                                        # start the index over from the tree
 ```
 
 ## Do all of it in a page

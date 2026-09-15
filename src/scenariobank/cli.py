@@ -2032,6 +2032,99 @@ def examples(
 #: into the repo and there is no authentication -- so the only safe listener is one nothing else
 #: can reach. Refused loudly rather than silently rewritten, so an attempt to expose it is an
 #: error message and not a surprise.
+@app.command()
+def results(
+    results_root: Annotated[
+        Path | None,
+        typer.Option(
+            "--results-root",
+            help="The results tree the rigs deliver into. Defaults to results/ under "
+            "SCENARIOBANK_SHARE, or out/results in this checkout when that is unset -- the "
+            "same resolution the agent makes.",
+        ),
+    ] = None,
+    index: Annotated[
+        Path | None,
+        typer.Option(
+            "--index",
+            help="The SQLite index to read the tree into. Defaults to the studio's own, "
+            ".studio/results.sqlite. Local disk, never the share.",
+        ),
+    ] = None,
+    rebuild: Annotated[
+        bool,
+        typer.Option("--rebuild", help="Drop the index and read the whole tree again."),
+    ] = False,
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Emit the store's answer as JSON instead of a table.")
+    ] = False,
+) -> None:
+    """Index what the rigs have delivered and list it, and what each card is doing.
+
+    The same store the studio serves at `/api/results`, from a terminal, so a rig or a laptop
+    can be inspected with no studio up. The tree on the share is the truth and the index is a
+    cache of it on this machine's own disk: reading the same tree twice adds nothing, and
+    `--rebuild` starts the cache over. A `results.json` that does not validate is listed as
+    `invalid` with its error rather than left out; an `<job_id>.attempt<N>` directory is a run
+    that did not run, listed as `failed` with its exit code and no rows.
+
+    Needs no simulator.
+    """
+    from scenariobank.agent.jobs import Roots
+    from scenariobank.web.api import STATE_DIR_NAME
+    from scenariobank.web.results import INDEX_NAME, ResultsStore
+
+    root = results_root if results_root is not None else Roots.from_environment().results
+    store = ResultsStore(index if index is not None else Path(STATE_DIR_NAME) / INDEX_NAME, root)
+    ingested = store.rebuild() if rebuild else store.ingest()
+    listed = store.jobs()
+    rigs = store.rigs()
+    if as_json:
+        typer.echo(
+            json.dumps(
+                {
+                    "results_root": str(root),
+                    "index": str(store.index),
+                    "ingested": ingested.as_dict(),
+                    "jobs": listed,
+                    "rigs": rigs,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return
+    typer.echo(
+        f"{root}: added {ingested.added}, skipped {ingested.skipped}, invalid "
+        f"{ingested.invalid}; {ingested.total} in {store.index}"
+    )
+    if listed:
+        typer.echo(
+            f"  {'name':<28} {'status':<9} {'bank':<20} {'n':>4} {'success':>8}  "
+            f"{'delivered':<20} policy"
+        )
+    for job in listed:
+        rate = "" if job["summary"] is None else f"{job['summary']['success_rate']:.2f}"
+        n = "" if job["n"] is None else str(job["n"])
+        typer.echo(
+            f"  {job['name']:<28} {job['status']:<9} {job['bank_id'] or '':<20} {n:>4} "
+            f"{rate:>8}  {job['delivered_at']:<20} {job['policy'] or ''}"
+        )
+        if job["error"]:
+            typer.echo(f"    {job['error'].splitlines()[0]}")
+    for rig in rigs:
+        if "error" in rig:
+            typer.echo(f"  rig {rig['file']}: {rig['error']}")
+            continue
+        progress = rig.get("progress")
+        done = "" if not progress else f" {progress['done']}/{progress['n']}"
+        typer.echo(
+            f"  rig {rig.get('consumer', rig['file'])}: {rig.get('state')}"
+            f"{' ' + rig['job_id'] if rig.get('job_id') else ''}{done}"
+            f"  (updated {rig.get('updated')})"
+        )
+
+
 _LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
 
 
@@ -2068,12 +2161,21 @@ def studio(
         )
         raise typer.Exit(code=1) from error
 
+    from scenariobank.agent.jobs import Roots
     from scenariobank.web.api import STATE_DIR_NAME, create_app
 
+    # The share's results tree, resolved the way the agent resolves it -- from
+    # `SCENARIOBANK_SHARE` -- so the studio reads where the rigs deliver (Phase 7 Step 6).
+    results_root = Roots.from_environment().results
     application = create_app(
-        banks_root=banks_root, state_dir=Path(STATE_DIR_NAME), workdir=Path.cwd()
+        banks_root=banks_root,
+        state_dir=Path(STATE_DIR_NAME),
+        workdir=Path.cwd(),
+        results_root=results_root,
     )
-    typer.echo(f"studio on http://{host}:{port}/  (banks: {banks_root})")
+    typer.echo(
+        f"studio on http://{host}:{port}/  (banks: {banks_root}, results: {results_root})"
+    )
     uvicorn.run(application, host=host, port=port, log_level="warning")
 
 

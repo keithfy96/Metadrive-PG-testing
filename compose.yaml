@@ -114,6 +114,18 @@ services:
       # writes into `banks/`, `replace` rewrites a row, and the job log and queue live in
       # `.studio/`. A read-only mount here would serve a page whose every button fails.
       - .:/work
+      # The share, at its own host path, the agent's trick (Phase 7 Step 6): the studio reads
+      # `results/` there and indexes it into `.studio/results.sqlite` -- inside the checkout, on
+      # this machine's own disk, never the share. Not read-only: with `SCENARIOBANK_SHARE` unset
+      # this is the checkout's own `out/` over itself, which the studio's jobs write into and
+      # a laptop's `agent --once` delivers into; and on the NAS, `banks/` on the share is where
+      # the studio will author into (Step 12). The store itself never writes the tree.
+      - "${SCENARIOBANK_SHARE:-./out}:${SCENARIOBANK_SHARE:-/work/out}"
+    environment:
+      # Passed through as given, so the studio resolves the results tree the way the agent
+      # does (`Roots.from_environment`): `results/` under the share, or `out/results` in the
+      # checkout when the share is not named. Empty is unset, by that function's own reading.
+      SCENARIOBANK_SHARE: "${SCENARIOBANK_SHARE:-}"
     # **Host networking, not `ports:`.** `cli.py` refuses any --host outside `_LOOPBACK`, because
     # these routes run subprocesses that write into the repository and there is no authentication.
     # A published port needs a bind to 0.0.0.0 inside the container, which that guard refuses --

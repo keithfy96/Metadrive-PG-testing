@@ -63,8 +63,9 @@ GROUPS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
         "and the record is the same whether the run was started here, from the studio or from "
         "the queue; `calibrate` is `run` once per value of one option axis, and writes the "
         "level-calibration reference from what it measured. `agent` is what a rig runs: it "
-        "holds one card's lock and drives `run` inside a container of its own.",
-        ("run", "calibrate", "agent"),
+        "holds one card's lock and drives `run` inside a container of its own; `results` reads "
+        "what the agents delivered and what each card is doing.",
+        ("run", "calibrate", "agent", "results"),
     ),
     (
         "Do all of it in a page",
@@ -330,6 +331,14 @@ EXAMPLES: dict[str, tuple[tuple[str, str], ...]] = {
             "one job off the queue on a laptop, then stop",
         ),
     ),
+    "results": (
+        ("uv run scenariobank results", "what the rigs delivered, newest first"),
+        (
+            "uv run scenariobank results --results-root /mnt/scenariobank/results --json",
+            "the share's tree, as the studio serves it",
+        ),
+        ("uv run scenariobank results --rebuild", "start the index over from the tree"),
+    ),
     "studio": (
         ("uv run --group web scenariobank studio", "then open http://127.0.0.1:8770/"),
         (
@@ -356,6 +365,7 @@ INDEX: tuple[tuple[str, str], ...] = (
     ("score a policy against every scenario of a bank", "run"),
     ("see whether a camera rig's cameras are alive and aimed right", "rig"),
     ("check the AV3 model's inputs and its output sign before a scored run", "av3"),
+    ("see what the rigs delivered, and what each card is doing", "results"),
     ("do all of that by looking rather than typing", "studio"),
 )
 

@@ -35,6 +35,7 @@ from scenariobank.bank import (
 from scenariobank.cli import DESTINATIONS_DOC, EXAMPLES_DIR
 from scenariobank.web.invoke import NOT_RUNNABLE, InvokeError, build_argv, catalog
 from scenariobank.web.jobs import JobBusy, JobNotFound, Jobs
+from scenariobank.web.results import INDEX_NAME, ResultsStore, UnknownJob
 
 #: Where the studio keeps job logs and scratch figures. Gitignored: a job is re-runnable, so
 #: nothing here is worth keeping.
@@ -128,15 +129,28 @@ def _recorded(manifest: Manifest) -> dict:
     }
 
 
-def create_app(*, banks_root: Path, state_dir: Path, workdir: Path | None = None) -> FastAPI:
+def create_app(
+    *,
+    banks_root: Path,
+    state_dir: Path,
+    workdir: Path | None = None,
+    results_root: Path | None = None,
+) -> FastAPI:
     """Build the studio app rooted at `banks_root`, with scratch state under `state_dir`.
 
     `workdir` is the directory jobs run in and the boundary they may write inside; it defaults to
-    the directory the studio was started in.
+    the directory the studio was started in. `results_root` is the share's `results/` tree the
+    rigs deliver into (Phase 7 Step 6); `cli.studio` resolves it the way the agent does, from
+    `SCENARIOBANK_SHARE`, and it defaults to the laptop's `out/results` under `workdir`. The
+    index of that tree is `<state_dir>/results.sqlite` -- on this machine's own disk, never the
+    share, because SQLite over a network filesystem corrupts.
     """
     banks_root = Path(banks_root)
     state_dir = Path(state_dir)
     workdir = Path(workdir) if workdir is not None else Path.cwd()
+    results_root = (
+        Path(results_root) if results_root is not None else workdir / "out" / "results"
+    )
     jobs = Jobs(state_dir / "jobs", workdir=workdir)
 
     def _root() -> Path:
@@ -158,6 +172,7 @@ def create_app(*, banks_root: Path, state_dir: Path, workdir: Path | None = None
     app.state.banks_root = banks_root
     app.state.state_dir = state_dir
     app.state.workdir = workdir
+    app.state.results_root = results_root
     app.state.jobs = jobs
 
     @app.get("/api/doctor")
@@ -504,6 +519,59 @@ def create_app(*, banks_root: Path, state_dir: Path, workdir: Path | None = None
             return jobs.cancel(job_id)
         except JobNotFound as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
+
+    def _results() -> ResultsStore:
+        """The results index, opened per request: the file is on local disk and the schema is
+        `CREATE TABLE IF NOT EXISTS`, so opening it is cheap and there is nothing to hold."""
+        return ResultsStore(_state() / INDEX_NAME, results_root)
+
+    @app.get("/api/results")
+    def results(rebuild: bool = False) -> dict:
+        """Every result the rigs have delivered, newest first, indexed on the way in.
+
+        Ingest on request rather than on a timer: a scan is a listdir and a set difference,
+        because a delivered directory is immutable and one already indexed is skipped by name.
+        The tree on the share is the truth; `?rebuild=true` drops the index and reads the whole
+        tree again, and the reply says where both are so nobody has to guess which disk holds
+        what.
+        """
+        store = _results()
+        ingested = store.rebuild() if rebuild else store.ingest()
+        return {
+            "results_root": str(results_root),
+            "index": str(store.index),
+            "ingested": ingested.as_dict(),
+            "jobs": store.jobs(),
+        }
+
+    @app.get("/api/results/{name}")
+    def result(name: str) -> dict:
+        """One delivered directory: its job row and its scenario rows.
+
+        `name` is the directory's name -- the job id, or `<job_id>.attempt<N>` for a run that
+        did not run -- and is checked for shape before it reaches the index for the reason
+        every other name here is. An attempt has no rows, and says so with an empty list.
+        """
+        if not _NAME.match(name):
+            raise HTTPException(status_code=400, detail=f"{name!r} is not a result name")
+        store = _results()
+        store.ingest()
+        try:
+            job = store.job(name)
+        except UnknownJob as error:
+            raise HTTPException(
+                status_code=404, detail=f"no result named {name!r} under {results_root}"
+            ) from error
+        return {"job": job, "rows": store.rows(name)}
+
+    @app.get("/api/rigs")
+    def rigs() -> list[dict]:
+        """What each card is doing, as its agent last wrote under `results/status/`.
+
+        A file read and no port open on any rig: the worker rewrites its status file on every
+        state change and every ten seconds, and this is the studio's whole view of the rigs.
+        """
+        return _results().rigs()
 
     def _looks() -> Path:
         """Where a candidate seed's picture is drawn. Under the state directory rather than in a

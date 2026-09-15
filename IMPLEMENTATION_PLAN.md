@@ -604,8 +604,12 @@ metadrive-PG/
                             #   noticed rather than absorbed. Do not reimplement.
     web/ (Phase 7 additions)
       options.py            #   GET /options: the six axes as data, for the studio's submit form
-      results.py            #   the NAS-side index the studio reads; the push to Tyrone's webapp
-      archive.py            #   evidence, written before the run touches anything
+      results.py            #   the store (built 2026-09-15): the results tree on the share is the
+                            #   truth, `.studio/results.sqlite` on the studio's own disk is the
+                            #   index; `scenariobank results`, GET /api/results, GET /api/rigs.
+                            #   The push to Tyrone's webapp waits on Open question 7.
+      archive.py            #   retired 2026-09-15 (Step 6, difference 6): nothing overwrites,
+                            #   so there is nothing to archive before
   rigs/av3.txt              # the six AV3 cameras, ported from the converter
   docker/studio.Dockerfile  # the studio image: FROM metadrive-wingfin-sim, plus the web group
   compose.yaml              # `run` on the reused sim image, `studio` on ours. No build for `run`.
@@ -5594,7 +5598,7 @@ from the agent's side: a URL on the host network and nothing else.
 | leftovers, both times | no holder file, no container of ours |
 | the topic at the end | `done: 2`, `attempts` 1 each, nothing `ready` or `leased` |
 
-### Step 6 — results storage on the NAS ⬜
+### Step 6 — results storage on the NAS ✅  *(built 2026-09-15; the store, not the push)*
 
 **The agent delivers, the NAS stores** *(2026-09-13)*. `deliver()` on the agent is the only writer.
 Its first target is `results/<job_id>/` on the share (**Files**); its intended target is a database
@@ -5651,6 +5655,118 @@ lands here.)*
 
 **Verify alone:** ingest the same `results.json` twice; the row count does not move.
 
+**Decided 2026-09-15, before building** *(Keith: no NAS access yet — build it now, deploy it
+later)*. The step is buildable and testable today because the share is a **directory path and
+never a protocol**: `Roots.from_environment` (`agent/jobs.py`) reads `SCENARIOBANK_SHARE`, defaults
+to `out/results` on the laptop, and `compose.yaml` mounts whatever the variable names. Steps 3 and
+5 were verified on the rig against `~/scenariobank/share`, a plain directory standing in for the
+mount, and six delivered results sit there now. Step 6 builds against the same stand-in; the day
+the mount exists, deployment is `SCENARIOBANK_SHARE=/mnt/scenariobank` on each machine plus the
+first-day checklist in Open question 8. No code changes on that day.
+
+*What differs from the text above, and why:*
+
+1. **The SQLite index lives on the studio's local disk, never on the share.** The text says "a
+   database on the NAS"; the NAS is where the studio runs, so this is the same machine — but not
+   the same filesystem. SQLite over NFS or SMB is unsafe (its own documentation: network-filesystem
+   locking is unreliable and corrupts databases). So the **results tree on the share is the source
+   of truth** and the index is a derived, rebuildable cache at `<state_dir>/results.sqlite`
+   (`.studio/`). This is also what makes "build now, deploy later" true: an index built from any
+   directory is the same code for `out/results`, `~/scenariobank/share/results` and
+   `/mnt/scenariobank/results`.
+2. **The row key is `(job_id, scenario_id)`, not `scenario_id`.** "REPLACE on the scenario id"
+   above would keep one score per scenario across all jobs; the same scenario legitimately scores
+   under many jobs (every model, every option set). `INSERT OR REPLACE` on the pair is the
+   idempotency.
+3. **Ingest is incremental by name.** A delivered directory is immutable (`deliver` refuses to
+   overwrite, `session.py`), so a `job_id` already in the index is skipped; `--rebuild` drops and
+   rescans. `*.partial` (a delivery in flight) and `status/` are never read as jobs.
+4. **`validate --results` happens at ingest, on the store side, and no `validate` command is
+   added.** Step 5 deferred it here ("a store rather than a directory is what would refuse a bad
+   file"). Ingest parses `results.json` against `Results`; a file that fails becomes one job row
+   with `status="invalid"` and the pydantic error in `error`, and never aborts the scan. The agent
+   stays a file writer and does not change.
+5. **`<job_id>.attemptN` directories are ingested as evidence**, `kind="attempt"`, no rows;
+   `exit_code` and the presence of `container.log` noted. They were not mentioned above because
+   they were invented in Step 3.
+6. **No archive step is built.** "Archive before you overwrite" was written for the retired
+   orchestrator that diffed `out/`. Here nothing overwrites: `deliver` refuses an existing name,
+   staging is `.partial` + rename, and ingest is read-only on the tree. The rule is satisfied by
+   construction; recorded so nobody adds a copy of the tree beside the tree.
+7. **The push to Tyrone's webapp and `CONTRACT.md` are not in this step.** Endpoint, auth and
+   payload are unknown (Open question 7); building a push to nowhere is a second schema. Step 7's
+   line "the studio's push picks it up" becomes "`scenariobank results` / `GET /api/results` shows
+   it" until the push exists.
+8. **Added, because Step 5 wrote them and nothing read them:** `results/status/<host>-gpu<N>.json`
+   is read by the store's `rigs()` and served at `GET /api/rigs` — the studio's view of each card,
+   no new writer. Not in the text above.
+9. **Added: `scenariobank results`** (`--results-root`, `--index`, `--rebuild`, `--json`), the same
+   store from the CLI, so a rig or a laptop can be inspected without the studio up. The studio's
+   `create_app` gains a `results_root` argument resolved through `Roots.from_environment`, so the
+   studio and the agent resolve the share from the same variables (the studio had no notion of
+   the share roots before this).
+
+*The build* — `web/results.py` (new, the store: `ResultsStore(index, results_root)`, `ingest()`,
+`jobs()`, `rows(job_id)`, `rigs()`, `rebuild()`; stdlib `sqlite3`; imports `scenariobank.results`
+and nothing of MetaDrive, the studio rule), three routes in `web/api.py` (`GET /api/results`,
+`GET /api/results/{job_id}`, `GET /api/rigs`; ingest on request — a listdir and a set difference),
+the `results` command in `cli.py` (+ `docs.py`, `docs/reference/commands.md` regenerated),
+`tests/unit/test_results_store.py` (trees in `tmp_path` from `Results` models: ingest twice and the
+counts do not move; `.partial` ignored then picked up after rename; `.attempt1` is evidence not a
+score; a corrupt file is one `invalid` row; `rebuild()` drops a deleted dir; `rigs()` reads a
+status file), the three routes in `tests/unit/test_web.py`, and a "Results: the store" section in
+`docs/running-the-application.md`. Tables: `jobs(job_id PK, kind, status, bank_id, policy, model,
+options_json, n, summary_json, delivered_at, error)` and `rows(job_id, scenario_id, status,
+success, steps, route_completion, cost, collisions, failure_reason, wall_time_s,
+actor_layout_digest, PRIMARY KEY(job_id, scenario_id))` — the outcome fields the notes above say
+are comparable across machines, and nothing that is not.
+
+*Verify* — the unit tests; the offline suite still green (Open question 12's two files excluded);
+laptop `uv run scenariobank results` against `out/results`, which already holds the Step 5
+deliveries, twice, counts unchanged; rig `docker compose --profile rig run --rm -T agent python -m
+scenariobank results --results-root /home/metadrive/scenariobank/share/results --index /tmp/i.sqlite`
+ingests the six results there and a second run reports `added 0`.
+
+**Built 2026-09-15** as decided above, with three things the decision did not say:
+
+- **The `jobs` table is keyed by the directory `name`, with `job_id` and `attempt` beside it.**
+  "`job_id PK`" above cannot hold `j1` and `j1.attempt1` at once, and both are rows (difference
+  5). The name is what incremental ingest compares, so it is the key; `rows.job_id` is the same
+  string, and an attempt has no rows, so the two never disagree. `status` on a job row is one of
+  `complete`, `stopped`, `invalid` (kind `result`) or `failed` (kind `attempt`); `model` is the
+  job's `checkpoint_path`, read off the `job.json` delivered beside the record.
+- **`web/` does not import `agent/`.** `agent/__init__.py` says the agent is imported by nobody,
+  and difference 9's "`create_app` resolves through `Roots.from_environment`" would have broken
+  that. So `cli.studio` and `cli.results` resolve the root through `Roots` and hand the *path*
+  in; `create_app(results_root=)` defaults to `out/results` under `workdir`, which is what
+  `Roots` resolves to with the share unset. `STATUS_DIR` is spelled in both modules and a test
+  pins them equal.
+- **`compose.yaml`'s `studio` service gained the share.** It mounted only the checkout, so on
+  the NAS it could not have read `/mnt/scenariobank/results` at all. Now `SCENARIOBANK_SHARE`
+  is passed through (empty reads as unset) and the share is mounted at its own host path, the
+  agent's trick; unset, that is the checkout's own `out/` over itself. Not read-only: the
+  studio's jobs write into `out/`, and Step 12 will author banks onto the share. The store never
+  writes the tree; that is a property of the code, not of the mount.
+
+The laptop's own `out/results`, first and second scan, 2026-09-15 (`uv run scenariobank
+results --index /tmp/i.sqlite`):
+
+| scan | added | skipped | invalid | in index |
+|---|---|---|---|---|
+| first | 15 | 0 | 1 | 15 |
+| second | 0 | 15 | 0 | 15 |
+
+The one invalid entry is real: `agent-tier` is a Step 4 delivery with an exit code of 0 and no
+`results.json` (a `hard/` directory instead), and the listing says `no results.json` under its
+name rather than dropping it. Both status files (`keith-82y7-gpu0`, `gpu1`, state `stopped`)
+are listed after the jobs. Unit tests: `tests/unit/test_results_store.py` (12: the twice-ingest,
+the `(job_id, scenario_id)` key, the outcome columns and only those, a stopped batch, the model
+off `job.json`, `.partial` ignored then read after the rename, an attempt with no rows, a bad
+file as one `invalid` row with the scan continuing and the row healing on `--rebuild`,
+`rebuild()` dropping a deleted directory where `ingest()` keeps it, the status directory as
+rigs and never as a job, a tree that is not there yet, the index surviving a reopen) and the
+three routes in `test_web.py`. `web/archive.py` in the tree below is retired (difference 6).
+
 ### Step 7 — thin round-trip end to end ⬜  ⟵ *gate*
 
 Before the bank is correct, prove the whole path with a stub:
@@ -5658,7 +5774,9 @@ Before the bank is correct, prove the whole path with a stub:
 1. The Step 1 image, taking one scenario and writing a `results.json`.
 2. A real message on the real queue — **the first and only use of it**, the one step waiting on
    access (Open question 9) — leased by the agent on one real rig.
-3. Results delivered to the NAS, renamed into place, message acked; the studio's push picks it up.
+3. Results delivered to the NAS, renamed into place, message acked; the studio's push picks it up
+   *(until the push exists — Open question 7 — `scenariobank results` / `GET /api/results` is
+   what shows it; Step 6, difference 7)*.
 
 Then wire the real bank behind it. **A green round-trip against a stub is worth more than a correct
 bank nothing can run**, and here it also proves the routing before either side is finished.
@@ -5905,8 +6023,18 @@ colleague moving between the two should not have to relearn anything.
    whether the checkpoint cron already uses it. **It no longer blocks Step 3** *(2026-09-15)*:
    Step 3 reads `SCENARIOBANK_BANKS` as a plain directory, which is what `compose.yaml` already
    declares, so `agent --once job.json` runs on the laptop and on a rig with nothing mounted.
-   Mounting the share is then a path change and not a code change. Still to decide for Step 6,
-   which delivers into it.
+   Mounting the share is then a path change and not a code change. **Step 6 does not wait on
+   it either** *(2026-09-15)*: the store indexes a directory, and the index lives beside the
+   studio, never on the share (Step 6,
+   difference 1). What the mount changes is checked on its first day, on the rig, with commands
+   that are run now against `~/scenariobank/share` so only the path differs: (1)
+   `SCENARIOBANK_SHARE=/mnt/scenariobank` on both rigs and the NAS, and the agent's start line
+   prints the resolved results root; (2) rename atomicity, which `deliver` relies on — inside the
+   agent container create `results/probe.partial/x`, `os.replace` it to `results/probe`, confirm,
+   delete; (3) ownership — `touch` from the agent container, `ls -l` from the host, so root-squash
+   or a uid mismatch shows here and not four minutes into a run; (4) one real job through the loop
+   with the new path, then `scenariobank results` on the NAS side sees it. Still to decide: the
+   protocol and the mount itself.
 9. **Queue access, and the queue's own server** *(2026-09-13)*. None yet, on either count.
    Everything up to Phase 7 Step 7 runs against the Step 0 replica
    (`tests/support/fake_wfqueue.py`), and Step 7 waits on a key from the colleague. The second

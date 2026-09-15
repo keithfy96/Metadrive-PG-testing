@@ -30,10 +30,14 @@ def client(tmp_path):
     # `workdir` is both where jobs run and the boundary they may write inside, so pointing it at
     # the temp directory is what lets the containment tests below be about somewhere real.
     application = create_app(
-        banks_root=banks, state_dir=tmp_path / ".studio", workdir=tmp_path
+        banks_root=banks,
+        state_dir=tmp_path / ".studio",
+        workdir=tmp_path,
+        results_root=tmp_path / "share" / "results",
     )
     with TestClient(application) as started:
         started.workdir = tmp_path
+        started.results_root = tmp_path / "share" / "results"
         yield started
 
 
@@ -70,6 +74,13 @@ def test_the_app_holds_the_roots_it_was_given(tmp_path):
     assert application.state.banks_root == tmp_path / "b"
     assert application.state.state_dir == tmp_path / "s"
     assert application.state.workdir == tmp_path / "w"
+    # The laptop's own layout when no share is named: what the agent's `Roots` resolves to with
+    # `SCENARIOBANK_SHARE` unset, so `agent --once` and the studio read the same directory.
+    assert application.state.results_root == tmp_path / "w" / "out" / "results"
+    given = create_app(
+        banks_root=tmp_path / "b", state_dir=tmp_path / "s", results_root=tmp_path / "r"
+    )
+    assert given.state.results_root == tmp_path / "r"
 
 
 def test_categories_serves_all_seven_with_what_selects_them(client):
@@ -1216,3 +1227,78 @@ def test_a_procedural_review_is_unchanged_but_for_the_discriminator(client):
     # `curvy` rows collapse to one drive.
     assert (report["total"], report["distinct"]) == (2, 1)
     assert "duplicates" in report["categories"][0]
+
+
+# -- Phase 7 Step 6: the results the rigs delivered ------------------------------------------
+
+
+def _delivered(root, name, *, scenarios=("t_junction_0000",), stopped=False):
+    """A directory the way `RunSession.deliver` leaves one, built from the runner's own models."""
+    from tests.unit.test_results_store import deliver, record, scored
+
+    return deliver(root, name, record(name, [scored(s) for s in scenarios], stopped=stopped))
+
+
+def test_results_are_indexed_on_request_and_listed_newest_first(client):
+    # Nothing delivered yet: an empty list and the two places named, not a 404.
+    empty = client.get("/api/results").json()
+    assert empty["jobs"] == [] and empty["ingested"]["total"] == 0
+    assert empty["results_root"] == str(client.results_root)
+    assert empty["index"] == str(client.workdir / ".studio" / "results.sqlite"), (
+        "the index is under the studio's state directory, on local disk, never the share"
+    )
+
+    _delivered(client.results_root, "j1", scenarios=("t_junction_0000", "t_junction_0001"))
+    _delivered(client.results_root, "j2")
+    listed = client.get("/api/results").json()
+    assert listed["ingested"]["added"] == 2
+    assert sorted(job["name"] for job in listed["jobs"]) == ["j1", "j2"]
+    assert {job["status"] for job in listed["jobs"]} == {"complete"}
+    # The same request again reads the tree, finds nothing new, and the list is the same.
+    again = client.get("/api/results").json()
+    assert again["ingested"] == {"added": 0, "skipped": 2, "invalid": 0, "total": 2}
+    assert again["jobs"] == listed["jobs"]
+    # A rebuild reads every directory again and lands on the same list.
+    rebuilt = client.get("/api/results", params={"rebuild": "true"}).json()
+    assert rebuilt["ingested"] == {"added": 2, "skipped": 0, "invalid": 0, "total": 2}
+    assert rebuilt["jobs"] == listed["jobs"]
+
+
+def test_one_result_is_its_job_and_its_rows(client):
+    _delivered(client.results_root, "j1", scenarios=("t_junction_0000", "t_junction_0001"))
+    body = client.get("/api/results/j1").json()
+    assert body["job"]["name"] == "j1" and body["job"]["n"] == 2
+    assert [row["scenario_id"] for row in body["rows"]] == ["t_junction_0000", "t_junction_0001"]
+    assert body["rows"][0]["success"] is True
+    assert body["rows"][0]["collisions"] == {"human": 0, "vehicle": 0}
+
+
+def test_an_attempt_is_served_with_no_rows_and_a_missing_result_is_a_404(client):
+    from tests.unit.test_results_store import attempt
+
+    attempt(client.results_root, "j1.attempt1")
+    body = client.get("/api/results/j1.attempt1").json()
+    assert body["job"]["kind"] == "attempt" and body["job"]["job_id"] == "j1"
+    assert body["rows"] == []
+
+    missing = client.get("/api/results/j1")
+    assert missing.status_code == 404
+    assert "no result named 'j1'" in missing.json()["detail"]
+    # A name that is not a name never reaches the index.
+    assert client.get("/api/results/..%2Fetc").status_code in (400, 404)
+    assert client.get("/api/results/.hidden").status_code == 400
+
+
+def test_the_rigs_are_the_status_files_and_nothing_else(client):
+    from scenariobank.web.results import STATUS_DIR
+
+    status = client.results_root / STATUS_DIR
+    status.mkdir(parents=True)
+    (status / "sim-gpu0.json").write_text(
+        json.dumps({"consumer": "sim:gpu0", "state": "idle", "job_id": None})
+    )
+    assert client.get("/api/rigs").json() == [
+        {"file": "sim-gpu0.json", "consumer": "sim:gpu0", "state": "idle", "job_id": None}
+    ]
+    # And the status directory is never a job.
+    assert client.get("/api/results").json()["jobs"] == []

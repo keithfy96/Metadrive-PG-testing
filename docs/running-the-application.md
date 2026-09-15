@@ -106,7 +106,9 @@ does restart on its own; the studio does not, and that is a compose change to ra
 rather than something to assume.)
 
 **What it writes, and where:** `banks/<bank>/` and `.studio/` (the job log, the queue, candidate
-seed pictures) inside the checkout, owned by `DOCKER_UID`. Nothing outside the checkout.
+seed pictures, and `results.sqlite`, the index of what the rigs delivered) inside the checkout,
+owned by `DOCKER_UID`. Nothing outside the checkout, and nothing on the share: the studio reads
+`results/` there and writes nothing into it (see "Results: the store").
 
 ## On a laptop
 
@@ -592,6 +594,62 @@ whenever the card's state changes and every ten seconds while a run is up: the s
 directory, the holder when busy, disk free on the rig's out root, the agent version. And the
 rig's own `SCENARIOBANK_OUT/<job_id>` is swept a day after delivery -- only where
 `results/<job_id>` exists on the share, and never while a container of ours names it.
+
+## Results: the store
+
+The agent delivers into `results/` on the share -- `results/<job_id>/` for a run that ran, and
+`results/<job_id>.attempt<N>/` for one that did not -- and that tree is the truth. The studio
+reads it and keeps an index of it in `.studio/results.sqlite`, **on its own disk and never on the
+share**: SQLite over NFS or SMB corrupts, its own documentation says so, so the file on the share
+is never the database. The index is a cache. Delete it and the next request rebuilds it from the
+tree.
+
+```bash
+uv run scenariobank results                       # the tree SCENARIOBANK_SHARE names, or out/results
+# /mnt/scenariobank/results: added 6, skipped 0, invalid 0; 6 in .studio/results.sqlite
+#   name        status    bank         n  success  delivered             policy
+#   rig-step5-1 complete  t-junction   1     1.00  2026-09-15T04:10:22Z  scenariobank.policies:ExpertPolicy
+#   …
+#   rig sim:gpu0: idle  (updated 2026-09-15T04:31:02Z)
+uv run scenariobank results                       # again: added 0, skipped 6
+uv run scenariobank results --rebuild             # start the index over
+uv run scenariobank results --json | jq '.jobs[0]'
+```
+
+The same store answers on the page: `GET /api/results` lists what was delivered and indexes any
+new directory on the way (a listdir and a set difference -- a delivered directory never changes,
+so one already indexed is skipped by name; `?rebuild=true` starts the index over),
+`GET /api/results/<name>` is one delivery's job and its per-scenario rows, and `GET /api/rigs`
+is what each card is doing, read off the status files the agents write under `results/status/`.
+No port is open on a rig for any of it.
+
+What the index holds is decided by what is comparable across machines: per row, `status`,
+`success`, `steps`, `route_completion`, `cost`, `collisions`, `failure_reason`, `wall_time_s`
+and `actor_layout_digest`, keyed by job **and** scenario, because the same scenario legitimately
+scores under many jobs. `actions_digest` and `reward` are not columns -- two CPUs disagree on
+them and that is not a defect ("Did it work?", below).
+
+Three things the listing shows on purpose rather than hiding:
+
+- **`invalid`**: a `results.json` that does not validate against the record's own model, with
+  the error on the next line. The file is listed, never skipped -- a result silently missing is
+  the one failure nobody can debug from a page. This is the check on results Phase 7 Step 5
+  deferred to the store.
+- **`failed`**, kind `attempt`: a `<job_id>.attempt<N>` directory, a run that did not run --
+  its exit code and whether a `container.log` exists, and no rows. The job's own name is still
+  free, so the next attempt lands beside it.
+- **`stopped`**: a batch the agent was told to end; the rows present ran, the rest did not.
+
+**Deploying it on the NAS is one variable.** The studio resolves the tree the way the agent does,
+from `SCENARIOBANK_SHARE`; `compose.yaml` passes it through and mounts the share at its own
+path, the way the agent's service does. Unset, both read `out/results` in the checkout, which is
+where a laptop's `agent --once` delivers. The day the mount exists (`IMPLEMENTATION_PLAN.md`,
+Open question 8):
+
+```bash
+SCENARIOBANK_SHARE=/mnt/scenariobank DOCKER_UID=$(id -u) DOCKER_GID=$(id -g) docker compose up -d studio
+docker compose logs studio | tail -1     # "… (banks: banks, results: /mnt/scenariobank/results)"
+```
 
 ## Did it work?
 
