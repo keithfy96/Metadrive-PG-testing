@@ -5577,6 +5577,23 @@ question, where a store rather than a directory is what would refuse a bad file.
 The worked commands, the ack/dead/retry table and the handover are written up in
 `docs/running-the-application.md`, "The loop: `agent`".
 
+**Done on the rig too, 2026-09-15** (`2fe4539` pulled; no image rebuild -- the checkout is
+mounted at `/work`, so the new modules arrive with the pull). The replica ran in a second agent
+container on the host network (`docker compose --profile rig run -d --name step5-queue agent
+python -m tests.support.fake_wfqueue --port 9090`), which is the shape the real queue will have
+from the agent's side: a URL on the host network and nothing else.
+
+| check (rig `sim`, one RTX 5080, the agent in its container) | result |
+|---|---|
+| one job put, `agent --gpu 0 --max-jobs 1` in the compose service | leased, `completed, 1/1`, acked, 9.1 s end to end; `consumer` `sim:gpu0` |
+| the row | `t_junction_0000`, 139 steps, 0.33 s -- Step 1's and Step 3's numbers |
+| `results/status/sim-gpu0.json` on the share | `stopped`, `jobs_done: 1`, `image: scenariobank-sim:latest`, disk free |
+| the five-scenario job, agent detached, **`docker stop`** on the agent container mid-run | the stop returned in **1.7 s** (the handover, not the 10 s grace); run container `Up`; holder record kept with message 2 and its lease; message `leased`, lease extended to 597 s |
+| the restarted agent | `adopting … lease=live`, `ack … completed, 5/5`, 3.2 s -- the run had finished while no agent watched, and the exited container's exit code was read |
+| the delivered `events.jsonl` | one `run.started` |
+| leftovers, both times | no holder file, no container of ours |
+| the topic at the end | `done: 2`, `attempts` 1 each, nothing `ready` or `leased` |
+
 ### Step 6 — results storage on the NAS ⬜
 
 **The agent delivers, the NAS stores** *(2026-09-13)*. `deliver()` on the agent is the only writer.
