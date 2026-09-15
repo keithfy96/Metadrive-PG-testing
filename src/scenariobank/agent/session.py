@@ -715,7 +715,16 @@ class RunSession:
         adopted = self.adopt()
         if adopted is None:
             self.ensure_bridge()
-            self.launch()
+            try:
+                self.launch()
+            except SessionError:
+                # A `docker run` that fails may still have CREATED the container -- asking a
+                # one-card rig for `--gpus device=1` exits 128 with the container sitting there,
+                # measured on the rig 2026-09-15. Left alone it is adopted by the next attempt
+                # and reported as a run that vanished, which is two wrong answers: the run never
+                # started, and the reason is in a log nobody kept. So harvest first, then raise.
+                self.harvest()
+                raise
         result = self.supervise(on_tick=on_tick, poll_s=poll_s)
         self.harvest()
         if not deliver:

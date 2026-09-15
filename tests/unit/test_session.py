@@ -72,6 +72,9 @@ class FakeDocker(Commands):
         self.on_state = on_state
         self.launch_code = 0
         self.launch_output = ""
+        #: `docker run` that creates the container and then fails, which is what the nvidia hook
+        #: does for a device the machine does not have.
+        self.launch_creates_first = False
 
     # -- the daemon's own state ---------------------------------------------------------------
 
@@ -100,9 +103,9 @@ class FakeDocker(Commands):
     # -- the two scripts ----------------------------------------------------------------------
 
     def _sim_run(self, argv, env):
-        if self.launch_code != 0:
-            return self.launch_code, self.launch_output
         name = env.get("NAME", "unnamed")
+        if self.launch_code != 0 and not self.launch_creates_first:
+            return self.launch_code, self.launch_output
         self.launched = {"argv": argv, "env": dict(env)}
         self.add(
             name,
@@ -115,6 +118,8 @@ class FakeDocker(Commands):
         )
         if self.on_launch is not None:
             self.on_launch(self)
+        if self.launch_code != 0:
+            return self.launch_code, self.launch_output
         return 0, "c0ffee\n"
 
     def _bridge(self, argv, env):
@@ -274,6 +279,22 @@ def test_a_launcher_that_fails_is_a_rig_fault_and_not_a_refusal(rig):
     docker.launch_code, docker.launch_output = 1, "sim image is not ready"
     with pytest.raises(SessionError, match="could not start the run container"):
         session_for(rig, docker).launch()
+
+
+def test_a_failed_launch_takes_away_the_container_it_may_have_created(rig):
+    # `docker run` can fail having CREATED the container: a one-card rig asked for
+    # `--gpus device=1` exits 128 with it sitting there (measured on the rig). Left alone it is
+    # adopted by the next attempt and reported as a run that vanished -- two wrong answers, since
+    # the run never started and the reason is in a log nobody kept.
+    docker = FakeDocker()
+    docker.launch_creates_first = True
+    docker.launch_code, docker.launch_output = 128, "could not select device driver"
+    session = session_for(rig, docker, gpu=1)
+    (rig.out / "j7").mkdir(parents=True)
+    with pytest.raises(SessionError, match="could not start the run container"):
+        session.run(poll_s=0)
+    assert session.name not in docker.containers
+    assert (session.out_dir / LOG_FILE).exists()
 
 
 # --- the bridge -------------------------------------------------------------------------------

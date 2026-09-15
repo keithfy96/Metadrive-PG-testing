@@ -5391,6 +5391,36 @@ One thing the verification itself taught: **`uv run` wraps the agent**, so killi
 lock's own holder record is what names the real pid. In the container the agent is pid 1 and there
 is no wrapper; on a laptop, read the record.
 
+**Done on the rig too, 2026-09-15**, and this is where the container shape was first exercised:
+the agent in its own container (`docker compose --profile rig run --rm agent`), starting a sibling
+on the RTX 5080 through the mounted socket. The image was rebuilt there first (15 minutes) for the
+docker client. `SCENARIOBANK_SHARE=$HOME/scenariobank/share` with the bank copied into
+`banks/t-junction` — a plain directory standing in for the NAS share, which is what Open question
+8 not blocking this step means in practice.
+
+| check (rig `sim`, one RTX 5080, real GPU) | result |
+|---|---|
+| the four agent test files inside `scenariobank-sim:latest` | 87 passed, 2.62 s |
+| `docker compose --profile rig config` | every root a host path, and equal inside: the same-path mounts |
+| one scenario, the agent in its container | `completed`, delivered to the share, 20.5 s |
+| the row | `t_junction_0000`, 139 steps, 0.332 s — the same numbers Step 1 measured there |
+| `host` on `run.started` | `sim` — the rig's own name, through `--network host` |
+| the whole bank, five rows | `5/5`, delivered, no container left, `holder.json` gone |
+| while it held card 0: rig lock **exclusive** (CARLA's) | refused, **exit 1** |
+| the same moment: rig lock **shared** (ours) | granted, **exit 0** — a second card of ours could start |
+| the same moment: card 0 / card 1 | 1 / 0 |
+| after it released: rig lock exclusive | **0** — CARLA can run again |
+| the same job a second time | `already delivered`, exit 0, before the lock is even attempted |
+| a hand-held rig lock, fresh job, card 1 | exit **4**, naming the holder's **host** pid — which only `pid: host` makes possible |
+
+**And one bug the rig found that the laptop could not.** Asking a one-card rig for `--gpus
+device=1` fails — correctly — but `docker run --detach` has **created** the container by then, and
+it sits there exited 128. The next attempt adopted it and reported a run that *vanished*: two
+wrong answers, since the run never started and the reason was in a log nobody kept. `run()` now
+harvests after a failed launch — the log beside the results, the container removed — and there is
+a test for it. A worker configured for a card the rig does not have is a deployment error, and it
+now fails in about a second with the driver's own message kept on disk.
+
 The worked round trip, the five environment variables, the exit-code table and the two recovery
 measurements are in `docs/running-the-application.md`, "One job, start to finish: `agent --once`".
 
