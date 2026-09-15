@@ -5373,10 +5373,10 @@ Three more notes, so nothing here is silent:
 | two agents, `--gpu 0` and `--gpu 1` | both cards `ours`, two containers, two results |
 | a job with `"tier": "hard"` | batch under `hard/`, `events.jsonl` and `exit_code` above it |
 | `agent` with no `--once` | refuses, naming Step 5 |
-| `tests/unit/test_agent_jobs.py` (new, 26) + `test_session.py` (new, 34) | 60 passed |
+| `tests/unit/test_agent_jobs.py` (new, 26) + `test_session.py` (new, 37) | 63 passed |
 | `tests/unit/test_images.py` (3 assertions added, 12 for `sim-run.sh`) | 7 passed |
 | `ruff check src tests scripts`, `docs/reference/commands.md` regenerated | clean |
-| the offline suite, minus the two files of Open question 12 | **904 passed, 9 skipped, 503.16 s** (843 before this step) |
+| the offline suite, minus the two files of Open question 12 | **907 passed, 9 skipped, 440.64 s** (843 before this step) |
 | the new `docker/Dockerfile` layer, built on its own | 38 MB, `Docker version 27.3.1`, and `docker ps` through the mounted socket |
 
 **The image itself was built on the rig and not here**, which is the standing rule and was also
