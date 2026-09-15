@@ -5890,6 +5890,13 @@ every delivery's host. Unit tests: `tests/unit/test_eta.py` (13), `describe()` a
 in `test_options.py`, the store's host, version and `samples()` in `test_results_store.py`,
 and the two routes in `test_web.py`.
 
+**Verified on the rig 2026-09-15** (`sim`, the agent image, the stand-in share, checkout
+`c79cfc9`, `scenariobank results --index $SCENARIOBANK_OUT/step8-index.sqlite`): first scan
+`added 6, skipped 0, invalid 0`, every one of the six deliveries with `host` = `sim`, which is
+what all six `events.jsonl` files' `run.started` lines say; second scan `added 0, skipped 6`;
+`PRAGMA user_version` = 2; scratch index removed. The routes themselves need the web group and
+were exercised on the laptop (above); nothing on the rig serves them, by design.
+
 ---
 
 ## How you test it
