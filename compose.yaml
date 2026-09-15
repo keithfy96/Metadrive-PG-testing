@@ -148,7 +148,13 @@ services:
   agent:
     <<: *common
     profiles: ["rig"]
-    image: "${SIM_IMAGE:-metadrive-wingfin-sim:latest}"
+    # **This repo's image, not `SIM_IMAGE`**, and it is the one place the two part company
+    # (2026-09-15). The agent starts each job as a sibling container, so it needs the docker
+    # CLI; the converter's image does not have it and is not ours to change, while
+    # `docker/Dockerfile` is. `SIM_IMAGE` still selects what the RUNS use -- the agent passes it
+    # through to `sim-run.sh` -- so a rig can run the converter's image for the work and ours for
+    # the supervisor. Still no fourth image: a rig builds this one and the bridge, as Step 1 says.
+    image: "${AGENT_IMAGE:-scenariobank-sim:latest}"
     restart: always
     network_mode: host
     # /proc/locks is filtered by PID namespace: a container sees the locks taken INSIDE it and

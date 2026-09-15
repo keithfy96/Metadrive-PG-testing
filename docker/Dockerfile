@@ -51,6 +51,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
+# The docker CLI, **client only**, for one reason: the rig agent (Phase 7) runs in this image and
+# starts each job as a SIBLING container through the host's mounted socket, and the line it runs
+# is `scripts/sim-run.sh`. Without this the agent container has a socket it cannot speak to, and
+# `sim-run.sh` dies on its own first line -- measured 2026-09-15, on both sim images.
+#
+# The static binary rather than `docker.io`, which drags in the daemon, containerd and runc for a
+# container that must never run one; and pinned, because a client is a protocol and a surprise
+# there is a surprise on a rig. Nothing else in this image uses it: a run does not start
+# containers, it IS one.
+ARG DOCKER_CLI_VERSION=27.3.1
+RUN curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_CLI_VERSION}.tgz" \
+        | tar -xzC /usr/local/bin --strip-components=1 docker/docker \
+    && docker --version
+
 # The venv lives outside /work so the bind mount of the repo at run time cannot shadow it, and
 # UV_NO_SYNC so a `uv run` inside the container never tries to resync against the mounted lock.
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
@@ -113,3 +127,7 @@ CMD ["bash"]
 # scripts/sim-image.sh compares this against the Dockerfile so an image built before a group was
 # added is named as stale before a run fails four minutes in on a missing module.
 LABEL wingfin.groups="sim gpu model"
+
+# What is in here besides the venv, for a `docker inspect` that has to answer "can this image
+# be the agent?" without starting a container.
+LABEL wingfin.tools="docker-cli"

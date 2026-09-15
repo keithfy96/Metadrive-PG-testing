@@ -2157,6 +2157,7 @@ def agent(
     command line was wrong, **3** the job is refused and must be dead-lettered, **4** the card
     is busy.
     """
+    import shutil
     import signal
 
     from scenariobank.agent.jobs import JobRefused, Roots, read_job, resolve
@@ -2169,6 +2170,19 @@ def agent(
             "--once, which runs the whole session without a queue",
             param_hint="--once",
         )
+    # Said here rather than four lines into a shell script, because inside the agent container
+    # the remedy is not the one `sim-run.sh` prints. The sim image the CONVERTER builds has no
+    # docker CLI and is not ours to change; `docker/Dockerfile` installs one, which is why the
+    # agent service names `scenariobank-sim:latest` and not `SIM_IMAGE`.
+    if shutil.which("docker") is None:
+        typer.echo(
+            "no docker on PATH. The agent starts each run as a sibling container, so it needs "
+            "the docker client and the host's socket. In a container: use an image built from "
+            "this repo's docker/Dockerfile (`bash scripts/sim-image.sh build`), which installs "
+            "one, and mount /var/run/docker.sock.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
 
     roots = Roots.from_environment()
     # Everything that can refuse this job happens here, with the card still free.

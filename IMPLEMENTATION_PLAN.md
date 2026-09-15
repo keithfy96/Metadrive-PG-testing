@@ -5286,11 +5286,25 @@ collapses the first two into one variable — wing-sim's trick with its simulati
 the image's editable install is the single path line `/work/src`. So its host path travels in the
 environment as `SCENARIOBANK_REPO` and `sim-run.sh` reads it as `REPO_DIR`.
 
-**And that is how a real bug in `compose.yaml` was found: the `agent` service could never have
-started.** It mounted the socket, the share and the lock directory, and not the repo — so
-`python -m scenariobank agent` in that container would have failed on `import scenariobank`,
-because the image carries the environment and this repo carries the code. Declared in Phase 5,
-never started, and nothing would have said so until a rig tried it.
+**And that is how two real bugs in `compose.yaml` were found: the `agent` service could never have
+started, twice over.** It mounted the socket, the share and the lock directory, and not the repo —
+so `python -m scenariobank agent` in that container would have failed on `import scenariobank`,
+because the image carries the environment and this repo carries the code. And **neither sim image
+has the docker CLI** (measured 2026-09-15 on both), so the agent had a socket it could not speak
+to and `sim-run.sh` would have died on its own first line. Declared in Phase 5, never started, and
+nothing would have said so until a rig tried it.
+
+The second one moves an image decision. `docker/Dockerfile` now installs a pinned **static docker
+client** — client only, no daemon, ~35 MB — and the `agent` service names
+`${AGENT_IMAGE:-scenariobank-sim:latest}` instead of `${SIM_IMAGE}`. That is the one place the two
+part company, and the reason is ownership: the agent needs the client, the converter's image does
+not have it, and that recipe is not ours to change while `docker/Dockerfile` is. `SIM_IMAGE` still
+selects what the **runs** use — the agent passes it through to `sim-run.sh` — so a rig can run the
+converter's image for the work and ours for the supervisor. Still no fourth image: a rig builds
+this one and the bridge, exactly as Step 1 says. The agent also refuses at startup, by name, when
+there is no client on its PATH, because inside a container the remedy is "rebuild the image" and
+not the one `sim-run.sh` prints for a person on a host. A second label, `wingfin.tools`, records
+what is in there beside the venv.
 
 **The card is held by the agent, not by the container, and that is a deliberate difference from
 the reference.** wing-sim makes `flock` the container's own command (`rig/session.py:307`), so the
@@ -5363,6 +5377,14 @@ Three more notes, so nothing here is silent:
 | `tests/unit/test_images.py` (3 assertions added, 12 for `sim-run.sh`) | 7 passed |
 | `ruff check src tests scripts`, `docs/reference/commands.md` regenerated | clean |
 | the offline suite, minus the two files of Open question 12 | **904 passed, 9 skipped, 503.16 s** (843 before this step) |
+| the new `docker/Dockerfile` layer, built on its own | 38 MB, `Docker version 27.3.1`, and `docker ps` through the mounted socket |
+
+**The image itself was built on the rig and not here**, which is the standing rule and was also
+forced: a full rebuild on the laptop is a 4 GB wheel resync (`COPY src` invalidates the sync
+layer, so any source change costs one), and this 16 GB machine ran out of memory 50 minutes in
+with the other projects' containers up — the same constraint Phase 4 Step 7 note 9 recorded.
+What was verified here instead is the only thing the recipe gained: the docker client layer,
+built alone on `ubuntu:22.04`, run, and pointed at the host's socket.
 
 One thing the verification itself taught: **`uv run` wraps the agent**, so killing the pid that
 `uv run scenariobank agent` returns kills the wrapper and leaves the agent holding the card. The

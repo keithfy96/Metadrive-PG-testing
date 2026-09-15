@@ -170,6 +170,16 @@ def test_compose_runs_the_sim_as_root_and_only_the_studio_as_the_host_uid():
     # of our own next to theirs would exclude nobody while looking right. And `pid: host`,
     # without which /proc/locks reads zero rows for the whole machine and no holder can be
     # named (Phase 7 Step 2).
+    # **The agent runs THIS repo's image and not SIM_IMAGE**, and it is the one place the two
+    # part company: the agent starts each job as a sibling container, so it needs the docker
+    # client, and the converter's image has none and is not ours to change. `docker/Dockerfile`
+    # installs one; `SIM_IMAGE` still selects what the runs use.
+    assert 'image: "${AGENT_IMAGE:-scenariobank-sim:latest}"' in by_name["agent"]
+    assert "SIM_IMAGE" not in by_name["agent"].split("environment:")[0]
+    recipe = (ROOT / "docker" / "Dockerfile").read_text()
+    assert "docker-${DOCKER_CLI_VERSION}.tgz" in recipe and "docker/docker" in recipe
+    assert "ARG DOCKER_CLI_VERSION=" in recipe
+    assert 'LABEL wingfin.tools="docker-cli"' in recipe
     assert '"${SIMULATION_ROOT:-$HOME/simulation}:/simulation"' in by_name["agent"]
     assert "SIMULATION_ROOT: /simulation" in by_name["agent"]
     assert "pid: host" in by_name["agent"]
