@@ -694,7 +694,7 @@ def test_a_job_file_is_the_same_run_and_takes_no_other_flags(tmp_path, monkeypat
         (("--policy", "nowhere:Nothing"), "cannot import 'nowhere'"),
         (("--traffic", "enormous"), "'enormous' is not a level"),
         (("--traffic-density", "0.005"), "below 0.01"),
-        (("--lights", "low"), "Phase 8"),
+        (("--lights", "blinding"), "'blinding' is not a level"),
         (("--decision-hz", "20"), "faster than the env's 10 Hz"),
     ],
 )

@@ -134,7 +134,7 @@ def check_axis(axis: str) -> None:
     if axis not in NUMERIC_AXES:
         raise CalibrationError(
             f"{axis!r} is not an axis a number can be swept over. The five are: "
-            f"{', '.join(NUMERIC_AXES)}; lights is a schedule and is Phase 8."
+            f"{', '.join(NUMERIC_AXES)}; lights is a schedule and has no number to sweep."
         )
 
 

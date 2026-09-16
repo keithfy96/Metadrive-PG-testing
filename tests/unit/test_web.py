@@ -1367,9 +1367,9 @@ def test_the_eta_is_estimated_for_the_bank_at_the_levels_a_run_would_use(client)
 
     # The levels are resolved the way a run resolves them, refusals included.
     refused = client.get(
-        "/api/eta", params={"bank": "roads", "policy": expert, "lights": "high"}
+        "/api/eta", params={"bank": "roads", "policy": expert, "lights": "blinding"}
     )
-    assert refused.status_code == 400 and "Phase 8" in refused.json()["detail"]
+    assert refused.status_code == 400 and "not a level" in refused.json()["detail"]
     assert client.get(
         "/api/eta", params={"bank": "roads", "policy": expert, "tier": "brutal"}
     ).status_code == 400

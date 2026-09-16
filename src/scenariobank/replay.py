@@ -88,6 +88,7 @@ _PHRASES: dict[str, str] = {
     "crash_human": "hit a pedestrian",
     "crash_sidewalk": "hit the kerb",
     "crash": "crashed",
+    "run_red_light": "ran a red light",
     "out_of_road": "left the road",
     "arrive_dest": "arrived",
     "max_step": "ran out of recording",

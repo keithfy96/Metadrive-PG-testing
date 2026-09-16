@@ -12,7 +12,7 @@ a cap" and never learn which kind they are driving. Written out, the seam is:
 | select a row | `reset(seed=row.seed)` | `reset(seed=row.scenario_index)` |
 | prepare | `set_route(lane_index, row.destination)` | nothing; the recording has its route |
 | options | the six axes, `resolve_options` | the three replay switches, pinned |
-| managers | `ObstacleManager`, `VRUManager`, off the counts | the recording's |
+| managers | `ObstacleManager`, `VRUManager`, `TrafficLightManager`, per level | the recording's |
 | observation | `OBSERVATION_SHAPE` (19) | `SCENARIO_OBSERVATION_SHAPE` (31) |
 | cameras | a `CameraRig`'s, mounted by `prepare` | the same |
 
@@ -60,11 +60,12 @@ step budget is scaled with it (`budget_at`) and every number measured at 10 Hz i
 number at 100; a recording refuses any rate but its own, because replay advances one recorded
 frame per step.
 
-**The procedural env is a subclass, built on first use.** Four of the six axes are counts for
-managers MetaDrive does not register -- `ObstacleManager` for cones and barriers, `VRUManager`
-for pedestrians and cyclists -- and `MetaDriveEnv` registers its managers in `setup_engine`,
-which only a subclass can extend. `procedural_env_class()` is that subclass: it knows the four
-counts as config keys, registers each manager only when its axis is above zero (the way
+**The procedural env is a subclass, built on first use.** Five of the six axes drive managers
+MetaDrive does not register -- `ObstacleManager` for cones and barriers, `VRUManager` for
+pedestrians and cyclists, `TrafficLightManager` for the lights -- and `MetaDriveEnv` registers
+its managers in `setup_engine`, which only a subclass can extend. `procedural_env_class()` is
+that subclass: it knows the four counts and the two light numbers as config keys, registers
+each manager only when its axis is above zero (the way
 `metadrive_env.py:296-300` registers the stock object manager only above `accident_prob`'s
 floor), and carries the `crash_human_penalty` / `crash_human_cost` pair that MetaDrive
 terminates on but never scores (`metadrive_env.py:74-83` has the vehicle and object pairs and
@@ -99,6 +100,7 @@ from scenariobank.config import (
     base_config,
 )
 from scenariobank.options import REPLAY_FLAGS, ResolvedOptions
+from scenariobank.results import RUN_RED_LIGHT
 
 Entry = CategoryEntry | RealWorldEntry
 Row = ScenarioRow | RealWorldRow
@@ -112,11 +114,21 @@ DEFAULT_DECISION_REPEAT = 5
 #: env class registers. `traffic` is not here: it is `traffic_density`, stock MetaDrive's.
 COUNT_AXES: tuple[str, ...] = ("cones", "barriers", "pedestrians", "cyclists")
 
+#: The lights axis's two numbers as config keys: the junction cycle and the ego road's green,
+#: in seconds. Both zero at `none`, and `procedural_env_class` registers the light manager only
+#: above zero, the way it does the other managers.
+LIGHT_KEYS: tuple[str, ...] = ("lights_cycle_s", "lights_green_s")
+
 #: What hitting a person costs, mirroring `crash_object_penalty` / `crash_object_cost`
 #: (`metadrive_env.py:75`, `:83`). MetaDrive ends the episode on `crash_human` and scores it
 #: nothing; these are the missing pair, registered by `procedural_env_class`.
 CRASH_HUMAN_PENALTY = 5.0
 CRASH_HUMAN_COST = 1.0
+
+#: Running a red: the same numbers as a crash, for the same reason `crash_human` mirrors
+#: `crash_object` -- a violation the env ends the episode on is scored like the others.
+RUN_RED_LIGHT_PENALTY = 5.0
+RUN_RED_LIGHT_COST = 1.0
 
 
 def seed_for(row: Row) -> int:
@@ -233,9 +245,10 @@ def build_config(
 
     On the procedural side the three `_PER_RUN_KEYS` are filled the way `variety.scan` fills
     them, `horizon` becomes the entry's `max_steps`, the traffic axis becomes `traffic_density`,
-    the one option knob stock MetaDrive reads, and the four `COUNT_AXES` become the keys
-    `procedural_env_class` registers -- which is why this config fits that class and not a
-    stock `MetaDriveEnv`, whose `Config` refuses a key it does not know. `step_hz`, when it is
+    the one option knob stock MetaDrive reads, the four `COUNT_AXES` become the keys
+    `procedural_env_class` registers, and the lights schedule becomes the two `LIGHT_KEYS`
+    (zero at `none`) -- which is why this config fits that class and not a stock
+    `MetaDriveEnv`, whose `Config` refuses a key it does not know. `step_hz`, when it is
     not the road's own 10 Hz, sets `physics_world_step_size` and `decision_repeat` and scales
     `horizon` with them; on a recording it may only restate the recording's rate.
 
@@ -256,6 +269,7 @@ def build_config(
             f"options resolved for a {options.kind!r} bank cannot build a procedural env"
         )
     seeds = [row.seed for row in entry.scenarios]
+    lights = options.values.get("lights") or {}
     config = base_config(
         map=entry.block_seq,
         start_seed=min(seeds),
@@ -263,6 +277,8 @@ def build_config(
         horizon=budget_at(entry.max_steps, entry, step_hz),
         traffic_density=float(options.values["traffic"]),
         **{axis: int(options.values[axis]) for axis in COUNT_AXES},
+        lights_cycle_s=float(lights.get("cycle", 0.0)),
+        lights_green_s=float(lights.get("green", 0.0)),
     )
     if step_hz is not None and abs(rate - DEFAULT_STEP_HZ) > 1e-9:
         # One physics step per env.step, at the asked rate: the same shape a recording is
@@ -288,6 +304,7 @@ def procedural_env_class() -> type:
     from metadrive.envs.metadrive_env import MetaDriveEnv
 
     from scenariobank.actors import VRUManager
+    from scenariobank.lights import TrafficLightManager
     from scenariobank.obstacles import ObstacleManager
 
     class ScenarioBankEnv(MetaDriveEnv):
@@ -297,8 +314,12 @@ def procedural_env_class() -> type:
             config.update(
                 {
                     **{axis: 0 for axis in COUNT_AXES},
+                    **{key: 0.0 for key in LIGHT_KEYS},
                     "crash_human_penalty": CRASH_HUMAN_PENALTY,
                     "crash_human_cost": CRASH_HUMAN_COST,
+                    "run_red_light_penalty": RUN_RED_LIGHT_PENALTY,
+                    "run_red_light_cost": RUN_RED_LIGHT_COST,
+                    "run_red_light_done": True,
                 }
             )
             return config
@@ -310,6 +331,22 @@ def procedural_env_class() -> type:
                 self.engine.register_manager("object_manager", ObstacleManager())
             if self.config["pedestrians"] or self.config["cyclists"]:
                 self.engine.register_manager("vru_manager", VRUManager())
+            if self.config["lights_cycle_s"]:
+                self.engine.register_manager("light_manager", TrafficLightManager())
+
+        def done_function(self, vehicle_id: str):
+            """The stock endings plus `run_red_light`, off the flag the contact test sets.
+
+            `vehicle.red_light` is set when the ego's chassis meets a light's wall while it
+            is red (`base_vehicle.py:_state_check`), which on green is not there to meet. So
+            the flag is the violation, and the episode ends on it like it does on a crash.
+            """
+            done, done_info = super().done_function(vehicle_id)
+            ran_red = bool(self.agents[vehicle_id].red_light)
+            done_info[RUN_RED_LIGHT] = ran_red
+            if ran_red and self.config["run_red_light_done"]:
+                done = True
+            return done, done_info
 
         def reward_function(self, vehicle_id: str):
             reward, step_info = super().reward_function(vehicle_id)
@@ -322,12 +359,17 @@ def procedural_env_class() -> type:
             )
             if vehicle.crash_human and not outranked:
                 reward = -self.config["crash_human_penalty"]
+            elif vehicle.red_light and not outranked:
+                reward = -self.config["run_red_light_penalty"]
             return reward, step_info
 
         def cost_function(self, vehicle_id: str):
             cost, step_info = super().cost_function(vehicle_id)
-            if not cost and self.agents[vehicle_id].crash_human:
+            vehicle = self.agents[vehicle_id]
+            if not cost and vehicle.crash_human:
                 cost = step_info["cost"] = self.config["crash_human_cost"]
+            elif not cost and vehicle.red_light:
+                cost = step_info["cost"] = self.config["run_red_light_cost"]
             return cost, step_info
 
     return ScenarioBankEnv

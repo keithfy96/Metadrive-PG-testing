@@ -508,7 +508,7 @@ Two consequences for reproducibility, which for this axis alone rests on code we
   is already free (`crash_human_done=True`); only the reward/cost pair is missing
   (`metadrive_env.py:74-83`).
 
-**`src/scenariobank/lights.py` — `PGTrafficLightManager(BaseManager)`** — see Phase 8.
+**`src/scenariobank/lights.py` — `TrafficLightManager(BaseManager)`** — built 2026-09-16, see Phase 8.
 
 > The RNG requirement here is the **opposite** of the converter's live-signals case, where
 > `signal_control.py` deliberately keeps its own `RandomState` *because* `self.np_random` gives the
@@ -564,7 +564,7 @@ metadrive-PG/
                             #   so a field the reader gains and the checklist forgets is an error
     obstacles.py            # ObstacleManager  — cones, barriers
     actors.py               # VRUManager       — pedestrians, cyclists
-    lights.py               # PGTrafficLightManager  (Phase 8)
+    lights.py               # TrafficLightManager — lights at every junction on one per-seed clock (Phase 8)
     runner.py               # run_bank(...) -> Results   (importable, no CLI deps)
     video.py                # a top-down film of a run, for the eye (Phase 4 Step 5b)
     results.py              # pydantic models: Results, ScenarioResult, Summary
@@ -5634,7 +5634,8 @@ lands here.)*
 - **Success rates are over 5 scenarios per category — 20% granularity.** `0.6` is three of five,
   not 60% ± 1.
 - **`failure_reason` is a closed enum** — list every value (with `crash_human`, and
-  `run_red_light` once Phase 8 lands, schema v1.1) so a grouping UI can be built.
+  `run_red_light` since Phase 8, 2026-09-16; still schema 1, the field is a string) so a
+  grouping UI can be built.
 - **`status: "error"` is distinct from `success: false`.** An error means we learned nothing;
   `skipped` is distinct from both.
 - **Across machines, compare outcome fields only** — `status`, `steps`, `route_completion`,
@@ -5929,7 +5930,7 @@ disagree, one of them is configuring the env differently.
 
 ---
 
-# Phase 8 — Traffic lights, camera-model scope  (~1 day) ⬜
+# Phase 8 — Traffic lights, camera-model scope  (~1 day) ✅  ⟵ *built 2026-09-16*
 
 > **Machine-run.** The two command blocks below are developer verification of the lights work, not
 > a surface. See **What a person actually uses**.
@@ -5968,13 +5969,104 @@ uv run scenariobank run --scenarios intersection_left_0000 --lights medium \
   --policy scenariobank.policies:ExpertPolicy --out lights.json
 jq '.results[].failure_reason' lights.json
 ```
-**Expect `run_red_light` to appear.** The PPO expert has no light awareness whatsoever, so it should
+~~**Expect `run_red_light` to appear.** The PPO expert has no light awareness whatsoever, so it should
 sail through reds. If it never appears, the termination is not wired up. That is the test: the
-*expert failing* is the pass condition.
+*expert failing* is the pass condition.~~ *(Wrong, measured 2026-09-16: the expert's own lidar sees
+the red wall and it waits. See difference 1 below; the wiring test is a constant-throttle drive.)*
 
 **Known limitation to document:** a state-vector policy cannot perceive these lights at all. Note it
 in Phase 7 Step 6's results notes beside the axis — though the camera-only statement at the top of
 that list already covers it.
+
+**Built 2026-09-16.** `lights.py`, `TrafficLightManager`, registered by `procedural_env_class`
+under `light_manager` when `lights_cycle_s` is above zero, the way the other two managers are
+registered above their counts. `build_config` turns `LEVELS["lights"]`'s `{cycle, green}` into
+the two float keys `LIGHT_KEYS`; the env writes `run_red_light` into `info` off `vehicle.red_light`,
+ends the episode on it (`run_red_light_done`), and scores it at the crash numbers
+(`run_red_light_penalty` 5.0, `run_red_light_cost` 1.0). `TERMINATIONS` gained `run_red_light`
+below `crash` and above `out_of_road`; `replay` phrases it "ran a red light". `resolve_options`
+no longer refuses the axis; the tiers carry it (`medium` at `low`, `hard` at `medium`, as
+`PHASE_8_LIGHTS` said, and that constant is gone); `describe()` offers all four levels on it.
+
+*What differs from the text above, and why:*
+
+1. **The expert obeys the lights, so "the expert failing" is not the pass condition.** The
+   plan's test expected `run_red_light` to appear because "the PPO expert has no light
+   awareness". It has: `metadrive/examples/ppo_expert/numpy_expert.py:43` builds the expert's
+   own observation with a 240-laser lidar, and a red light's wall is set `InvisibleWall`
+   precisely so lidar detects it. Measured: with the ego's road held red for 299 s of 300, the
+   expert stopped short of the line and hit `max_step` at 320; at `high` on the junction bank
+   it arrived on all nine rows, crossing on green (row 0 crossed at 6.9 s with 8.4 s of green
+   left) or after waiting (rows that met a red took up to 100 steps longer). So the ceiling
+   policy waits at red and the floor policy runs it, and the wiring is proven by a
+   constant-throttle drive: `red_light` set at the line, `run_red_light` in `info`, the
+   episode ended, reward −5.0, cost 1.0 (`test_lights.py`). What a camera model does is what
+   the axis measures.
+2. **The wall is a sensor line, not a barrier.** With the ending switched off, full throttle
+   passes through it: the flag is up for the two steps of contact and clears once the car is
+   past, and the car drives on. That is the semantics wanted -- crossing on red is the
+   violation -- and it is why `run_red_light` is a reason of its own and not a `crash`
+   (`info["crash"]` stays false).
+3. **Two groups per junction, told apart by heading, and the level's `green` is the ego's
+   road's.** The text said "per-group green/yellow/offset"; the converter's plans carry those
+   per group because a recorded junction has a surveyed plan. A PG junction has none, so the
+   plan is derived: the ego's arm and the arm facing it (`same_road`, parallel within 30°) are
+   `major`, green from the top of the cycle for the level's `green`; the cross arms are
+   `minor`, green from the end of the major yellow until their own yellow must start. Red is
+   the remainder on both, `plan()` refuses a level that would leave the two green together,
+   and a test walks every tenth of a second of every level to prove none does. So `high` is
+   "the ego is green 10 s in 30" and the cross road gets 14 s -- one `yellow` of 3 s for
+   everyone (`YELLOW_S`), a rule of the road rather than a knob.
+4. **One offset per episode from `self.np_random`, not from a private generator.** The
+   converter keeps its own `RandomState` so one dataset's light varies between episodes; here a
+   seed is a promise, and `BaseEngine.seed` re-seeds every manager from the episode seed. Two
+   envs at one seed cycle identically, another seed does not, and stepping consumes none of the
+   manager's randomness (the actor manager's three tests, repeated).
+5. **The results schema stays at 1.** The text said "bumps to v1.1"; `schema_version` is an
+   integer literal and `failure_reason` is a string documented as "the `TerminationState` keys
+   present in `info`", so a new key is a new value, not a new shape. Bumping would have made
+   every reader -- the store included -- refuse yesterday's files for nothing.
+6. **The stop line is `STOP_LINE_SETBACK = 1.0` m before the approach lane ends**, on every
+   lane of every road into an `InterSection` (`isinstance`, so `T`, `X` and the `Std`
+   variants), the ego's arm from `pre_block_socket.positive_road` and the rest from each
+   socket's `negative_road`; a `T` has removed its missing arm's socket already. Measured on the
+   junction bank: 12 lights on the `X` (four arms, three lanes), 9 on the `T`, each 1.0 m short
+   of its lane's end, the ego's three at x = 49 where the junction box starts at 50.
+7. **Destroyed, never recycled.** `before_reset` clears with `force_destroy=True`: without it
+   `engine.clear_objects` pools the object and `spawn_object` hands it back through
+   `obj.reset(**kwargs)`, which `BaseTrafficLight` does not define for a new lane. A test
+   resets twice and checks no id survives and every light's lane is live.
+8. **The tiers gained lights, and `hard` on the `X` now costs the expert its arrival.**
+   `test_reproducibility.py` pinned "the expert arrives on an X at hard"; measured again with
+   `lights=medium` in the tier it leaves the road at step 277 (easy still arrives). The cause
+   is difference 1's lidar: the cross road's red walls stand beside the ego's left-turn exit
+   (their stop line at y = 11, its exit lane at x ≈ 67, two metres apart), the expert reads
+   them as an obstacle and creeps until the cross road goes green, and among `hard`'s traffic
+   and actors the creep ends off the road. Alone, `lights=medium` still lets it arrive (271
+   steps, after the same wait). A camera model sees no wall, so this is the ceiling policy's
+   limitation and not the axis's; the pin is re-measured, not the tier reverted, because a
+   `hard` with no lights once lights exist would be the surprise. Reversible in one dict
+   (`TIERS`) if the expert's tier runs are wanted unchanged.
+9. **`inspect --lights … --render`, the first test block above, does not exist**: `inspect`
+   draws a route and takes no option axes. The eye test is the top-down film (`video.frame`
+   draws every object with its `top_down_color`, and a light's is its colour): two frames of
+   the crossroads at `high`, step 1 (ego's road green, cross road red) and step 130 (the
+   reverse), and the film `run --record-video` writes. And the camera model's own view, which
+   is the scope of the axis: `intersection_left_0000` at `high` with `--camera-rig rigs/av3.txt
+   --step-hz 100 --decision-hz 20 --record-video` on the laptop (1720 steps, 160 s, arrived, 12
+   lights placed) -- the front camera's frame at 4.5 s shows two green lamps on posts at the
+   ego's stop line and the cross road's posts beyond, so the gltf models load and the colour
+   renders on the render path a real evaluation takes.
+
+Unit tests: `tests/unit/test_lights.py` (17: the schedule at every level never green together
+and filling the cycle, the levels ordered by the ego's share of green, a refused plan and the
+offset sliding it, `same_road`, `run_red_light`'s rank; on the bank, one light per approach
+lane at the stop line on the `X` and the `T` with the ego's route through a lit one, one seed
+one cycle, stepping draws nothing, the colour on the clock through green-yellow-red in 30 s, a
+red run scored and ended, the wall not solid, a green run clean, a second reset leaving nothing,
+no manager at `none`); `test_env.py` (the two keys ride into the config, the env class knows
+the five new keys); `test_invariance.py`'s ladder now includes `lights`, so the manager is
+under the map-and-route invariance too; `test_options.py` rewritten for the open axis.
 
 ---
 

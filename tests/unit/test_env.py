@@ -36,6 +36,7 @@ from scenariobank.env import (
     COUNT_AXES,
     DEFAULT_DECISION_REPEAT,
     DEFAULT_PHYSICS_STEP_S,
+    LIGHT_KEYS,
     build_config,
     expected_shape,
     procedural_env_class,
@@ -229,6 +230,20 @@ def test_the_four_count_axes_ride_into_the_config_under_their_own_names():
     assert "accident_prob" in unpinned and unpinned["accident_prob"] == 0.0, "generation truth"
 
 
+def test_the_lights_schedule_rides_into_the_config_as_two_seconds_and_zero_at_none():
+    """Phase 8: `LEVELS["lights"]` is a schedule, `{cycle, green}`, and the env reads it as
+    two float keys. Unpinned, both are zero, which is what keeps the manager unregistered."""
+    entry = pg_entry([0])
+    config = build_config(Path("."), entry, resolve_options(pg_manifest(entry, lights="high")))
+    assert {key: config[key] for key in LIGHT_KEYS} == {
+        "lights_cycle_s": LEVELS["lights"]["high"]["cycle"],
+        "lights_green_s": LEVELS["lights"]["high"]["green"],
+    }
+    assert all(type(config[key]) is float for key in LIGHT_KEYS)
+    unpinned = build_config(Path("."), entry, resolve_options(pg_manifest(entry)))
+    assert {key: unpinned[key] for key in LIGHT_KEYS} == dict.fromkeys(LIGHT_KEYS, 0.0)
+
+
 @needs_sim
 def test_the_procedural_env_class_knows_the_keys_a_stock_env_refuses():
     """`base_env.py:293` merges a constructor config with `allow_add_new_key=False`, so the
@@ -238,9 +253,14 @@ def test_the_procedural_env_class_knows_the_keys_a_stock_env_refuses():
 
     ours = procedural_env_class().default_config()
     stock = MetaDriveEnv.default_config()
-    for key in (*COUNT_AXES, "crash_human_penalty", "crash_human_cost"):
+    for key in (
+        *COUNT_AXES, *LIGHT_KEYS, "crash_human_penalty", "crash_human_cost",
+        "run_red_light_penalty", "run_red_light_cost", "run_red_light_done",
+    ):
         assert key in ours and key not in stock, key
     assert (ours["crash_human_penalty"], ours["crash_human_cost"]) == (5.0, 1.0)
+    assert (ours["run_red_light_penalty"], ours["run_red_light_cost"]) == (5.0, 1.0)
+    assert ours["run_red_light_done"] is True
     assert (ours["crash_object_penalty"], ours["crash_object_cost"]) == (5.0, 1.0), "mirrored"
     assert procedural_env_class() is procedural_env_class(), "one class, cached"
 

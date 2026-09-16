@@ -22,8 +22,9 @@ delivered twice -- the queue is at-least-once -- be recognised as the same run, 
 or `scenario_env.py` ever writes; `crash` (the aggregate) and `env_seed` *are* written and were
 not in it. `TERMINATIONS` below is the measured list, worst first, and `replay.ENDINGS` phrases
 the same keys in the same order so the diagnostic and the record cannot rank an ending
-differently. One reason is ours rather than the env's: `stopped`, for an episode the batch was
-told to end. Nothing here imports the simulator.
+differently. Two reasons are ours rather than stock MetaDrive's: `run_red_light`, which our
+procedural env writes into `info` beside the others (Phase 8), and `stopped`, for an episode
+the batch was told to end. Nothing here imports the simulator.
 """
 
 from __future__ import annotations
@@ -56,10 +57,17 @@ TERMINATIONS: tuple[str, ...] = (
     "crash_human",
     "crash_sidewalk",
     "crash",
+    "run_red_light",
     "out_of_road",
     "arrive_dest",
     "max_step",
 )
+
+#: The one ending ours rather than MetaDrive's `TerminationState`: the ego crossed a stop line
+#: on red (Phase 8, `env.procedural_env_class`). Below the crashes and above `out_of_road`:
+#: a car that ran a red and hit something is a crash, one that ran a red and left the road
+#: ran the red first.
+RUN_RED_LIGHT = "run_red_light"
 
 #: The `info` key that means the episode succeeded.
 SUCCESS_KEY = "arrive_dest"
@@ -320,6 +328,7 @@ __all__ = [
     "CAPPED",
     "JOB_SCHEMA_VERSION",
     "RESULTS_SCHEMA_VERSION",
+    "RUN_RED_LIGHT",
     "STOPPED",
     "SUCCESS_KEY",
     "TERMINATIONS",

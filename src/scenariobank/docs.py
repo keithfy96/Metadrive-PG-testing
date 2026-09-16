@@ -480,7 +480,7 @@ def _value_notes() -> dict[str, str]:
         "--job": "A `Job` JSON file, the same record the queue carries.",
         "--axis": (
             f"One of: {', '.join(f'`{axis}`' for axis in NUMERIC_AXES)}. "
-            "`lights` has no number behind it and is Phase 8."
+            "`lights` has no number behind it: it is a schedule, not sweepable."
         ),
         "--values": (
             f"Raw numbers for the axis: a density for traffic (0, or at least {TRAFFIC_FLOOR}), "

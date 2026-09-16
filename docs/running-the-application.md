@@ -662,8 +662,8 @@ studio and needing no simulator:
 
 - `GET /api/options` is the six option axes as data: each axis's label, its four level names
   with the number behind each, whether a raw number may be given instead and what shape it must
-  take, and `choices`, the levels that run today -- `lights` offers `none` alone until Phase 8
-  and says why in `restricted`. The tiers are there too, as the six names each expands to. A
+  take, and `choices`, the levels that run today (all four on every axis since Phase 8;
+  `restricted` says why when fewer do). The tiers are there too, as the six names each expands to. A
   form drawn from this cannot drift from the resolver, because the resolver reads the same
   tables (`options.describe()`).
 - `GET /api/eta?bank=<name>&policy=<path>[&tier=hard][&traffic=high…][&scenarios=a,b][&host=sim]`

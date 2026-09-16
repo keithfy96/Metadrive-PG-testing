@@ -577,7 +577,7 @@ def create_app(
         """The six option axes as data, for the submit screen to render its form from.
 
         `options.describe()`, unshaped: the level names, the number behind each, which axes
-        take a raw number, which levels run today (`lights` offers `none` alone until Phase 8),
+        take a raw number, which levels run today (all four, on every axis, since Phase 8),
         and what each tier expands to. A form drawn from this cannot drift from the resolver,
         because the resolver reads the same tables.
         """

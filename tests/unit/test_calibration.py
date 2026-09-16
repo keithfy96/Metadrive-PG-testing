@@ -169,7 +169,7 @@ def test_bad_values_are_refused_before_any_run(tmp_path):
         check_values(manifest, "traffic", [0, 0.005])
     with pytest.raises(CalibrationError, match="cones=1.5.*whole number"):
         check_values(manifest, "cones", [0, 1.5])
-    with pytest.raises(CalibrationError, match="lights.*Phase 8"):
+    with pytest.raises(CalibrationError, match="lights.*schedule"):
         check_values(manifest, "lights", [0, 1])
     with pytest.raises(CalibrationError, match="repeats"):
         check_values(manifest, "traffic", [0, 0.1, 0.1])

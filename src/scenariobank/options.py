@@ -33,8 +33,9 @@ it decides how much of this is ours to write:
   walk on a procedurally generated map: `policy/` holds no pedestrian policy, and the only manager
   that spawns them replays a logged trajectory from a recorded dataset, which a PG road does not
   have. Phase 4's `actors.py` is therefore the only placement code in this project that is ours.
-* `lights` is Phase 8, and until it lands `resolve_options` refuses the axis above `none` by name
-  rather than letting a level through to an env that has nothing to spend it on.
+* `lights` is the one axis with nothing to reuse at all: MetaDrive ships the light object and
+  no manager that puts one on a procedural road. `lights.py` (Phase 8) is that manager -- a
+  light at every approach lane of every junction, on one clock with one per-seed offset.
 
 **The six axes are procedural-only.** On a recorded bank (Phase 3) traffic, lights and the rest
 are contents of the recording, and `ScenarioEnv` offers three replay switches instead. The
@@ -96,9 +97,11 @@ TRAFFIC_FLOOR = 0.01
 #: `curve` and 1.00, 0.89, 0.78, 0.44 on the `X`. Re-measure after a MetaDrive bump.
 #:
 #: `traffic` is `traffic_density`; the four counts are how many of that thing `obstacles.py` and
-#: `actors.py` (Phase 4 Step 4b) place along the ego's route. `lights` is the phase schedule
-#: Phase 8's `PGTrafficLightManager` will read -- kept in the shape that plan gives it so the
-#: record's field does not change shape when the axis arrives; it is not measured yet.
+#: `actors.py` (Phase 4 Step 4b) place along the ego's route. `lights` is the schedule
+#: `lights.py`'s `TrafficLightManager` runs every junction on: `cycle` seconds round, of which
+#: the ego's road is green for `green` (the cross road gets the remainder less two yellows),
+#: so `high` is green ten seconds in thirty. Not measured by a sweep: a schedule has no single
+#: number to sweep, and what separates the levels is how long the ego waits, by construction.
 LEVELS: dict[str, dict[str, Any]] = {
     "traffic": {"none": 0.0, "low": 0.1, "medium": 0.3, "high": 0.5},
     "cones": {"none": 0, "low": 1, "medium": 4, "high": 6},
@@ -115,8 +118,8 @@ LEVELS: dict[str, dict[str, Any]] = {
 
 #: Convenience aliases. **The six axes are the contract; a tier is a spelling of six names** and
 #: is expanded before the run, so a result never says "hard" without also saying what hard was
-#: on the day. Every tier carries `lights=none` until Phase 8 lands; `PHASE_8_LIGHTS` records
-#: what that phase flips them to, so the intent is in the file rather than in a commit message.
+#: on the day. `lights` joined the tiers on 2026-09-16 (Phase 8): `medium` at `low`, `hard`
+#: at `medium`, as the plan said it would; `easy` stays at `none`.
 TIERS: dict[str, dict[str, Level]] = {
     "easy": {
         "traffic": "low",
@@ -132,7 +135,7 @@ TIERS: dict[str, dict[str, Level]] = {
         "barriers": "low",
         "pedestrians": "low",
         "cyclists": "none",
-        "lights": "none",
+        "lights": "low",
     },
     "hard": {
         "traffic": "high",
@@ -140,12 +143,9 @@ TIERS: dict[str, dict[str, Level]] = {
         "barriers": "medium",
         "pedestrians": "medium",
         "cyclists": "low",
-        "lights": "none",
+        "lights": "medium",
     },
 }
-
-#: The `lights` level each tier takes once Phase 8 lands. `easy` stays at `none`.
-PHASE_8_LIGHTS: dict[str, Level] = {"medium": "low", "hard": "medium"}
 
 #: What each axis is called where a person reads it: the `--traffic` flag's help and the
 #: studio's form both take the words from here, so the two cannot say different things.
@@ -256,18 +256,6 @@ def _check_raw(axis: str, value: float) -> None:
         raise OptionError(f"{axis}={value} is not a whole number, and {axis} is a count.")
 
 
-def _refuse_lights(level: str, origin: str, where: str) -> None:
-    if level != "none":
-        raise OptionError(
-            f"the Lights axis is Phase 8: lights={level} ({where}) has nothing to run on yet. "
-            + (
-                "Unpin it with `scenariobank options --bank <bank> --lights none`."
-                if origin == "manifest"
-                else "Leave lights at none until then."
-            )
-        )
-
-
 def resolve_options(
     manifest: Manifest,
     *,
@@ -329,8 +317,6 @@ def resolve_options(
             level, came_from = levels[axis], "flag"
         if axis in raw:
             level, came_from = nearest_level(axis, raw[axis]), "raw"
-        if axis == "lights":
-            _refuse_lights(level, came_from, f"from the {came_from}")
         chosen[axis] = level  # type: ignore[assignment]
         origin[axis] = came_from  # type: ignore[assignment]
         values[axis] = raw[axis] if axis in raw else LEVELS[axis][level]
@@ -352,15 +338,15 @@ def describe() -> dict[str, Any]:
     one is what goes stale when a level is recalibrated. So the studio's submit screen asks for
     this and draws what it gets: one entry per axis in form order, the four level names with the
     number behind each, whether a raw number may be given instead (and what shape it must be),
-    and `choices` -- the levels that run today. `lights` offers `none` alone until Phase 8, and
-    says why, so a form greys the axis out instead of knowing which phase it is in. The tiers
+    and `choices` -- the levels that run today, with `restricted` saying why when fewer than
+    four do (none is, since Phase 8; the key stays so a form can keep reading it). The tiers
     are here too, as the six names each expands to, because a form that offers "hard" must be
     able to show what hard is.
     """
     axes = []
     for axis in AXES:
         numeric = axis in NUMERIC_AXES
-        choices = ["none"] if axis == "lights" else list(LEVEL_NAMES)
+        choices = list(LEVEL_NAMES)
         axes.append(
             {
                 "name": axis,
@@ -377,11 +363,7 @@ def describe() -> dict[str, Any]:
                     else None
                 ),
                 "choices": choices,
-                "restricted": (
-                    "the Lights axis is Phase 8: `none` is the one level with something to run on"
-                    if axis == "lights"
-                    else None
-                ),
+                "restricted": None,
             }
         )
     return {
@@ -416,7 +398,6 @@ __all__ = [
     "LEVEL_NAMES",
     "NUMERIC_AXES",
     "OPTIONS_SCHEMA_VERSION",
-    "PHASE_8_LIGHTS",
     "REPLAY_FLAGS",
     "TIERS",
     "TRAFFIC_FLOOR",

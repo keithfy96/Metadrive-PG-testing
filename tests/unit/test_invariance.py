@@ -44,6 +44,7 @@ NONE = {
     "barriers": "none",
     "pedestrians": "none",
     "cyclists": "none",
+    "lights": "none",
 }
 HIGH = {axis: "high" for axis in NONE}
 

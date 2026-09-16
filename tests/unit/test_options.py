@@ -18,7 +18,6 @@ from scenariobank.options import (
     LEVEL_NAMES,
     LEVELS,
     NUMERIC_AXES,
-    PHASE_8_LIGHTS,
     REPLAY_FLAGS,
     TIERS,
     TRAFFIC_FLOOR,
@@ -85,11 +84,13 @@ def test_every_count_axis_starts_at_zero_and_never_decreases(axis):
     assert all(isinstance(number, int) for number in numbers)
 
 
-def test_every_tier_names_all_six_axes_and_none_of_them_touches_lights_yet():
+def test_every_tier_names_all_six_axes_and_lights_climb_with_the_tier():
     for tier, block in TIERS.items():
         assert tuple(block) == AXES, tier
-        assert block["lights"] == "none", f"{tier}: lights is Phase 8"
-    assert set(PHASE_8_LIGHTS) <= set(TIERS)
+    # Phase 8: `easy` keeps every junction unsignalled; the two harder tiers add lights.
+    assert [TIERS[tier]["lights"] for tier in ("easy", "medium", "hard")] == [
+        "none", "low", "medium"
+    ]
 
 
 def test_tiers_are_ordered_easy_to_hard_on_every_axis():
@@ -123,7 +124,7 @@ def test_tier_hard_expands_to_six_names_and_overrides_the_pin():
     resolved = resolve_options(_curve(), tier="hard")
     assert resolved.tier == "hard"
     assert [resolved.levels[axis] for axis in AXES] == [
-        "high", "medium", "medium", "medium", "low", "none"
+        "high", "medium", "medium", "medium", "low", "medium"
     ]
     assert set(resolved.origin.values()) == {"tier"}
 
@@ -175,21 +176,16 @@ def test_a_raw_count_resolves_the_same_way():
 # --- refusals -----------------------------------------------------------------------------------
 
 
-def test_lights_above_none_is_refused_by_name_until_phase_8():
-    with pytest.raises(OptionError, match="Phase 8"):
-        resolve_options(_curve(), levels={"lights": "low"})
-
-
-def test_a_bank_that_pinned_lights_is_refused_and_told_how_to_unpin_it():
-    # `scenariobank options --lights medium` accepts the level today; the resolver is where it
-    # stops, and the sentence has to say how to get past it.
-    with pytest.raises(OptionError, match="Phase 8.*--lights none"):
-        resolve_options(_manifest(lights="medium"))
-
-
-def test_lights_at_none_is_not_refused_from_any_origin():
-    assert resolve_options(_manifest(lights="none"), tier="hard").levels["lights"] == "none"
-    assert resolve_options(_curve(), levels={"lights": "none"}).levels["lights"] == "none"
+def test_lights_resolve_like_every_other_axis_and_carry_a_schedule_not_a_number():
+    # Phase 8: the axis runs. Its value is the schedule the light manager reads, in the shape
+    # `LEVELS` has always given it, and `none` is no schedule at all.
+    pinned = resolve_options(_manifest(lights="medium"))
+    assert pinned.levels["lights"] == "medium" and pinned.origin["lights"] == "manifest"
+    assert pinned.values["lights"] == {"cycle": 40, "green": 20}
+    flagged = resolve_options(_curve(), levels={"lights": "low"})
+    assert flagged.values["lights"] == {"cycle": 60, "green": 40}
+    assert resolve_options(_manifest(lights="none"), tier="easy").values["lights"] is None
+    assert resolve_options(_manifest(lights="none"), tier="hard").levels["lights"] == "medium"
 
 
 def test_a_raw_traffic_density_in_the_manager_dead_zone_is_refused_rather_than_run_as_none():
@@ -298,11 +294,10 @@ def test_describe_is_the_six_axes_as_data_in_form_order():
     by_name = {axis["name"]: axis for axis in schema["axes"]}
     assert by_name["traffic"]["raw"] == {"minimum": 0, "integer": False, "floor": TRAFFIC_FLOOR}
     assert by_name["cones"]["raw"] == {"minimum": 0, "integer": True, "floor": None}
-    # Every level runs today on five axes; lights offers none alone and says why.
-    for name in NUMERIC_AXES:
-        assert by_name[name]["choices"] == list(LEVEL_NAMES) and by_name[name]["restricted"] is None
-    assert by_name["lights"]["choices"] == ["none"]
-    assert "Phase 8" in by_name["lights"]["restricted"]
+    # Every level runs today on every axis (lights since Phase 8), and none is restricted.
+    for axis in schema["axes"]:
+        assert axis["choices"] == list(LEVEL_NAMES) and axis["restricted"] is None, axis
+    assert by_name["lights"]["numeric"] is False and by_name["lights"]["raw"] is None
 
 
 def test_every_axis_has_a_label_and_the_labels_are_the_flags_help():

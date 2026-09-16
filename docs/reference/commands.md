@@ -746,7 +746,7 @@ a `T` or `X` road with the expert; a six-value sweep of a nine-row bank is a few
 | flag | | repeats | meaning |
 |---|---|---|---|
 | `--bank <path>` | optional |  | Procedural bank whose scenarios the sweep drives. |
-| `--axis <str>` | optional |  | The axis to sweep; every other axis is held at none. One of: `traffic`, `cones`, `barriers`, `pedestrians`, `cyclists`. `lights` has no number behind it and is Phase 8. |
+| `--axis <str>` | optional |  | The axis to sweep; every other axis is held at none. One of: `traffic`, `cones`, `barriers`, `pedestrians`, `cyclists`. `lights` has no number behind it: it is a schedule, not sweepable. |
 | `--values <str>` | optional | yes | The raw values to run the axis at, comma-separated or repeated. 0 is none. Raw numbers for the axis: a density for traffic (0, or at least 0.01), whole numbers for a count. Each is run once. |
 | `--render-only` | default `false` |  | Run nothing; rewrite the page from the records already in --record. For after an edit to options.LEVELS, which the page quotes. |
 | `--categories <str>` | optional | yes | Only these categories of the bank; default all. Category names from the bank's manifest, comma-separated or repeated. |
